@@ -1,0 +1,92 @@
+import logging
+from datetime import UTC, datetime
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
+
+from app.db.session import AsyncSessionLocal
+from app.models import Case, Document
+from app.services import document_extractor
+
+logger = logging.getLogger(__name__)
+
+
+async def run_full_pipeline(case_id: UUID) -> None:
+    """Background orchestrator for a case.
+
+    Phase 6 implements the document-extraction step (embedded text via pypdf,
+    OCR via Textract for scanned PDFs). Phases 7-9 add AI extraction ->
+    analysis -> letter draft and the final transition to `ready`.
+
+    No silent failures: any error sets case.status='error' with a PHI-free
+    error_message. Never logs document text — only ids, lengths, and statuses.
+    """
+    async with AsyncSessionLocal() as session:
+        case = await session.get(Case, case_id)
+        if case is None:
+            logger.warning(
+                "pipeline: case not found", extra={"context": {"case_id": str(case_id)}}
+            )
+            return
+        if case.status == "ready":
+            logger.info(
+                "pipeline: case already ready, skipping",
+                extra={"context": {"case_id": str(case_id)}},
+            )
+            return
+
+        try:
+            await _extract_documents(session, case)
+            await session.commit()
+            # Phases 7-9 continue here (AI extract -> analyze -> letter -> ready).
+        except Exception as exc:
+            await _mark_error(session, case_id, exc)
+
+
+async def _extract_documents(session: AsyncSession, case: Case) -> None:
+    documents = (
+        await session.scalars(select(Document).where(Document.case_id == case.id))
+    ).all()
+    for doc in documents:
+        text = await run_in_threadpool(
+            document_extractor.extract_digital_text, doc.s3_key
+        )
+        if text is None:
+            # Scanned PDF -> OCR. Mark pending so the state is observable.
+            doc.ocr_status = "pending"
+            await session.commit()
+            text = await run_in_threadpool(document_extractor.run_textract, doc.s3_key)
+            await run_in_threadpool(
+                document_extractor.store_extracted_text, doc.s3_key, text
+            )
+            doc.ocr_status = "completed"
+            doc.ocr_completed_at = datetime.now(UTC)
+        else:
+            await run_in_threadpool(
+                document_extractor.store_extracted_text, doc.s3_key, text
+            )
+            doc.ocr_status = "not_needed"
+        await session.flush()
+        logger.info(
+            "extracted document",
+            extra={
+                "context": {
+                    "document_id": str(doc.id),
+                    "chars": len(text),
+                    "ocr_status": doc.ocr_status,
+                }
+            },
+        )
+
+
+async def _mark_error(session: AsyncSession, case_id: UUID, exc: Exception) -> None:
+    await session.rollback()
+    case = await session.get(Case, case_id)
+    if case is not None:
+        case.status = "error"
+        # Exception type only — never the message (could echo a key or path).
+        case.error_message = f"Document extraction failed ({type(exc).__name__})."
+        await session.commit()
+    logger.exception("pipeline failed", extra={"context": {"case_id": str(case_id)}})

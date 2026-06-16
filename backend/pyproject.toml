@@ -1,0 +1,55 @@
+[project]
+name = "heimdall-backend"
+version = "0.1.0"
+description = "Heimdall backend — AI-assisted insurance claim appeal automation"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.29",
+    "alembic>=1.13",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "boto3>=1.34",
+    "python-jose[cryptography]>=3.3",  # verify Cognito RS256 JWTs (Phase 3)
+    "httpx>=0.27",
+    "python-multipart>=0.0.9",         # FastAPI form/multipart parsing
+    "pypdf>=4.2",                      # detect digital vs scanned PDFs (Phase 6)
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "black>=24.4",
+    "pre-commit>=3.7",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]  # pycodestyle, pyflakes, isort, pyupgrade, bugbear
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection markers are intentionally called in defaults.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Security", "fastapi.Query"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["app/tests"]

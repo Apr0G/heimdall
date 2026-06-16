@@ -1,0 +1,49 @@
+import uuid
+from datetime import date
+
+from sqlalchemy import BigInteger, Date, ForeignKey, Index, Text, text
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.base import Base, TimestampMixin, UUIDPrimaryKey
+from app.models.enums import case_status, plan_type
+
+
+class Case(Base, UUIDPrimaryKey, TimestampMixin):
+    __tablename__ = "cases"
+
+    practice_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("practices.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    created_by: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(
+        case_status, nullable=False, server_default=text("'draft'")
+    )
+    payer_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    plan_type: Mapped[str] = mapped_column(
+        plan_type, nullable=False, server_default=text("'unknown'")
+    )
+    claim_number: Mapped[str | None] = mapped_column(Text, nullable=True)
+    member_id_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    patient_initials: Mapped[str | None] = mapped_column(Text, nullable=True)
+    date_of_service: Mapped[date | None] = mapped_column(Date, nullable=True)
+    denial_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    appeal_deadline: Mapped[date | None] = mapped_column(Date, nullable=True)
+    billed_amount_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    denied_amount_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    currency: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'USD'")
+    )
+    # Populated when the pipeline fails (status='error'). Never contains PHI.
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_cases_practice_status", "practice_id", "status"),
+        Index("ix_cases_appeal_deadline", "appeal_deadline"),
+    )

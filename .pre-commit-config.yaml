@@ -1,0 +1,27 @@
+# Pre-commit hooks for Heimdall.
+#   Backend (Python): ruff (lint, autofix) + black (format), scoped to backend/.
+#   Frontend (TS):     eslint via the Next.js project's own flat config.
+# Enable once with `pre-commit install`; run on demand with
+# `pre-commit run --all-files`. Revs are pinned via `pre-commit autoupdate`.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.17
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+        files: ^(backend|scripts)/
+
+  - repo: https://github.com/psf/black
+    rev: 26.5.1
+    hooks:
+      - id: black
+        files: ^(backend|scripts)/
+
+  - repo: local
+    hooks:
+      - id: eslint
+        name: eslint (frontend)
+        entry: bash -c 'cd frontend && npm run lint'
+        language: system
+        files: ^frontend/.*\.(ts|tsx|js|jsx|mjs)$
+        pass_filenames: false

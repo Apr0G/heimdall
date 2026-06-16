@@ -1,0 +1,59 @@
+# ===== Secrets & environment =====
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local credentials & legal docs — real AWS keys / BAA live here, never commit
+legal/
+
+# ===== Terraform (infra is managed out-of-band; never commit state or vars) =====
+*.tfvars
+*.tfstate
+*.tfstate.*
+.terraform/
+crash.log
+
+# ===== Data exports =====
+*.csv
+
+# Generated synthetic PDF fixtures (regenerate via scripts/make_fixtures.py)
+fixtures/
+
+# ===== Python (backend) =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ===== Node / Next.js (frontend) =====
+node_modules/
+.next/
+out/
+dist/
+build/
+.turbo/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ===== Logs =====
+*.log
+
+# ===== Editors / OS =====
+.DS_Store
+.idea/
+.vscode/
+*.swp
+Thumbs.db
