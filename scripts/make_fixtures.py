@@ -52,10 +52,11 @@ def _pdf(lines: list[str]) -> bytes:
 DOCS = {
     "denial": [
         "EXPLANATION OF BENEFITS (SYNTHETIC TEST DATA)",
-        "Payer: Aetna    Claim #: CLM-TEST-0001",
-        "Patient: Jane Doe    DOS: 2026-05-04",
-        "Denial: CARC CO-50 - not deemed a medical necessity.",
-        "Denied amount: $450.00",
+        "Payer: Aetna    Plan: Commercial    Claim #: CLM-TEST-0001",
+        "Patient: Jane Doe    Member ID: MBR-TEST-000123",
+        "DOS: 2026-05-04    Denial date: 2026-05-10",
+        "Denial: CARC CO-50 (RARC N115) - not deemed a medical necessity.",
+        "Group code: CO    Billed: $600.00    Denied amount: $450.00",
     ],
     "claim": [
         "CMS-1500 PROFESSIONAL CLAIM (SYNTHETIC TEST DATA)",

@@ -9,6 +9,7 @@ from starlette.concurrency import run_in_threadpool
 from app.db.session import AsyncSessionLocal
 from app.models import Case, Document
 from app.services import document_extractor
+from app.services.extraction import run_ai_extraction
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,9 @@ async def run_full_pipeline(case_id: UUID) -> None:
         try:
             await _extract_documents(session, case)
             await session.commit()
-            # Phases 7-9 continue here (AI extract -> analyze -> letter -> ready).
+            await run_ai_extraction(session, case)
+            await session.commit()
+            # Phases 8-9 continue here (analyze -> letter -> ready).
         except Exception as exc:
             await _mark_error(session, case_id, exc)
 
