@@ -9,6 +9,7 @@ from starlette.concurrency import run_in_threadpool
 from app.db.session import AsyncSessionLocal
 from app.models import Case, Document
 from app.services import document_extractor
+from app.services.analysis import run_ai_analysis
 from app.services.extraction import run_ai_extraction
 
 logger = logging.getLogger(__name__)
@@ -27,9 +28,7 @@ async def run_full_pipeline(case_id: UUID) -> None:
     async with AsyncSessionLocal() as session:
         case = await session.get(Case, case_id)
         if case is None:
-            logger.warning(
-                "pipeline: case not found", extra={"context": {"case_id": str(case_id)}}
-            )
+            logger.warning("pipeline: case not found", extra={"context": {"case_id": str(case_id)}})
             return
         if case.status == "ready":
             logger.info(
@@ -43,33 +42,27 @@ async def run_full_pipeline(case_id: UUID) -> None:
             await session.commit()
             await run_ai_extraction(session, case)
             await session.commit()
-            # Phases 8-9 continue here (analyze -> letter -> ready).
+            await run_ai_analysis(session, case)
+            await session.commit()
+            # Phase 9 continues here (letter -> ready).
         except Exception as exc:
             await _mark_error(session, case_id, exc)
 
 
 async def _extract_documents(session: AsyncSession, case: Case) -> None:
-    documents = (
-        await session.scalars(select(Document).where(Document.case_id == case.id))
-    ).all()
+    documents = (await session.scalars(select(Document).where(Document.case_id == case.id))).all()
     for doc in documents:
-        text = await run_in_threadpool(
-            document_extractor.extract_digital_text, doc.s3_key
-        )
+        text = await run_in_threadpool(document_extractor.extract_digital_text, doc.s3_key)
         if text is None:
             # Scanned PDF -> OCR. Mark pending so the state is observable.
             doc.ocr_status = "pending"
             await session.commit()
             text = await run_in_threadpool(document_extractor.run_textract, doc.s3_key)
-            await run_in_threadpool(
-                document_extractor.store_extracted_text, doc.s3_key, text
-            )
+            await run_in_threadpool(document_extractor.store_extracted_text, doc.s3_key, text)
             doc.ocr_status = "completed"
             doc.ocr_completed_at = datetime.now(UTC)
         else:
-            await run_in_threadpool(
-                document_extractor.store_extracted_text, doc.s3_key, text
-            )
+            await run_in_threadpool(document_extractor.store_extracted_text, doc.s3_key, text)
             doc.ocr_status = "not_needed"
         await session.flush()
         logger.info(

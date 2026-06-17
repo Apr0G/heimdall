@@ -1,0 +1,70 @@
+from pydantic import BaseModel, field_validator, model_validator
+
+DENIAL_CATEGORIES = {
+    "medical_necessity",
+    "prior_auth",
+    "coding_error",
+    "bundling",
+    "timely_filing",
+    "non_covered",
+    "missing_info",
+    "wrong_payer",
+    "other",
+}
+
+APPEAL_LEVELS = {
+    "level_1_internal",
+    "peer_to_peer",
+    "level_2_internal",
+    "external_review",
+}
+
+DOC_NEEDS = {"prior_auth", "prior_treatment", "imaging", "none"}
+
+
+class AnalysisResult(BaseModel):
+    """Structured output of the analysis prompt. Lenient on enums (coerce to a
+    safe default rather than fail) so a slightly-off label doesn't burn a retry.
+    probability_band is re-derived server-side from success_probability."""
+
+    denial_category: str = "other"
+    is_appealable: bool = False
+    appealability_reason: str | None = None
+    success_probability: float | None = None
+    probability_band: str | None = None
+    reasoning_text: str | None = None
+    recommended_appeal_level: str = "level_1_internal"
+    additional_documents_needed: list[str] = []
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        cleaned: dict = {}
+        for key, value in data.items():
+            if value == "":
+                value = [] if key == "additional_documents_needed" else None
+            if key == "additional_documents_needed" and value is None:
+                value = []
+            if key == "is_appealable" and value is None:
+                value = False
+            cleaned[key] = value
+        return cleaned
+
+    @field_validator("denial_category", mode="before")
+    @classmethod
+    def _normalize_category(cls, value: object) -> str:
+        return value if value in DENIAL_CATEGORIES else "other"
+
+    @field_validator("recommended_appeal_level", mode="before")
+    @classmethod
+    def _normalize_level(cls, value: object) -> str:
+        return value if value in APPEAL_LEVELS else "level_1_internal"
+
+    @field_validator("additional_documents_needed", mode="before")
+    @classmethod
+    def _filter_docs(cls, value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [item for item in value if item in DOC_NEEDS]
