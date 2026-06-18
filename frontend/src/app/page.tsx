@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { DeadlineBadge, OutcomeBadge, StatusBadge } from "@/components/case-badges";
@@ -100,6 +101,7 @@ export default function DashboardPage() {
 }
 
 function CasesTable({ items, now }: { items: CaseListItem[]; now: number }) {
+  const router = useRouter();
   return (
     <div className="rounded-md border">
       <Table>
@@ -118,7 +120,11 @@ function CasesTable({ items, now }: { items: CaseListItem[]; now: number }) {
         </TableHeader>
         <TableBody>
           {items.map((c) => (
-            <TableRow key={c.id}>
+            <TableRow
+              key={c.id}
+              onClick={() => router.push(`/cases/${c.id}`)}
+              className="cursor-pointer"
+            >
               <TableCell className="font-medium">{c.patient_initials ?? "—"}</TableCell>
               <TableCell>{formatDate(c.date_of_service)}</TableCell>
               <TableCell>

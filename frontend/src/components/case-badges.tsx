@@ -44,3 +44,14 @@ export function OutcomeBadge({ result }: { result: string }) {
   const o = OUTCOME_TONE[result] ?? { label: result, tone: MUTED };
   return <Badge className={cn("border-transparent", o.tone)}>{o.label}</Badge>;
 }
+
+const BAND_TONE: Record<string, string> = { low: RED, moderate: AMBER, high: GREEN };
+
+export function ProbabilityBadge({ band }: { band: string | null }) {
+  if (!band) return <span className="text-muted-foreground">—</span>;
+  return (
+    <Badge className={cn("border-transparent px-3 py-1 text-sm capitalize", BAND_TONE[band] ?? MUTED)}>
+      {band}
+    </Badge>
+  );
+}

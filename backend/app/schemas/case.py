@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -69,3 +69,98 @@ class CreateCaseRequest(BaseModel):
 class CreateCaseResponse(BaseModel):
     id: UUID
     status: str
+
+
+# ---- Case detail (Phase 10) ----
+
+
+class DocumentDetail(BaseModel):
+    id: UUID
+    doc_type: str
+    original_filename: str | None
+    file_size_bytes: int | None
+    ocr_status: str
+
+
+class ExtractionDetail(BaseModel):
+    payer_name: str | None
+    plan_type: str | None
+    claim_number: str | None
+    carc_codes: list[str]
+    rarc_codes: list[str]
+    group_codes: list[str]
+    cpt_codes: list[str]
+    icd10_codes: list[str]
+    modifiers: list[str]
+    pos_codes: list[str]
+    billed_amount_cents: int | None
+    denied_amount_cents: int | None
+    confidence: float | None
+
+
+class AnalysisDetail(BaseModel):
+    denial_category: str | None
+    is_appealable: bool
+    appealability_reason: str | None
+    success_probability: float | None
+    probability_band: str | None
+    reasoning_text: str | None
+    recommended_appeal_level: str | None
+    additional_documents_needed: list[str]
+
+
+class LetterDetail(BaseModel):
+    id: UUID
+    version: int
+    status: str
+    appeal_type: str | None
+    body: str | None
+    created_at: datetime
+
+
+class OutcomeDetail(BaseModel):
+    action_taken: str | None
+    result: str | None
+    amount_recovered_cents: int | None
+    resolution_date: date | None
+    notes: str | None
+    reported_at: datetime
+
+
+class CaseDetailResponse(BaseModel):
+    id: UUID
+    status: str
+    error_message: str | None
+    patient_initials: str | None
+    payer_name: str | None
+    plan_type: str
+    claim_number: str | None
+    date_of_service: date | None
+    denial_date: date | None
+    appeal_deadline: date | None
+    billed_amount_cents: int | None
+    denied_amount_cents: int | None
+    currency: str
+
+    documents: list[DocumentDetail]
+    extraction: ExtractionDetail | None
+    analysis: AnalysisDetail | None
+    letter: LetterDetail | None
+    outcome: OutcomeDetail | None
+
+
+class CaseStatusResponse(BaseModel):
+    id: UUID
+    status: str
+
+
+class OutcomeRequest(BaseModel):
+    result: str
+    action_taken: str = "appealed"
+    amount_recovered_cents: int | None = None
+    resolution_date: date | None = None
+    notes: str | None = None
+
+
+class DownloadUrlResponse(BaseModel):
+    url: str

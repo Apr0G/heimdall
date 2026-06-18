@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -5,6 +7,7 @@ from fastapi import (
     HTTPException,
     Query,
     Request,
+    Response,
     status,
 )
 from sqlalchemy import func, select
@@ -13,16 +16,33 @@ from starlette.concurrency import run_in_threadpool
 
 from app.core.auth import get_current_user
 from app.db.session import get_db
-from app.models import Analysis, Case, Document, Extraction, Outcome, User
+from app.models import (
+    Analysis,
+    AppealLetter,
+    Case,
+    Document,
+    Extraction,
+    Outcome,
+    User,
+)
 from app.schemas.case import (
+    AnalysisDetail,
+    CaseDetailResponse,
     CaseListItem,
     CaseListResponse,
+    CaseStatusResponse,
     CreateCaseRequest,
     CreateCaseResponse,
+    DocumentDetail,
+    ExtractionDetail,
+    LetterDetail,
+    OutcomeDetail,
+    OutcomeRequest,
     UploadSlot,
     UploadUrlsRequest,
     UploadUrlsResponse,
 )
+from app.services import pdf_gen
 from app.services.audit import log_audit, safe_ip
 from app.services.pipeline import run_full_pipeline
 from app.services.s3 import (
@@ -35,6 +55,14 @@ from app.services.s3 import (
 )
 
 router = APIRouter(prefix="/api/cases", tags=["cases"])
+
+VALID_OUTCOME_RESULTS = {"overturned", "upheld", "partial", "pending", "withdrawn"}
+# A reported outcome resolves the case unless it is still pending.
+_TERMINAL_RESULTS = {"overturned", "upheld", "partial", "withdrawn"}
+
+
+def case_status_after_outcome(result: str) -> str:
+    return "resolved" if result in _TERMINAL_RESULTS else "submitted"
 
 
 @router.get("", response_model=CaseListResponse)
@@ -111,13 +139,9 @@ async def list_cases(
             denied_amount_cents=c.denied_amount_cents,
             currency=c.currency,
             carc_codes=extractions[c.id].carc_codes if c.id in extractions else [],
-            denial_category=(
-                analyses[c.id].denial_category if c.id in analyses else None
-            ),
+            denial_category=(analyses[c.id].denial_category if c.id in analyses else None),
             is_appealable=analyses[c.id].is_appealable if c.id in analyses else None,
-            probability_band=(
-                analyses[c.id].probability_band if c.id in analyses else None
-            ),
+            probability_band=(analyses[c.id].probability_band if c.id in analyses else None),
             outcome_result=outcomes[c.id].result if c.id in outcomes else None,
             amount_recovered_cents=(
                 outcomes[c.id].amount_recovered_cents if c.id in outcomes else None
@@ -126,9 +150,7 @@ async def list_cases(
         for c in cases
     ]
 
-    return CaseListResponse(
-        items=items, total=total or 0, page=page, page_size=page_size
-    )
+    return CaseListResponse(items=items, total=total or 0, page=page, page_size=page_size)
 
 
 def _require_three_docs(doc_types: list[str]) -> None:
@@ -171,9 +193,7 @@ async def create_case(
         if not doc.s3_key.startswith(tmp_prefix):
             raise HTTPException(status_code=400, detail="Invalid upload key")
         if await run_in_threadpool(head_object, doc.s3_key) is None:
-            raise HTTPException(
-                status_code=400, detail=f"Upload missing for {doc.doc_type}"
-            )
+            raise HTTPException(status_code=400, detail=f"Upload missing for {doc.doc_type}")
 
     case = Case(
         practice_id=current_user.practice_id,
@@ -230,3 +250,241 @@ async def create_case(
     background_tasks.add_task(run_full_pipeline, case.id)
 
     return CreateCaseResponse(id=case.id, status=case.status)
+
+
+async def _get_owned_case(session: AsyncSession, case_id: UUID, user: User) -> Case:
+    """Fetch a case scoped to the caller's practice, or 404. 404 (not 403) so we
+    don't leak which case ids exist across practices."""
+    case = await session.get(Case, case_id)
+    if case is None or case.practice_id != user.practice_id:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return case
+
+
+async def _latest(session: AsyncSession, model, case_id: UUID, order):
+    return await session.scalar(
+        select(model).where(model.case_id == case_id).order_by(order).limit(1)
+    )
+
+
+@router.get("/{case_id}", response_model=CaseDetailResponse)
+async def get_case(
+    case_id: UUID,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> CaseDetailResponse:
+    case = await _get_owned_case(session, case_id, current_user)
+
+    documents = (
+        await session.scalars(
+            select(Document).where(Document.case_id == case_id).order_by(Document.uploaded_at.asc())
+        )
+    ).all()
+    extraction = await _latest(session, Extraction, case_id, Extraction.created_at.desc())
+    analysis = await _latest(session, Analysis, case_id, Analysis.created_at.desc())
+    letter = await _latest(session, AppealLetter, case_id, AppealLetter.version.desc())
+    outcome = await session.scalar(select(Outcome).where(Outcome.case_id == case_id))
+
+    return CaseDetailResponse(
+        id=case.id,
+        status=case.status,
+        error_message=case.error_message,
+        patient_initials=case.patient_initials,
+        payer_name=case.payer_name,
+        plan_type=case.plan_type,
+        claim_number=case.claim_number,
+        date_of_service=case.date_of_service,
+        denial_date=case.denial_date,
+        appeal_deadline=case.appeal_deadline,
+        billed_amount_cents=case.billed_amount_cents,
+        denied_amount_cents=case.denied_amount_cents,
+        currency=case.currency,
+        documents=[
+            DocumentDetail(
+                id=d.id,
+                doc_type=d.doc_type,
+                original_filename=d.original_filename,
+                file_size_bytes=d.file_size_bytes,
+                ocr_status=d.ocr_status,
+            )
+            for d in documents
+        ],
+        extraction=(
+            ExtractionDetail(
+                payer_name=extraction.payer_name,
+                plan_type=extraction.plan_type,
+                claim_number=extraction.claim_number,
+                carc_codes=extraction.carc_codes,
+                rarc_codes=extraction.rarc_codes,
+                group_codes=extraction.group_codes,
+                cpt_codes=extraction.cpt_codes,
+                icd10_codes=extraction.icd10_codes,
+                modifiers=extraction.modifiers,
+                pos_codes=extraction.pos_codes,
+                billed_amount_cents=extraction.billed_amount_cents,
+                denied_amount_cents=extraction.denied_amount_cents,
+                confidence=(
+                    float(extraction.confidence) if extraction.confidence is not None else None
+                ),
+            )
+            if extraction
+            else None
+        ),
+        analysis=(
+            AnalysisDetail(
+                denial_category=analysis.denial_category,
+                is_appealable=analysis.is_appealable,
+                appealability_reason=analysis.appealability_reason,
+                success_probability=(
+                    float(analysis.success_probability)
+                    if analysis.success_probability is not None
+                    else None
+                ),
+                probability_band=analysis.probability_band,
+                reasoning_text=analysis.reasoning_text,
+                recommended_appeal_level=analysis.recommended_appeal_level,
+                additional_documents_needed=analysis.additional_documents_needed,
+            )
+            if analysis
+            else None
+        ),
+        letter=(
+            LetterDetail(
+                id=letter.id,
+                version=letter.version,
+                status=letter.status,
+                appeal_type=letter.appeal_type,
+                body=letter.body,
+                created_at=letter.created_at,
+            )
+            if letter
+            else None
+        ),
+        outcome=(
+            OutcomeDetail(
+                action_taken=outcome.action_taken,
+                result=outcome.result,
+                amount_recovered_cents=outcome.amount_recovered_cents,
+                resolution_date=outcome.resolution_date,
+                notes=outcome.notes,
+                reported_at=outcome.reported_at,
+            )
+            if outcome
+            else None
+        ),
+    )
+
+
+@router.post("/{case_id}/mark-submitted", response_model=CaseStatusResponse)
+async def mark_submitted(
+    case_id: UUID,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> CaseStatusResponse:
+    case = await _get_owned_case(session, case_id, current_user)
+    if case.status not in {"ready", "submitted"}:
+        raise HTTPException(status_code=409, detail="Only a ready case can be marked submitted")
+    case.status = "submitted"
+    await log_audit(
+        session,
+        action="case_mark_submitted",
+        resource_type="case",
+        resource_id=case.id,
+        user_id=current_user.id,
+        practice_id=current_user.practice_id,
+        ip=safe_ip(request.client.host if request.client else None),
+        user_agent=request.headers.get("user-agent"),
+    )
+    await session.commit()
+    return CaseStatusResponse(id=case.id, status=case.status)
+
+
+@router.post("/{case_id}/outcome", response_model=CaseStatusResponse)
+async def upsert_outcome(
+    case_id: UUID,
+    body: OutcomeRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> CaseStatusResponse:
+    case = await _get_owned_case(session, case_id, current_user)
+    if body.result not in VALID_OUTCOME_RESULTS:
+        raise HTTPException(status_code=400, detail="Invalid outcome result")
+    if case.status not in {"submitted", "resolved"}:
+        raise HTTPException(
+            status_code=409, detail="Mark the case submitted before logging an outcome"
+        )
+
+    outcome = await session.scalar(select(Outcome).where(Outcome.case_id == case_id))
+    if outcome is None:
+        outcome = Outcome(case_id=case_id, source="user_reported")
+        session.add(outcome)
+    outcome.action_taken = body.action_taken
+    outcome.result = body.result
+    outcome.amount_recovered_cents = body.amount_recovered_cents
+    outcome.resolution_date = body.resolution_date
+    outcome.notes = body.notes
+    outcome.reported_by = current_user.id
+
+    case.status = case_status_after_outcome(body.result)
+    await log_audit(
+        session,
+        action="case_outcome_report",
+        resource_type="case",
+        resource_id=case.id,
+        user_id=current_user.id,
+        practice_id=current_user.practice_id,
+        ip=safe_ip(request.client.host if request.client else None),
+        user_agent=request.headers.get("user-agent"),
+        metadata={"result": body.result},
+    )
+    await session.commit()
+    return CaseStatusResponse(id=case.id, status=case.status)
+
+
+@router.post("/{case_id}/retry", response_model=CaseStatusResponse)
+async def retry_case(
+    case_id: UUID,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> CaseStatusResponse:
+    case = await _get_owned_case(session, case_id, current_user)
+    if case.status != "error":
+        raise HTTPException(status_code=409, detail="Only a failed case can be retried")
+    case.status = "processing"
+    case.error_message = None
+    await log_audit(
+        session,
+        action="case_retry",
+        resource_type="case",
+        resource_id=case.id,
+        user_id=current_user.id,
+        practice_id=current_user.practice_id,
+        ip=safe_ip(request.client.host if request.client else None),
+        user_agent=request.headers.get("user-agent"),
+    )
+    await session.commit()
+    background_tasks.add_task(run_full_pipeline, case.id)
+    return CaseStatusResponse(id=case.id, status=case.status)
+
+
+@router.get("/{case_id}/letter.pdf")
+async def download_letter_pdf(
+    case_id: UUID,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    case = await _get_owned_case(session, case_id, current_user)
+    letter = await _latest(session, AppealLetter, case_id, AppealLetter.version.desc())
+    if letter is None or not letter.body:
+        raise HTTPException(status_code=404, detail="No appeal letter for this case")
+    pdf = await run_in_threadpool(pdf_gen.render_letter_pdf, letter.body)
+    filename = f"appeal-{case.claim_number or case.id}.pdf"
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

@@ -59,13 +59,12 @@ export default function NewCasePage() {
     setFormError(null);
     setStatus(initial<SlotStatus>("uploading"));
     try {
-      await createCaseWithUploads(files as ByDoc<File>, (doc, pct) => {
+      const created = await createCaseWithUploads(files as ByDoc<File>, (doc, pct) => {
         setProgress((prev) => ({ ...prev, [doc]: pct }));
         if (pct >= 100) setStatus((prev) => ({ ...prev, [doc]: "done" }));
       });
-      // Phase 10 will route to /cases/[id]; for now the new (processing) case
-      // appears on the dashboard.
-      router.push("/");
+      // Land on the case detail page, which polls until the pipeline finishes.
+      router.push(`/cases/${created.id}`);
     } catch (err) {
       setStatus(initial<SlotStatus>("error"));
       setFormError(
