@@ -11,6 +11,7 @@ from app.models import Case, Document
 from app.services import document_extractor
 from app.services.analysis import run_ai_analysis
 from app.services.extraction import run_ai_extraction
+from app.services.letter import run_appeal_letter
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,8 @@ async def run_full_pipeline(case_id: UUID) -> None:
             await session.commit()
             await run_ai_analysis(session, case)
             await session.commit()
-            # Phase 9 continues here (letter -> ready).
+            await run_appeal_letter(session, case)
+            await session.commit()
         except Exception as exc:
             await _mark_error(session, case_id, exc)
 
@@ -83,6 +85,6 @@ async def _mark_error(session: AsyncSession, case_id: UUID, exc: Exception) -> N
     if case is not None:
         case.status = "error"
         # Exception type only — never the message (could echo a key or path).
-        case.error_message = f"Document extraction failed ({type(exc).__name__})."
+        case.error_message = f"Processing failed ({type(exc).__name__})."
         await session.commit()
     logger.exception("pipeline failed", extra={"context": {"case_id": str(case_id)}})

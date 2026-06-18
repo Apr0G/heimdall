@@ -24,7 +24,7 @@ def probability_band(probability: float | None) -> str:
     return "high"
 
 
-async def _read_clinical_text(session: AsyncSession, case: Case) -> str:
+async def read_clinical_text(session: AsyncSession, case: Case) -> str:
     doc = await session.scalar(
         select(Document).where(Document.case_id == case.id, Document.doc_type == "clinical")
     )
@@ -43,7 +43,7 @@ async def run_ai_analysis(session: AsyncSession, case: Case) -> Analysis:
         .where(Extraction.case_id == case.id)
         .order_by(Extraction.created_at.desc())
     )
-    clinical_text = await _read_clinical_text(session, case)
+    clinical_text = await read_clinical_text(session, case)
     user_prompt = analysis_prompt.build_user_prompt(
         extraction.extracted_json if extraction else {}, clinical_text
     )
