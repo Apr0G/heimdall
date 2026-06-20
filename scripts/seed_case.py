@@ -1,15 +1,17 @@
 """Seed synthetic demo cases so the dashboard has data to show.
 
-Creates three cases spanning the deadline badge colors (red < 7d, yellow < 14d,
-green otherwise) plus one resolved case with an outcome. Idempotent by claim
-number. Synthetic data only. Run with the backend venv active, from repo root:
+Creates cases spanning the deadline badge colors (red < 7d, yellow < 14d,
+green otherwise), one resolved case with an outcome, and one submitted case left
+unreported for 35 days (to exercise the Phase 11 outcome-reminder banner).
+Idempotent by claim number. Synthetic data only. Run with the backend venv
+active, from repo root:
 
     python scripts/seed_case.py
 """
 
 import asyncio
 import sys
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -82,6 +84,25 @@ DEMO_CASES = [
             "source": "user_reported",
         },
     },
+    {
+        "claim_number": "CLM-TEST-0004",
+        "status": "submitted",
+        "patient_initials": "R.S.",
+        "payer_name": "Humana",
+        "plan_type": "commercial",
+        "date_of_service": TODAY - timedelta(days=70),
+        "denial_date": TODAY - timedelta(days=45),
+        "appeal_deadline": TODAY + timedelta(days=15),  # green
+        "submitted_at": datetime.now(UTC) - timedelta(days=35),  # overdue for outcome
+        "billed_amount_cents": 95000,
+        "denied_amount_cents": 95000,
+        "carc_codes": ["CO-197"],
+        "denial_category": "prior_auth",
+        "is_appealable": True,
+        "probability_band": "moderate",
+        "success_probability": "0.580",
+        "outcome": None,
+    },
 ]
 
 
@@ -128,6 +149,7 @@ async def seed() -> None:
                 appeal_deadline=spec["appeal_deadline"],
                 billed_amount_cents=spec["billed_amount_cents"],
                 denied_amount_cents=spec["denied_amount_cents"],
+                submitted_at=spec.get("submitted_at"),
             )
             session.add(case)
             await session.flush()
