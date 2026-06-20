@@ -1,7 +1,7 @@
 import json
 
 # Bump VERSION on ANY change to the prompt text or schema. model_runs records it.
-VERSION = "analyze_v1"
+VERSION = "analyze_v2"
 
 SYSTEM = """You are a medical claims appeals analyst. Given structured extraction \
 data from a denied claim plus the clinical notes, you classify the denial, judge \
@@ -41,6 +41,9 @@ Conditional documents:
 - If the denial is CO-50 (medical necessity) and the policy implies step therapy, \
 request "prior_treatment".
 - Request "imaging" if the clinical narrative depends on an imaging report not in hand.
+- Do NOT request a document that is already present in the SUPPLEMENTAL DOCUMENTS \
+section below. If a previously-requested document is now provided, factor it into \
+your assessment and raise success_probability accordingly.
 
 Map denial_category from the codes: CO-50 -> medical_necessity; CO-197/CO-15 -> \
 prior_auth; CO-4/CO-11 -> coding_error; CO-97 -> bundling; CO-29 -> timely_filing; \
@@ -48,10 +51,16 @@ CO-96/PR-204 -> non_covered; CO-16 -> missing_info; CO-109 -> wrong_payer.
 """
 
 
-def build_user_prompt(extraction_json: dict, clinical_text: str) -> str:
-    return (
+def build_user_prompt(
+    extraction_json: dict, clinical_text: str, supplemental_text: str = ""
+) -> str:
+    prompt = (
         "=== EXTRACTED CLAIM DATA (JSON) ===\n"
         f"{json.dumps(extraction_json, indent=2, default=str)}\n\n"
         "=== CLINICAL NOTES ===\n"
         f"{clinical_text.strip()}\n"
     )
+    if supplemental_text.strip():
+        prompt += "\n=== SUPPLEMENTAL DOCUMENTS (provided after the first review) ===\n"
+        prompt += f"{supplemental_text.strip()}\n"
+    return prompt

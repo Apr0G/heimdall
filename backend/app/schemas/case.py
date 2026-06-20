@@ -71,6 +71,12 @@ class CreateCaseResponse(BaseModel):
     status: str
 
 
+class ReanalyzeRequest(BaseModel):
+    """Conditional documents to add before re-running analysis + letter (Phase 12)."""
+
+    documents: list[NewCaseDocument]
+
+
 # ---- Case detail (Phase 10) ----
 
 
@@ -145,7 +151,8 @@ class CaseDetailResponse(BaseModel):
     documents: list[DocumentDetail]
     extraction: ExtractionDetail | None
     analysis: AnalysisDetail | None
-    letter: LetterDetail | None
+    letter: LetterDetail | None  # latest version (convenience)
+    letters: list[LetterDetail]  # all versions, newest first
     outcome: OutcomeDetail | None
 
 

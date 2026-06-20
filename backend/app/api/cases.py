@@ -41,13 +41,15 @@ from app.schemas.case import (
     OutcomeDetail,
     OutcomeRequest,
     PendingOutcomeItem,
+    ReanalyzeRequest,
     UploadSlot,
     UploadUrlsRequest,
     UploadUrlsResponse,
 )
 from app.services import pdf_gen
+from app.services.analysis import SUPPLEMENTAL_DOC_TYPES
 from app.services.audit import log_audit, safe_ip
-from app.services.pipeline import run_full_pipeline
+from app.services.pipeline import run_full_pipeline, run_reanalysis
 from app.services.s3 import (
     REQUIRED_DOC_TYPES,
     case_document_key,
@@ -371,8 +373,26 @@ async def get_case(
     ).all()
     extraction = await _latest(session, Extraction, case_id, Extraction.created_at.desc())
     analysis = await _latest(session, Analysis, case_id, Analysis.created_at.desc())
-    letter = await _latest(session, AppealLetter, case_id, AppealLetter.version.desc())
+    letters = (
+        await session.scalars(
+            select(AppealLetter)
+            .where(AppealLetter.case_id == case_id)
+            .order_by(AppealLetter.version.desc())
+        )
+    ).all()
     outcome = await session.scalar(select(Outcome).where(Outcome.case_id == case_id))
+
+    letter_details = [
+        LetterDetail(
+            id=ltr.id,
+            version=ltr.version,
+            status=ltr.status,
+            appeal_type=ltr.appeal_type,
+            body=ltr.body,
+            created_at=ltr.created_at,
+        )
+        for ltr in letters
+    ]
 
     return CaseDetailResponse(
         id=case.id,
@@ -437,18 +457,8 @@ async def get_case(
             if analysis
             else None
         ),
-        letter=(
-            LetterDetail(
-                id=letter.id,
-                version=letter.version,
-                status=letter.status,
-                appeal_type=letter.appeal_type,
-                body=letter.body,
-                created_at=letter.created_at,
-            )
-            if letter
-            else None
-        ),
+        letter=letter_details[0] if letter_details else None,
+        letters=letter_details,
         outcome=(
             OutcomeDetail(
                 action_taken=outcome.action_taken,
@@ -579,3 +589,101 @@ async def download_letter_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+def _require_supplemental_types(doc_types: list[str]) -> None:
+    bad = [d for d in doc_types if d not in SUPPLEMENTAL_DOC_TYPES]
+    if bad or not doc_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Additional documents must be one of: {', '.join(SUPPLEMENTAL_DOC_TYPES)}",
+        )
+
+
+@router.post("/{case_id}/additional-upload-urls", response_model=UploadUrlsResponse)
+async def create_additional_upload_urls(
+    case_id: UUID,
+    body: UploadUrlsRequest,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> UploadUrlsResponse:
+    await _get_owned_case(session, case_id, current_user)
+    _require_supplemental_types([d.doc_type for d in body.documents])
+    uploads: list[UploadSlot] = []
+    for doc in body.documents:
+        if doc.content_type != "application/pdf":
+            raise HTTPException(status_code=400, detail="Only PDF files are accepted")
+        key = temp_upload_key(current_user.practice_id)
+        url = await run_in_threadpool(presigned_put_url, key, doc.content_type)
+        uploads.append(UploadSlot(doc_type=doc.doc_type, s3_key=key, upload_url=url))
+    return UploadUrlsResponse(uploads=uploads)
+
+
+@router.post("/{case_id}/reanalyze", response_model=CaseStatusResponse)
+async def reanalyze_case(
+    case_id: UUID,
+    body: ReanalyzeRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> CaseStatusResponse:
+    """Attach conditional documents to a ready case, then re-run analysis + letter
+    (drafting the next letter version) in the background."""
+    case = await _get_owned_case(session, case_id, current_user)
+    if case.status != "ready":
+        raise HTTPException(status_code=409, detail="Only a ready case can be reanalyzed")
+    _require_supplemental_types([d.doc_type for d in body.documents])
+
+    tmp_prefix = f"tmp-uploads/{current_user.practice_id}/"
+    for doc in body.documents:
+        if not doc.s3_key.startswith(tmp_prefix):
+            raise HTTPException(status_code=400, detail="Invalid upload key")
+        if await run_in_threadpool(head_object, doc.s3_key) is None:
+            raise HTTPException(status_code=400, detail=f"Upload missing for {doc.doc_type}")
+
+    ip = safe_ip(request.client.host if request.client else None)
+    user_agent = request.headers.get("user-agent")
+    for doc in body.documents:
+        final_key = case_document_key(current_user.practice_id, case.id, doc.doc_type)
+        await run_in_threadpool(move_object, doc.s3_key, final_key)
+        head = await run_in_threadpool(head_object, final_key)
+        session.add(
+            Document(
+                case_id=case.id,
+                doc_type=doc.doc_type,
+                s3_key=final_key,
+                original_filename=doc.filename,
+                mime_type="application/pdf",
+                file_size_bytes=head.get("ContentLength") if head else None,
+                uploaded_by=current_user.id,
+            )
+        )
+        await log_audit(
+            session,
+            action="document_upload",
+            resource_type="case",
+            resource_id=case.id,
+            user_id=current_user.id,
+            practice_id=current_user.practice_id,
+            ip=ip,
+            user_agent=user_agent,
+            metadata={"doc_type": doc.doc_type, "reanalyze": True},
+        )
+
+    case.status = "processing"
+    await log_audit(
+        session,
+        action="case_reanalyze",
+        resource_type="case",
+        resource_id=case.id,
+        user_id=current_user.id,
+        practice_id=current_user.practice_id,
+        ip=ip,
+        user_agent=user_agent,
+        metadata={"document_count": len(body.documents)},
+    )
+    await session.commit()
+
+    background_tasks.add_task(run_reanalysis, case.id)
+    return CaseStatusResponse(id=case.id, status=case.status)

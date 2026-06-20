@@ -9,7 +9,7 @@ from app.services.letter import (
 
 
 def test_prompt_version_is_pinned():
-    assert letter_prompt.VERSION == "letter_v1"
+    assert letter_prompt.VERSION == "letter_v2"
 
 
 def test_unknown_appeal_type_normalized():

@@ -11,6 +11,7 @@ import {
   ProbabilityBadge,
   StatusBadge,
 } from "@/components/case-badges";
+import { FileDrop, type SlotStatus } from "@/components/file-drop";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,12 +31,14 @@ import {
   downloadLetterPdf,
   fetchCase,
   fetchDocumentDownloadUrl,
+  type LetterDetail,
   markSubmitted,
   type OutcomePayload,
   retryCase,
   submitOutcome,
 } from "@/lib/cases";
 import { formatCents, formatDate, humanize } from "@/lib/format";
+import { type AdditionalDocType, reanalyzeWithUploads } from "@/lib/upload";
 
 const DISCLAIMER =
   "This is an AI-generated estimate based on case characteristics, not a guarantee. Final decisions rest with the practice.";
@@ -44,6 +47,16 @@ const DOC_LABELS: Record<string, string> = {
   denial: "Denial document",
   claim: "Original claim",
   clinical: "Clinical notes",
+  prior_auth: "Prior authorization",
+  prior_treatment: "Prior treatment records",
+};
+
+// Conditional doc types the user can upload to trigger a re-draft (Phase 12).
+const UPLOADABLE_ADDITIONAL: AdditionalDocType[] = ["prior_auth", "prior_treatment"];
+
+const ADDITIONAL_HINTS: Record<AdditionalDocType, string> = {
+  prior_auth: "The payer's prior authorization / precertification approval.",
+  prior_treatment: "Records showing prior conservative treatment (e.g. failed step therapy).",
 };
 
 export default function CaseDetailPage() {
@@ -98,6 +111,7 @@ export default function CaseDetailPage() {
             <AnalysisCard c={data} />
           </div>
           <DocumentsCard c={data} />
+          <AdditionalDocsCard c={data} onChanged={invalidate} />
           <LetterCard c={data} onChanged={invalidate} />
           {(data.status === "submitted" || data.status === "resolved") && (
             <OutcomeCard c={data} onChanged={invalidate} />
@@ -296,6 +310,89 @@ function DocumentsCard({ c }: { c: CaseDetail }) {
   );
 }
 
+function AdditionalDocsCard({ c, onChanged }: { c: CaseDetail; onChanged: () => void }) {
+  const requested = c.analysis?.additional_documents_needed ?? [];
+  const uploaded = new Set(c.documents.map((d) => d.doc_type));
+  const pending = UPLOADABLE_ADDITIONAL.filter(
+    (t) => requested.includes(t) && !uploaded.has(t),
+  );
+
+  const [files, setFiles] = useState<Record<string, File | null>>({});
+  const [status, setStatus] = useState<Record<string, SlotStatus>>({});
+  const [progress, setProgress] = useState<Record<string, number>>({});
+  const [errors, setErrors] = useState<Record<string, string | null>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  // Only render when the analysis asked for docs we can actually accept.
+  if (pending.length === 0) return null;
+
+  const selected = pending.filter((t) => files[t]);
+
+  function select(type: string, file: File | null, error: string | null) {
+    setFiles((p) => ({ ...p, [type]: file }));
+    setErrors((p) => ({ ...p, [type]: error }));
+    setStatus((p) => ({ ...p, [type]: "idle" }));
+    setProgress((p) => ({ ...p, [type]: 0 }));
+  }
+
+  async function onSubmit() {
+    if (selected.length === 0 || submitting) return;
+    setSubmitting(true);
+    setFormError(null);
+    setStatus((p) => {
+      const next = { ...p };
+      for (const t of selected) next[t] = "uploading";
+      return next;
+    });
+    try {
+      await reanalyzeWithUploads(
+        c.id,
+        selected.map((t) => ({ docType: t, file: files[t] as File })),
+        (docType, pct) => {
+          setProgress((p) => ({ ...p, [docType]: pct }));
+          if (pct >= 100) setStatus((p) => ({ ...p, [docType]: "done" }));
+        },
+      );
+      onChanged();
+    } catch {
+      setFormError("Upload failed. Please try again.");
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Additional documents requested</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-sm text-muted-foreground">
+          These documents would strengthen the appeal. Upload what you have and we&rsquo;ll
+          re-draft the letter with them.
+        </p>
+        {pending.map((t) => (
+          <FileDrop
+            key={t}
+            label={DOC_LABELS[t] ?? humanize(t)}
+            hint={ADDITIONAL_HINTS[t]}
+            example={ADDITIONAL_HINTS[t]}
+            file={files[t] ?? null}
+            status={status[t] ?? "idle"}
+            progress={progress[t] ?? 0}
+            error={errors[t] ?? null}
+            onSelect={(file, error) => select(t, file, error)}
+          />
+        ))}
+        {formError && <p className="text-sm text-destructive">{formError}</p>}
+        <Button onClick={onSubmit} disabled={selected.length === 0 || submitting}>
+          {submitting ? "Re-analyzing…" : "Re-run with these documents"}
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 function LetterCard({ c, onChanged }: { c: CaseDetail; onChanged: () => void }) {
   const [copied, setCopied] = useState(false);
   const submit = useMutation({ mutationFn: () => markSubmitted(c.id), onSuccess: onChanged });
@@ -355,8 +452,46 @@ function LetterCard({ c, onChanged }: { c: CaseDetail; onChanged: () => void }) 
         <pre className="max-h-[32rem] overflow-auto whitespace-pre-wrap rounded-md border bg-muted/30 p-4 font-sans text-sm leading-relaxed">
           {letter.body}
         </pre>
+        {c.letters.length > 1 && <LetterHistory letters={c.letters.slice(1)} />}
       </CardContent>
     </Card>
+  );
+}
+
+function LetterHistory({ letters }: { letters: LetterDetail[] }) {
+  const [open, setOpen] = useState<string | null>(null);
+  return (
+    <div className="border-t pt-3">
+      <p className="mb-2 text-xs font-medium text-muted-foreground">
+        Previous versions ({letters.length})
+      </p>
+      <div className="space-y-2">
+        {letters.map((l) => (
+          <div key={l.id} className="rounded-md border">
+            <button
+              type="button"
+              onClick={() => setOpen((o) => (o === l.id ? null : l.id))}
+              className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-muted/40"
+            >
+              <span>
+                v{l.version} · {humanize(l.appeal_type)}
+                <span className="ml-2 text-xs text-muted-foreground">
+                  {formatDate(l.created_at.slice(0, 10))}
+                </span>
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {open === l.id ? "Hide" : "View"}
+              </span>
+            </button>
+            {open === l.id && (
+              <pre className="max-h-80 overflow-auto whitespace-pre-wrap border-t bg-muted/20 p-3 font-sans text-xs leading-relaxed">
+                {l.body}
+              </pre>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

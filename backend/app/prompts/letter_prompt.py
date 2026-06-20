@@ -1,7 +1,7 @@
 import json
 
 # Bump VERSION on ANY change to the prompt text or schema. model_runs records it.
-VERSION = "letter_v1"
+VERSION = "letter_v2"
 
 SYSTEM = """You are a senior medical claims appeals writer for a US healthcare \
 practice. Using the structured claim data, the denial analysis, and the clinical \
@@ -34,7 +34,10 @@ findings that are not in the notes.
 5. Policy citation: cite the payer's own medical/coverage policy back at them. \
 If no specific policy number is available, reference it generically (e.g. "your \
 medical policy on <topic>") and frame the argument as meeting its criteria.
-6. Evidence list: a short enumerated list of the attached documents.
+6. Evidence list: a short enumerated list of the attached documents. If \
+SUPPLEMENTAL DOCUMENTS are provided (e.g. a prior authorization approval or prior \
+treatment records), list and cite them here, and weave them into the clinical \
+narrative and policy argument as proof the criteria are met.
 7. The ask: "We request that you reverse this denial and remit payment of \
 <denied_amount>." State the dollar amount exactly as provided.
 8. Signature line: "Sincerely," then the provider/practice name, NPI, and Tax ID.
@@ -53,8 +56,9 @@ def build_user_prompt(
     extraction_json: dict,
     analysis_json: dict,
     clinical_text: str,
+    supplemental_text: str = "",
 ) -> str:
-    return (
+    prompt = (
         "=== PRACTICE & CLAIM HEADER (use for the header block) ===\n"
         f"{json.dumps(letterhead, indent=2, default=str)}\n\n"
         "=== EXTRACTED CLAIM DATA (JSON) ===\n"
@@ -64,3 +68,7 @@ def build_user_prompt(
         "=== CLINICAL NOTES ===\n"
         f"{clinical_text.strip()}\n"
     )
+    if supplemental_text.strip():
+        prompt += "\n=== SUPPLEMENTAL DOCUMENTS ===\n"
+        prompt += f"{supplemental_text.strip()}\n"
+    return prompt

@@ -24,14 +24,43 @@ def probability_band(probability: float | None) -> str:
     return "high"
 
 
+# Conditional documents a doctor can add after the first review (Phase 12).
+SUPPLEMENTAL_DOC_TYPES = ("prior_auth", "prior_treatment")
+
+
+async def _read_doc_text(session: AsyncSession, doc: Document) -> str:
+    raw = await run_in_threadpool(s3.get_bytes, s3.extracted_text_key(doc.s3_key))
+    return raw.decode("utf-8", errors="replace")
+
+
 async def read_clinical_text(session: AsyncSession, case: Case) -> str:
     doc = await session.scalar(
         select(Document).where(Document.case_id == case.id, Document.doc_type == "clinical")
     )
     if doc is None:
         return ""
-    raw = await run_in_threadpool(s3.get_bytes, s3.extracted_text_key(doc.s3_key))
-    return raw.decode("utf-8", errors="replace")
+    return await _read_doc_text(session, doc)
+
+
+async def read_supplemental_text(session: AsyncSession, case: Case) -> str:
+    """Concatenate the text of any conditional documents the doctor added after
+    the first review (prior auth, prior treatment), each labeled by type."""
+    docs = (
+        await session.scalars(
+            select(Document)
+            .where(
+                Document.case_id == case.id,
+                Document.doc_type.in_(SUPPLEMENTAL_DOC_TYPES),
+            )
+            .order_by(Document.uploaded_at.asc())
+        )
+    ).all()
+    sections = []
+    for doc in docs:
+        text = await _read_doc_text(session, doc)
+        if text.strip():
+            sections.append(f"[{doc.doc_type.upper()}]\n{text.strip()}")
+    return "\n\n".join(sections)
 
 
 async def run_ai_analysis(session: AsyncSession, case: Case) -> Analysis:
@@ -44,8 +73,11 @@ async def run_ai_analysis(session: AsyncSession, case: Case) -> Analysis:
         .order_by(Extraction.created_at.desc())
     )
     clinical_text = await read_clinical_text(session, case)
+    supplemental_text = await read_supplemental_text(session, case)
     user_prompt = analysis_prompt.build_user_prompt(
-        extraction.extracted_json if extraction else {}, clinical_text
+        extraction.extracted_json if extraction else {},
+        clinical_text,
+        supplemental_text,
     )
 
     outcome = await claude_client.complete_json(

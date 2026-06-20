@@ -8,7 +8,7 @@ from app.models import Analysis, AppealLetter, Case, Extraction, Practice
 from app.prompts import letter_prompt
 from app.schemas.letter import LetterDraft
 from app.services import claude_client
-from app.services.analysis import read_clinical_text
+from app.services.analysis import read_clinical_text, read_supplemental_text
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +79,7 @@ async def run_appeal_letter(session: AsyncSession, case: Case) -> AppealLetter |
     )
     practice = await session.get(Practice, case.practice_id)
     clinical_text = await read_clinical_text(session, case)
+    supplemental_text = await read_supplemental_text(session, case)
 
     analysis_json = {
         "denial_category": analysis.denial_category,
@@ -96,6 +97,7 @@ async def run_appeal_letter(session: AsyncSession, case: Case) -> AppealLetter |
         extraction.extracted_json if extraction else {},
         analysis_json,
         clinical_text,
+        supplemental_text,
     )
 
     outcome = await claude_client.complete_json(

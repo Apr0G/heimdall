@@ -114,6 +114,7 @@ export type CaseDetail = {
   extraction: ExtractionDetail | null;
   analysis: AnalysisDetail | null;
   letter: LetterDetail | null;
+  letters: LetterDetail[];
   outcome: OutcomeDetail | null;
 };
 
