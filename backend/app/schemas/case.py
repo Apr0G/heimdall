@@ -164,3 +164,24 @@ class OutcomeRequest(BaseModel):
 
 class DownloadUrlResponse(BaseModel):
     url: str
+
+
+# ---- Dashboard summary / flywheel (Phase 11) ----
+
+
+class PendingOutcomeItem(BaseModel):
+    id: UUID
+    patient_initials: str | None
+    payer_name: str | None
+    denied_amount_cents: int | None
+    currency: str
+    submitted_days_ago: int
+
+
+class CaseSummaryResponse(BaseModel):
+    month_case_count: int
+    resolved_count: int
+    win_count: int
+    win_rate: float | None
+    total_recovered_cents: int
+    pending_outcomes: list[PendingOutcomeItem]

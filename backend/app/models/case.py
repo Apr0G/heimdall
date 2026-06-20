@@ -1,7 +1,7 @@
 import uuid
-from datetime import date
+from datetime import date, datetime
 
-from sqlalchemy import BigInteger, Date, ForeignKey, Index, Text, text
+from sqlalchemy import TIMESTAMP, BigInteger, Date, ForeignKey, Index, Text, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -22,9 +22,7 @@ class Case(Base, UUIDPrimaryKey, TimestampMixin):
         ForeignKey("users.id", ondelete="RESTRICT"),
         nullable=False,
     )
-    status: Mapped[str] = mapped_column(
-        case_status, nullable=False, server_default=text("'draft'")
-    )
+    status: Mapped[str] = mapped_column(case_status, nullable=False, server_default=text("'draft'"))
     payer_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     plan_type: Mapped[str] = mapped_column(
         plan_type, nullable=False, server_default=text("'unknown'")
@@ -37,11 +35,12 @@ class Case(Base, UUIDPrimaryKey, TimestampMixin):
     appeal_deadline: Mapped[date | None] = mapped_column(Date, nullable=True)
     billed_amount_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     denied_amount_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    currency: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=text("'USD'")
-    )
+    currency: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'USD'"))
     # Populated when the pipeline fails (status='error'). Never contains PHI.
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # When the doctor marked the appeal submitted; drives the "report your
+    # outcome" reminder (Phase 11). Null until the case is submitted.
+    submitted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     __table_args__ = (
         Index("ix_cases_practice_status", "practice_id", "status"),

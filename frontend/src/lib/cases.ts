@@ -152,6 +152,31 @@ export async function fetchDocumentDownloadUrl(documentId: string): Promise<stri
   return res.data.url;
 }
 
+// ---- Dashboard summary / flywheel (Phase 11) ----
+
+export type PendingOutcomeItem = {
+  id: string;
+  patient_initials: string | null;
+  payer_name: string | null;
+  denied_amount_cents: number | null;
+  currency: string;
+  submitted_days_ago: number;
+};
+
+export type CaseSummary = {
+  month_case_count: number;
+  resolved_count: number;
+  win_count: number;
+  win_rate: number | null;
+  total_recovered_cents: number;
+  pending_outcomes: PendingOutcomeItem[];
+};
+
+export async function fetchSummary(): Promise<CaseSummary> {
+  const res = await api.get<CaseSummary>("/api/cases/summary");
+  return res.data;
+}
+
 /** Fetch the server-generated letter PDF (auth header required) and save it. */
 export async function downloadLetterPdf(id: string, filename: string): Promise<void> {
   const res = await api.get(`/api/cases/${id}/letter.pdf`, { responseType: "blob" });

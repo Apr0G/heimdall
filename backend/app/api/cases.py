@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import (
@@ -31,6 +32,7 @@ from app.schemas.case import (
     CaseListItem,
     CaseListResponse,
     CaseStatusResponse,
+    CaseSummaryResponse,
     CreateCaseRequest,
     CreateCaseResponse,
     DocumentDetail,
@@ -38,6 +40,7 @@ from app.schemas.case import (
     LetterDetail,
     OutcomeDetail,
     OutcomeRequest,
+    PendingOutcomeItem,
     UploadSlot,
     UploadUrlsRequest,
     UploadUrlsResponse,
@@ -59,10 +62,21 @@ router = APIRouter(prefix="/api/cases", tags=["cases"])
 VALID_OUTCOME_RESULTS = {"overturned", "upheld", "partial", "pending", "withdrawn"}
 # A reported outcome resolves the case unless it is still pending.
 _TERMINAL_RESULTS = {"overturned", "upheld", "partial", "withdrawn"}
+# A "win" for the recovery dashboard's win-rate.
+_WIN_RESULTS = {"overturned", "partial"}
+# Days after submission before we nag for an outcome.
+OUTCOME_REMINDER_DAYS = 30
 
 
 def case_status_after_outcome(result: str) -> str:
     return "resolved" if result in _TERMINAL_RESULTS else "submitted"
+
+
+def win_rate(win_count: int, resolved_count: int) -> float | None:
+    """Wins over resolved cases, or None when nothing has resolved yet."""
+    if resolved_count <= 0:
+        return None
+    return round(win_count / resolved_count, 3)
 
 
 @router.get("", response_model=CaseListResponse)
@@ -151,6 +165,81 @@ async def list_cases(
     ]
 
     return CaseListResponse(items=items, total=total or 0, page=page, page_size=page_size)
+
+
+@router.get("/summary", response_model=CaseSummaryResponse)
+async def case_summary(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> CaseSummaryResponse:
+    """Recovery stats + the list of submitted cases overdue for an outcome.
+
+    This is the flywheel: the practice sees their win rate and dollars
+    recovered (their benefit), and we get the outcome labels (ours).
+    """
+    pid = current_user.practice_id
+    now = datetime.now(UTC)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    month_case_count = await session.scalar(
+        select(func.count())
+        .select_from(Case)
+        .where(Case.practice_id == pid, Case.created_at >= month_start)
+    )
+
+    def _outcome_count(results: set[str]):
+        return (
+            select(func.count())
+            .select_from(Outcome)
+            .join(Case, Case.id == Outcome.case_id)
+            .where(Case.practice_id == pid, Outcome.result.in_(results))
+        )
+
+    resolved_count = await session.scalar(_outcome_count(_TERMINAL_RESULTS)) or 0
+    win_count = await session.scalar(_outcome_count(_WIN_RESULTS)) or 0
+    total_recovered = (
+        await session.scalar(
+            select(func.coalesce(func.sum(Outcome.amount_recovered_cents), 0))
+            .select_from(Outcome)
+            .join(Case, Case.id == Outcome.case_id)
+            .where(Case.practice_id == pid)
+        )
+        or 0
+    )
+
+    cutoff = now - timedelta(days=OUTCOME_REMINDER_DAYS)
+    pending_rows = (
+        await session.scalars(
+            select(Case)
+            .where(
+                Case.practice_id == pid,
+                Case.status == "submitted",
+                Case.submitted_at.is_not(None),
+                Case.submitted_at <= cutoff,
+                Case.id.not_in(select(Outcome.case_id)),
+            )
+            .order_by(Case.submitted_at.asc())
+        )
+    ).all()
+
+    return CaseSummaryResponse(
+        month_case_count=month_case_count or 0,
+        resolved_count=resolved_count,
+        win_count=win_count,
+        win_rate=win_rate(win_count, resolved_count),
+        total_recovered_cents=total_recovered,
+        pending_outcomes=[
+            PendingOutcomeItem(
+                id=c.id,
+                patient_initials=c.patient_initials,
+                payer_name=c.payer_name,
+                denied_amount_cents=c.denied_amount_cents,
+                currency=c.currency,
+                submitted_days_ago=(now - c.submitted_at).days,
+            )
+            for c in pending_rows
+        ],
+    )
 
 
 def _require_three_docs(doc_types: list[str]) -> None:
@@ -386,6 +475,8 @@ async def mark_submitted(
     if case.status not in {"ready", "submitted"}:
         raise HTTPException(status_code=409, detail="Only a ready case can be marked submitted")
     case.status = "submitted"
+    if case.submitted_at is None:
+        case.submitted_at = datetime.now(UTC)
     await log_audit(
         session,
         action="case_mark_submitted",
