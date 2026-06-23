@@ -3,6 +3,7 @@
 import axios from "axios";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { toast } from "sonner";
 
 import { FileDrop, type SlotStatus } from "@/components/file-drop";
 import { Button } from "@/components/ui/button";
@@ -67,11 +68,12 @@ export default function NewCasePage() {
       router.push(`/cases/${created.id}`);
     } catch (err) {
       setStatus(initial<SlotStatus>("error"));
-      setFormError(
+      const message =
         axios.isAxiosError(err) && err.response?.status === 401
           ? "Your session expired. Please sign in again."
-          : "Upload failed. Please try again.",
-      );
+          : "Upload failed. Please try again.";
+      setFormError(message);
+      toast.error(message);
       setSubmitting(false);
     }
   }

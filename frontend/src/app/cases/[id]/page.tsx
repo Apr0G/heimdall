@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
+import { toast } from "sonner";
 
 import {
   DeadlineBadge,
@@ -25,6 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { Spinner } from "@/components/ui/spinner";
 import { carcMeaning } from "@/lib/carc-codes";
 import {
   type CaseDetail,
@@ -37,6 +39,7 @@ import {
   retryCase,
   submitOutcome,
 } from "@/lib/cases";
+import { toastError } from "@/lib/errors";
 import { formatCents, formatDate, humanize } from "@/lib/format";
 import { type AdditionalDocType, reanalyzeWithUploads } from "@/lib/upload";
 
@@ -74,10 +77,19 @@ export default function CaseDetailPage() {
   });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["case", id] });
-  const retry = useMutation({ mutationFn: () => retryCase(id), onSuccess: invalidate });
+  const retry = useMutation({
+    mutationFn: () => retryCase(id),
+    onSuccess: invalidate,
+    onError: (e) => toastError(e),
+  });
 
   if (isLoading) {
-    return <p className="text-sm text-muted-foreground">Loading case…</p>;
+    return (
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Spinner />
+        Loading case…
+      </div>
+    );
   }
   if (isError || !data) {
     return (
@@ -277,6 +289,8 @@ function DocumentsCard({ c }: { c: CaseDetail }) {
     try {
       const url = await fetchDocumentDownloadUrl(docId);
       window.open(url, "_blank", "noopener");
+    } catch (e) {
+      toastError(e, "Couldn't open the document.");
     } finally {
       setOpening(null);
     }
@@ -322,7 +336,6 @@ function AdditionalDocsCard({ c, onChanged }: { c: CaseDetail; onChanged: () => 
   const [progress, setProgress] = useState<Record<string, number>>({});
   const [errors, setErrors] = useState<Record<string, string | null>>({});
   const [submitting, setSubmitting] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
 
   // Only render when the analysis asked for docs we can actually accept.
   if (pending.length === 0) return null;
@@ -339,7 +352,6 @@ function AdditionalDocsCard({ c, onChanged }: { c: CaseDetail; onChanged: () => 
   async function onSubmit() {
     if (selected.length === 0 || submitting) return;
     setSubmitting(true);
-    setFormError(null);
     setStatus((p) => {
       const next = { ...p };
       for (const t of selected) next[t] = "uploading";
@@ -354,9 +366,10 @@ function AdditionalDocsCard({ c, onChanged }: { c: CaseDetail; onChanged: () => 
           if (pct >= 100) setStatus((p) => ({ ...p, [docType]: "done" }));
         },
       );
+      toast.success("Re-analyzing with the new documents…");
       onChanged();
-    } catch {
-      setFormError("Upload failed. Please try again.");
+    } catch (e) {
+      toastError(e, "Upload failed. Please try again.");
       setSubmitting(false);
     }
   }
@@ -384,7 +397,6 @@ function AdditionalDocsCard({ c, onChanged }: { c: CaseDetail; onChanged: () => 
             onSelect={(file, error) => select(t, file, error)}
           />
         ))}
-        {formError && <p className="text-sm text-destructive">{formError}</p>}
         <Button onClick={onSubmit} disabled={selected.length === 0 || submitting}>
           {submitting ? "Re-analyzing…" : "Re-run with these documents"}
         </Button>
@@ -395,7 +407,14 @@ function AdditionalDocsCard({ c, onChanged }: { c: CaseDetail; onChanged: () => 
 
 function LetterCard({ c, onChanged }: { c: CaseDetail; onChanged: () => void }) {
   const [copied, setCopied] = useState(false);
-  const submit = useMutation({ mutationFn: () => markSubmitted(c.id), onSuccess: onChanged });
+  const submit = useMutation({
+    mutationFn: () => markSubmitted(c.id),
+    onSuccess: () => {
+      toast.success("Marked as submitted.");
+      onChanged();
+    },
+    onError: (e) => toastError(e),
+  });
 
   if (!c.letter) {
     return (
@@ -517,7 +536,11 @@ function OutcomeCard({ c, onChanged }: { c: CaseDetail; onChanged: () => void })
       };
       return submitOutcome(c.id, payload);
     },
-    onSuccess: onChanged,
+    onSuccess: () => {
+      toast.success("Outcome saved.");
+      onChanged();
+    },
+    onError: (e) => toastError(e),
   });
 
   // Resolved + already reported -> read-only display.
@@ -590,9 +613,6 @@ function OutcomeCard({ c, onChanged }: { c: CaseDetail; onChanged: () => void })
             <Textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
           </div>
         </div>
-        {save.isError && (
-          <p className="text-sm text-destructive">Couldn&rsquo;t save the outcome. Try again.</p>
-        )}
         <Button onClick={() => save.mutate()} disabled={save.isPending}>
           {save.isPending ? "Saving…" : existing?.result ? "Update outcome" : "Save outcome"}
         </Button>

@@ -3,6 +3,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 
+import { Disclaimer } from "@/components/disclaimer";
 import { SiteHeader } from "@/components/site-header";
 import { useAuth } from "@/lib/auth-context";
 
@@ -37,6 +38,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen flex-col">
       <SiteHeader />
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8">{children}</main>
+      <footer className="border-t">
+        <div className="mx-auto max-w-6xl px-4 py-4">
+          <Disclaimer />
+        </div>
+      </footer>
     </div>
   );
 }

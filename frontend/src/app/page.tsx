@@ -4,12 +4,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { toast } from "sonner";
 
 import { DeadlineBadge, OutcomeBadge, StatusBadge } from "@/components/case-badges";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
 import {
   Select,
   SelectContent,
@@ -27,6 +29,7 @@ import {
 } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { carcMeaning } from "@/lib/carc-codes";
+import { toastError } from "@/lib/errors";
 import {
   type CaseListItem,
   type CaseSummary,
@@ -110,7 +113,10 @@ export default function DashboardPage() {
       </div>
 
       {isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading cases…</p>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Spinner />
+          Loading cases…
+        </div>
       ) : isError ? (
         <p className="text-sm text-destructive">Couldn&rsquo;t load cases. Please try again.</p>
       ) : items.length === 0 ? (
@@ -125,7 +131,7 @@ export default function DashboardPage() {
 function CasesTable({ items, now }: { items: CaseListItem[]; now: number }) {
   const router = useRouter();
   return (
-    <div className="rounded-md border">
+    <div className="overflow-x-auto rounded-md border">
       <Table>
         <TableHeader>
           <TableRow>
@@ -258,9 +264,11 @@ function PendingBanner({ pending }: { pending: PendingOutcomeItem[] }) {
     mutationFn: ({ id, result }: { id: string; result: string }) =>
       submitOutcome(id, { result }),
     onSuccess: () => {
+      toast.success("Thanks — outcome recorded.");
       queryClient.invalidateQueries({ queryKey: ["case-summary"] });
       queryClient.invalidateQueries({ queryKey: ["cases"] });
     },
+    onError: (e) => toastError(e),
   });
 
   return (
