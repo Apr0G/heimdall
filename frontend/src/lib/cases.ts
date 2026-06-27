@@ -33,8 +33,11 @@ export type CaseFilters = {
   payer?: string;
 };
 
-export async function fetchCases(filters: CaseFilters): Promise<CaseListResponse> {
-  const params: Record<string, string> = {};
+export async function fetchCases(
+  filters: CaseFilters,
+  page = 1,
+): Promise<CaseListResponse> {
+  const params: Record<string, string> = { page: String(page) };
   if (filters.status) params.status = filters.status;
   if (filters.payer) params.payer = filters.payer;
   const res = await api.get<CaseListResponse>("/api/cases", { params });

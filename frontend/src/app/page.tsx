@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Select,
@@ -61,16 +62,21 @@ const STATUS_OPTIONS = [
 export default function DashboardPage() {
   const [status, setStatus] = useState("all");
   const [payer, setPayer] = useState("");
+  const [page, setPage] = useState(1);
   // Debounce so we don't fire a request on every keystroke.
   const debouncedPayer = useDebouncedValue(payer.trim(), 300);
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["cases", status, debouncedPayer],
+    queryKey: ["cases", status, debouncedPayer, page],
     queryFn: () =>
-      fetchCases({
-        status: status === "all" ? undefined : status,
-        payer: debouncedPayer || undefined,
-      }),
+      fetchCases(
+        {
+          status: status === "all" ? undefined : status,
+          payer: debouncedPayer || undefined,
+        },
+        page,
+      ),
+    placeholderData: keepPreviousData, // keep the old page visible while the next loads
   });
 
   const { data: summary } = useQuery({ queryKey: ["case-summary"], queryFn: fetchSummary });
@@ -98,7 +104,13 @@ export default function DashboardPage() {
       )}
 
       <div className="flex flex-wrap items-center gap-3">
-        <Select value={status} onValueChange={(value) => setStatus(value ?? "all")}>
+        <Select
+          value={status}
+          onValueChange={(value) => {
+            setStatus(value ?? "all");
+            setPage(1); // jump back to the first page on a filter change
+          }}
+        >
           <SelectTrigger className="w-48">
             <SelectValue placeholder="Status" />
           </SelectTrigger>
@@ -113,23 +125,94 @@ export default function DashboardPage() {
         <Input
           placeholder="Search payer…"
           value={payer}
-          onChange={(e) => setPayer(e.target.value)}
+          onChange={(e) => {
+            setPayer(e.target.value);
+            setPage(1);
+          }}
           className="w-64"
         />
       </div>
 
       {isLoading ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Spinner />
-          Loading cases…
-        </div>
+        <TableSkeleton />
       ) : isError ? (
         <p className="text-sm text-destructive">Couldn&rsquo;t load cases. Please try again.</p>
       ) : items.length === 0 ? (
         <EmptyState hasFilters={hasFilters} />
       ) : (
-        <CasesTable items={items} now={now} />
+        <>
+          <CasesTable items={items} now={now} />
+          {data && (
+            <Pagination
+              page={page}
+              total={data.total}
+              pageSize={data.page_size}
+              onPage={setPage}
+            />
+          )}
+        </>
       )}
+    </div>
+  );
+}
+
+function TableSkeleton() {
+  return (
+    <div className="space-y-2 rounded-md border p-4">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div key={i} className="flex items-center gap-4">
+          <Skeleton className="h-5 w-12" />
+          <Skeleton className="h-5 w-24" />
+          <Skeleton className="h-5 flex-1" />
+          <Skeleton className="h-5 w-20" />
+          <Skeleton className="h-5 w-16" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Pagination({
+  page,
+  total,
+  pageSize,
+  onPage,
+}: {
+  page: number;
+  total: number;
+  pageSize: number;
+  onPage: (p: number) => void;
+}) {
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  if (pages <= 1) return null;
+  const from = (page - 1) * pageSize + 1;
+  const to = Math.min(page * pageSize, total);
+  return (
+    <div className="flex items-center justify-between text-sm text-muted-foreground">
+      <span>
+        {from}–{to} of {total}
+      </span>
+      <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={page <= 1}
+          onClick={() => onPage(page - 1)}
+        >
+          Previous
+        </Button>
+        <span className="tabular-nums">
+          Page {page} of {pages}
+        </span>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={page >= pages}
+          onClick={() => onPage(page + 1)}
+        >
+          Next
+        </Button>
+      </div>
     </div>
   );
 }

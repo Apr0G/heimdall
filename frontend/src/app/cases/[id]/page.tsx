@@ -26,7 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Spinner } from "@/components/ui/spinner";
+import { Skeleton } from "@/components/ui/skeleton";
 import { carcMeaning } from "@/lib/carc-codes";
 import { copyToClipboard } from "@/lib/clipboard";
 import {
@@ -96,12 +96,7 @@ export default function CaseDetailPage() {
   }, [data?.status]);
 
   if (isLoading) {
-    return (
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Spinner />
-        Loading case…
-      </div>
-    );
+    return <CaseDetailSkeleton />;
   }
   if (isError || !data) {
     return (
@@ -142,6 +137,24 @@ export default function CaseDetailPage() {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+function CaseDetailSkeleton() {
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <Skeleton className="h-4 w-20" />
+        <Skeleton className="h-6 w-24" />
+      </div>
+      <Skeleton className="h-28 w-full" />
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Skeleton className="h-48" />
+        <Skeleton className="h-48" />
+      </div>
+      <Skeleton className="h-32 w-full" />
+      <Skeleton className="h-72 w-full" />
     </div>
   );
 }
