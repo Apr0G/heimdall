@@ -30,6 +30,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { carcMeaning } from "@/lib/carc-codes";
 import { toastError } from "@/lib/errors";
+import { useDebouncedValue } from "@/lib/use-debounce";
 import {
   type CaseListItem,
   type CaseSummary,
@@ -60,11 +61,16 @@ const STATUS_OPTIONS = [
 export default function DashboardPage() {
   const [status, setStatus] = useState("all");
   const [payer, setPayer] = useState("");
+  // Debounce so we don't fire a request on every keystroke.
+  const debouncedPayer = useDebouncedValue(payer.trim(), 300);
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["cases", status, payer],
+    queryKey: ["cases", status, debouncedPayer],
     queryFn: () =>
-      fetchCases({ status: status === "all" ? undefined : status, payer: payer || undefined }),
+      fetchCases({
+        status: status === "all" ? undefined : status,
+        payer: debouncedPayer || undefined,
+      }),
   });
 
   const { data: summary } = useQuery({ queryKey: ["case-summary"], queryFn: fetchSummary });
@@ -297,17 +303,26 @@ function PendingBanner({ pending }: { pending: PendingOutcomeItem[] }) {
                 </span>
               </div>
               <div className="flex flex-wrap gap-1.5">
-                {QUICK_RESULTS.map((q) => (
-                  <Button
-                    key={q.result}
-                    variant="outline"
-                    size="sm"
-                    disabled={log.isPending}
-                    onClick={() => log.mutate({ id: c.id, result: q.result })}
-                  >
-                    {q.label}
-                  </Button>
-                ))}
+                {QUICK_RESULTS.map((q) => {
+                  const isThis =
+                    log.isPending &&
+                    log.variables?.id === c.id &&
+                    log.variables?.result === q.result;
+                  // Disable this case's buttons while one is in flight; other
+                  // cases stay clickable.
+                  const caseBusy = log.isPending && log.variables?.id === c.id;
+                  return (
+                    <Button
+                      key={q.result}
+                      variant="outline"
+                      size="sm"
+                      disabled={caseBusy}
+                      onClick={() => log.mutate({ id: c.id, result: q.result })}
+                    >
+                      {isThis ? <Spinner /> : q.label}
+                    </Button>
+                  );
+                })}
               </div>
             </div>
           ))}

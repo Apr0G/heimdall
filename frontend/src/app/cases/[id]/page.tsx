@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import {
@@ -28,6 +28,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Spinner } from "@/components/ui/spinner";
 import { carcMeaning } from "@/lib/carc-codes";
+import { copyToClipboard } from "@/lib/clipboard";
 import {
   type CaseDetail,
   downloadLetterPdf,
@@ -82,6 +83,17 @@ export default function CaseDetailPage() {
     onSuccess: invalidate,
     onError: (e) => toastError(e),
   });
+
+  // Notify when the pipeline (or a re-draft) finishes while the page is open.
+  const prevStatus = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const s = data?.status;
+    if (prevStatus.current === "processing" && s && s !== "processing") {
+      if (s === "ready") toast.success("Your appeal is ready.");
+      else if (s === "error") toast.error("We couldn't process this case.");
+    }
+    prevStatus.current = s;
+  }, [data?.status]);
 
   if (isLoading) {
     return (
@@ -435,9 +447,13 @@ function LetterCard({ c, onChanged }: { c: CaseDetail; onChanged: () => void }) 
 
   const letter = c.letter;
   async function copy() {
-    await navigator.clipboard.writeText(letter.body ?? "");
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    try {
+      await copyToClipboard(letter.body ?? "");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast.error("Couldn't copy. Select the letter text and copy manually.");
+    }
   }
 
   return (
