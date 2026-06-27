@@ -4,6 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 
 import { Disclaimer } from "@/components/disclaimer";
+import { ReadyNotifier } from "@/components/ready-notifier";
 import { SiteHeader } from "@/components/site-header";
 import { useAuth } from "@/lib/auth-context";
 
@@ -36,6 +37,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen flex-col">
+      <ReadyNotifier />
       <SiteHeader />
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8">{children}</main>
       <footer className="border-t">
