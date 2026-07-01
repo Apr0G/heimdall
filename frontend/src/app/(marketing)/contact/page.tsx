@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { buttonVariants } from "@/components/ui/button";
+import { CtaLink } from "@/components/cta-link";
 import { CONTACT_EMAIL, CONTACT_MAILTO, DEMO_MAILTO, GET_STARTED_MAILTO } from "@/lib/site";
 
 export const metadata: Metadata = {
@@ -18,35 +18,29 @@ export default function ContactPage() {
       </p>
 
       <div className="mt-6">
-        <a href={CONTACT_MAILTO} className={buttonVariants({ size: "lg" })}>
+        <CtaLink href={CONTACT_MAILTO} size="lg">
           Email {CONTACT_EMAIL}
-        </a>
+        </CtaLink>
       </div>
 
       <div className="mt-10 grid gap-4 sm:grid-cols-2">
-        <div className="rounded-lg border p-5">
+        <div className="rounded-xl border border-t-2 border-t-amber-400 p-5">
           <h2 className="font-medium">Request a free demo</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             See Heimdall on your own denials — no commitment.
           </p>
-          <a
-            href={DEMO_MAILTO}
-            className={buttonVariants({ variant: "outline", size: "sm", className: "mt-4" })}
-          >
+          <CtaLink href={DEMO_MAILTO} variant="secondary" size="sm" className="mt-4">
             Request a demo
-          </a>
+          </CtaLink>
         </div>
-        <div className="rounded-lg border p-5">
+        <div className="rounded-xl border border-t-2 border-t-blue-500 p-5">
           <h2 className="font-medium">Get started</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             Ready for the full product? Let&rsquo;s set your practice up.
           </p>
-          <a
-            href={GET_STARTED_MAILTO}
-            className={buttonVariants({ variant: "outline", size: "sm", className: "mt-4" })}
-          >
+          <CtaLink href={GET_STARTED_MAILTO} variant="secondary" size="sm" className="mt-4">
             Get started
-          </a>
+          </CtaLink>
         </div>
       </div>
     </section>
