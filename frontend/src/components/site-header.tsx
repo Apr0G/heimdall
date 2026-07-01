@@ -1,7 +1,10 @@
 "use client";
 
+import Link from "next/link";
+
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
+import { Wordmark } from "@/components/wordmark";
 import { useAuth } from "@/lib/auth-context";
 
 export function SiteHeader() {
@@ -10,7 +13,9 @@ export function SiteHeader() {
   return (
     <header className="border-b">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
-        <span className="font-semibold tracking-tight">Heimdall</span>
+        <Link href="/dashboard" aria-label="Heimdall dashboard">
+          <Wordmark />
+        </Link>
         <div className="flex items-center gap-3 text-sm">
           {user && <span className="hidden text-muted-foreground sm:inline">{user.email}</span>}
           <ThemeToggle />

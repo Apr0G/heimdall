@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/login"];
+// Public marketing + auth routes. Everything else is app and requires login.
+const PUBLIC_PATHS = ["/", "/contact", "/terms", "/privacy", "/login"];
 
 // Presence-based route gating using the `hd_authed` cookie. The real security
 // boundary is the backend, which verifies the JWT on every API call; this only
@@ -11,7 +12,7 @@ export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const authed = request.cookies.get("hd_authed")?.value === "1";
   const isPublic = PUBLIC_PATHS.some(
-    (path) => pathname === path || pathname.startsWith(`${path}/`),
+    (path) => pathname === path || (path !== "/" && pathname.startsWith(`${path}/`)),
   );
 
   if (!authed && !isPublic) {
@@ -20,9 +21,10 @@ export function proxy(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (authed && pathname === "/login") {
+  // Logged-in users skip the marketing landing and the login page.
+  if (authed && (pathname === "/" || pathname === "/login")) {
     const url = request.nextUrl.clone();
-    url.pathname = "/";
+    url.pathname = "/dashboard";
     return NextResponse.redirect(url);
   }
 

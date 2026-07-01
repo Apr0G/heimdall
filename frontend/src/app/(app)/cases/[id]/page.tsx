@@ -91,7 +91,7 @@ export default function CaseDetailPage() {
     return (
       <div className="space-y-3">
         <p className="text-sm text-destructive">Couldn&rsquo;t load this case.</p>
-        <Link href="/" className={buttonVariants({ variant: "outline" })}>
+        <Link href="/dashboard" className={buttonVariants({ variant: "outline" })}>
           ← Back to appeals
         </Link>
       </div>
@@ -101,7 +101,7 @@ export default function CaseDetailPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4">
-        <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">
+        <Link href="/dashboard" className="text-sm text-muted-foreground hover:text-foreground">
           ← Appeals
         </Link>
         <StatusBadge status={data.status} />

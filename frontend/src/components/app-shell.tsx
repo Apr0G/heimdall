@@ -1,6 +1,6 @@
 "use client";
 
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 
 import { Disclaimer } from "@/components/disclaimer";
@@ -9,23 +9,16 @@ import { SiteHeader } from "@/components/site-header";
 import { useAuth } from "@/lib/auth-context";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
   const router = useRouter();
   const { user, loading } = useAuth();
-
-  const isLogin = pathname === "/login";
 
   // Safety net for when the presence cookie and the stored token disagree
   // (e.g. token cleared out-of-band): force unauthenticated users to /login.
   useEffect(() => {
-    if (!loading && !user && !isLogin) {
+    if (!loading && !user) {
       router.replace("/login");
     }
-  }, [loading, user, isLogin, router]);
-
-  if (isLogin) {
-    return <>{children}</>;
-  }
+  }, [loading, user, router]);
 
   if (loading || !user) {
     return (

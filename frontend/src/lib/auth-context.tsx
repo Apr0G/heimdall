@@ -72,7 +72,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setAuthedCookie();
       const me = await api.get<User>("/api/auth/me");
       setUser(me.data);
-      router.replace("/");
+      router.replace("/dashboard");
     },
     [router],
   );
