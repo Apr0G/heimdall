@@ -54,7 +54,7 @@ async function announce(id: string, router: ReturnType<typeof useRouter>) {
   } catch {
     return; // couldn't confirm; skip rather than guess
   }
-  const open = { label: "View", onClick: () => router.push(`/cases/${id}`) };
+  const open = () => router.push(`/cases/${id}`);
 
   if (status === "ready") {
     notifyUntilSeen("success", `Your appeal for ${who} is ready.`, open);
