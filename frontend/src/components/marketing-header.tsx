@@ -12,7 +12,10 @@ export function MarketingHeader() {
           <Wordmark />
         </Link>
         <nav className="flex items-center gap-3 text-sm sm:gap-5">
-          <Link href="/contact" className="text-muted-foreground hover:text-foreground">
+          <Link
+            href="/contact"
+            className="hidden text-muted-foreground hover:text-foreground sm:inline"
+          >
             Contact
           </Link>
           <Link href="/login" className="text-muted-foreground hover:text-foreground">
