@@ -2,9 +2,10 @@ import { cn } from "@/lib/utils";
 
 const VARIANTS = {
   // Amber is the brand accent; blue shows up in gradients/section markers.
-  primary: "bg-amber-400 text-amber-950 shadow-sm hover:bg-amber-300 focus-visible:ring-amber-500",
+  primary:
+    "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 focus-visible:ring-ring",
   secondary:
-    "border border-border bg-background text-foreground hover:bg-muted focus-visible:ring-ring",
+    "border border-input bg-card text-foreground hover:bg-muted focus-visible:ring-ring",
 };
 
 const SIZES = {
