@@ -224,28 +224,45 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function HeaderCard({ c, now }: { c: CaseDetail; now: number }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">
-          {c.patient_initials ?? "—"} · {c.payer_name ?? "Unknown payer"}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-        <Field label="Plan">{humanize(c.plan_type)}</Field>
-        <Field label="Claim #">{c.claim_number ?? "—"}</Field>
-        <Field label="Date of service">{formatDate(c.date_of_service)}</Field>
-        <Field label="Denial date">{formatDate(c.denial_date)}</Field>
-        <Field label="Billed">{formatCents(c.billed_amount_cents, c.currency)}</Field>
-        <Field label="Denied">{formatCents(c.denied_amount_cents, c.currency)}</Field>
-        <div className="col-span-2 sm:col-span-3 lg:col-span-6">
-          <div className="text-xs text-muted-foreground">Appeal deadline</div>
-          <div className="mt-1 flex items-center gap-2">
-            <DeadlineBadge deadline={c.appeal_deadline} now={now} />
-            <span className="text-sm text-muted-foreground">{formatDate(c.appeal_deadline)}</span>
+    <div className="rounded-lg border border-border bg-card p-[22px] shadow-sm">
+      <div className="flex flex-wrap items-center gap-3.5">
+        <span className="flex size-12 items-center justify-center rounded-xl bg-muted text-base font-bold">
+          {c.patient_initials ?? "—"}
+        </span>
+        <div className="min-w-40 flex-1">
+          <div className="text-lg font-extrabold tracking-tight">
+            {c.patient_initials ?? "—"}
+            {c.claim_number && (
+              <>
+                {" · "}
+                <span className="font-mono text-sm font-medium text-muted-foreground">
+                  {c.claim_number}
+                </span>
+              </>
+            )}
+          </div>
+          <div className="mt-0.5 text-[13px] text-muted-foreground">
+            {c.payer_name ?? "Unknown payer"} · {humanize(c.plan_type)}
           </div>
         </div>
-      </CardContent>
-    </Card>
+        <div className="flex items-center gap-2">
+          <DeadlineBadge deadline={c.appeal_deadline} now={now} />
+          <span className="text-sm text-muted-foreground">{formatDate(c.appeal_deadline)}</span>
+        </div>
+      </div>
+      <div className="mt-5 grid grid-cols-2 gap-4 border-t border-border pt-[18px] sm:grid-cols-4">
+        <Field label="Date of service">{formatDate(c.date_of_service)}</Field>
+        <Field label="Denial date">{formatDate(c.denial_date)}</Field>
+        <Field label="Billed">
+          <span className="font-mono">{formatCents(c.billed_amount_cents, c.currency)}</span>
+        </Field>
+        <Field label="Denied">
+          <span className="font-mono font-bold" style={{ color: "var(--danger)" }}>
+            {formatCents(c.denied_amount_cents, c.currency)}
+          </span>
+        </Field>
+      </div>
+    </div>
   );
 }
 
