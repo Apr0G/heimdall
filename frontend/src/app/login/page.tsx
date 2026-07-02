@@ -6,8 +6,8 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
+import { Wordmark } from "@/components/wordmark";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/lib/auth-context";
@@ -18,6 +18,11 @@ const schema = z.object({
 });
 
 type FormValues = z.infer<typeof schema>;
+
+const GLOW = {
+  backgroundImage:
+    "radial-gradient(90% 60% at 50% 0%, color-mix(in oklab, var(--color-amber-500) 12%, transparent), transparent 60%)",
+};
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -34,7 +39,7 @@ export default function LoginPage() {
       await login(values.email, values.password);
     } catch (err) {
       if (axios.isAxiosError(err) && err.response?.status === 401) {
-        setFormError("Invalid email or password.");
+        setFormError("That email or password doesn't match our records.");
       } else {
         setFormError("Something went wrong. Please try again.");
       }
@@ -42,44 +47,42 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader className="space-y-1 text-center">
-          <CardTitle className="text-2xl">Heimdall</CardTitle>
-          <CardDescription>Sign in to your practice account</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                autoComplete="email"
-                autoFocus
-                {...register("email")}
-              />
-              {errors.email && <p className="text-sm text-destructive">{errors.email.message}</p>}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                autoComplete="current-password"
-                {...register("password")}
-              />
-              {errors.password && (
-                <p className="text-sm text-destructive">{errors.password.message}</p>
-              )}
-            </div>
-            {formError && <p className="text-sm text-destructive">{formError}</p>}
-            <Button type="submit" className="w-full" disabled={isSubmitting}>
-              {isSubmitting ? "Signing in…" : "Sign in"}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+    <div className="relative flex min-h-screen items-center justify-center px-4">
+      <div aria-hidden style={GLOW} className="pointer-events-none absolute inset-0" />
+      <div className="relative w-full max-w-sm rounded-lg border border-border bg-card p-8 shadow-md">
+        <div className="mb-5 flex justify-center">
+          <Wordmark className="text-xl" />
+        </div>
+        <p className="mb-6 text-center text-sm text-muted-foreground">
+          Sign in to your practice account
+        </p>
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
+          <div className="space-y-1.5">
+            <Label htmlFor="email">Email</Label>
+            <Input id="email" type="email" autoComplete="email" autoFocus {...register("email")} />
+            {errors.email && <p className="text-sm text-destructive">{errors.email.message}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="password">Password</Label>
+            <Input
+              id="password"
+              type="password"
+              autoComplete="current-password"
+              {...register("password")}
+            />
+            {errors.password && (
+              <p className="text-sm text-destructive">{errors.password.message}</p>
+            )}
+          </div>
+          {formError && <p className="text-sm text-destructive">{formError}</p>}
+          <Button type="submit" className="w-full" disabled={isSubmitting}>
+            {isSubmitting ? "Signing in…" : "Sign in"}
+          </Button>
+        </form>
+        <p className="mt-4 text-center text-xs text-muted-foreground">
+          Accounts are provisioned by Heimdall — no self-serve signup.
+        </p>
+      </div>
     </div>
   );
 }

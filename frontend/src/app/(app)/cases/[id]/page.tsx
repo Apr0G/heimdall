@@ -41,6 +41,7 @@ import {
   submitOutcome,
 } from "@/lib/cases";
 import { toastError } from "@/lib/errors";
+import { CONTACT_MAILTO } from "@/lib/site";
 import { formatCents, formatDate, humanize } from "@/lib/format";
 import { type AdditionalDocType, reanalyzeWithUploads } from "@/lib/upload";
 
@@ -150,16 +151,28 @@ function CaseDetailSkeleton() {
 
 function ProcessingView() {
   return (
-    <Card>
-      <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-muted border-t-foreground" />
-        <p className="font-medium">Working on your appeal…</p>
-        <p className="text-sm text-muted-foreground">
-          Reading your documents, analyzing the denial, and drafting your letter. This usually
-          takes under a minute.
-        </p>
-      </CardContent>
-    </Card>
+    <div className="flex flex-col items-center rounded-lg border border-border bg-card px-6 py-24 text-center shadow-sm">
+      <span className="mb-6 size-11 animate-spin rounded-full border-[3px] border-border border-t-primary" />
+      <div className="mb-2 text-xl font-extrabold tracking-tight">Reading your documents…</div>
+      <p className="max-w-md text-[15px] leading-relaxed text-muted-foreground">
+        Analyzing the denial, matching CARC/RARC codes, and drafting your appeal letter. This
+        usually takes under a minute.
+      </p>
+      <div className="mt-6 flex flex-wrap justify-center gap-3 text-[12.5px]">
+        <span className="text-ok inline-flex items-center gap-1.5">
+          <span className="bg-ok size-1.5 rounded-full" />
+          Documents read
+        </span>
+        <span className="text-info inline-flex items-center gap-1.5">
+          <span className="bg-info size-1.5 rounded-full" />
+          Analyzing denial
+        </span>
+        <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+          <span className="size-1.5 rounded-full bg-muted-foreground" />
+          Drafting letter
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -173,15 +186,30 @@ function ErrorView({
   retrying: boolean;
 }) {
   return (
-    <Card>
-      <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
-        <p className="font-medium text-destructive">Something went wrong processing this case.</p>
-        <p className="text-sm text-muted-foreground">{message ?? "An unexpected error occurred."}</p>
+    <div className="flex flex-col items-center rounded-lg border border-border bg-card px-6 py-24 text-center shadow-sm">
+      <span
+        className="mb-5 flex size-[52px] items-center justify-center rounded-full text-2xl font-bold"
+        style={{ background: "color-mix(in oklab, var(--danger) 16%, var(--card))", color: "var(--danger)" }}
+        aria-hidden
+      >
+        !
+      </span>
+      <div className="mb-2 text-xl font-extrabold tracking-tight">
+        We couldn&rsquo;t finish this analysis
+      </div>
+      <p className="max-w-md text-[15px] leading-relaxed text-muted-foreground">
+        {message ??
+          "Something went wrong while reading your documents. Your files are safe — nothing was lost. Try again, and if it keeps happening, email us."}
+      </p>
+      <div className="mt-6 flex gap-2.5">
         <Button onClick={onRetry} disabled={retrying}>
           {retrying ? "Retrying…" : "Retry"}
         </Button>
-      </CardContent>
-    </Card>
+        <a href={CONTACT_MAILTO} className={buttonVariants({ variant: "outline" })}>
+          Contact support
+        </a>
+      </div>
+    </div>
   );
 }
 
@@ -272,6 +300,14 @@ function AnalysisCard({ c }: { c: CaseDetail }) {
   if (!ana) return null;
   const pct =
     ana.success_probability != null ? `${Math.round(ana.success_probability * 100)}%` : "—";
+  const pctToken =
+    ana.probability_band === "high"
+      ? "--ok"
+      : ana.probability_band === "moderate"
+        ? "--warn"
+        : ana.probability_band === "low"
+          ? "--danger"
+          : null;
   return (
     <Card>
       <CardHeader>
@@ -281,7 +317,12 @@ function AnalysisCard({ c }: { c: CaseDetail }) {
         <div className="flex items-center gap-3">
           <ProbabilityBadge band={ana.probability_band} />
           <div>
-            <div className="text-2xl font-semibold tabular-nums">{pct}</div>
+            <div
+              className="text-[32px] font-extrabold tracking-tight tabular-nums"
+              style={pctToken ? { color: `var(${pctToken})` } : undefined}
+            >
+              {pct}
+            </div>
             <div className="text-xs text-muted-foreground">estimated chance of overturning</div>
           </div>
         </div>

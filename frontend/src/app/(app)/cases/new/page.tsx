@@ -81,9 +81,9 @@ export default function NewCasePage() {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">New appeal</h1>
+        <h1 className="text-[22px] font-extrabold tracking-tight">New appeal</h1>
         <p className="text-sm text-muted-foreground">
-          Upload the three required documents. PDF only.
+          Upload three documents. Heimdall handles the rest. PDF only.
         </p>
       </div>
       <Card>
