@@ -1,57 +1,82 @@
-import { Badge } from "@/components/ui/badge";
+import type { CSSProperties } from "react";
+
 import { cn } from "@/lib/utils";
 
-const RED = "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300";
-const AMBER = "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300";
-const GREEN = "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300";
-const MUTED = "bg-muted text-muted-foreground";
+// A token-tinted pill: 16% of the status color mixed into the card, colored text.
+function tone(token: string, textToken?: string): CSSProperties {
+  return {
+    background: `color-mix(in oklab, var(${token}) 16%, var(--card))`,
+    color: `var(${textToken ?? token})`,
+  };
+}
+
+const PILL = "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap";
 
 export function DeadlineBadge({ deadline, now }: { deadline: string | null; now: number }) {
   if (!deadline) return <span className="text-muted-foreground">—</span>;
   const days = Math.ceil((new Date(`${deadline}T00:00:00`).getTime() - now) / 86_400_000);
-  // Red < 7 days, yellow < 14 days, green otherwise.
-  const tone = days < 7 ? RED : days < 14 ? AMBER : GREEN;
+  // Red < 7 days, amber < 14 days, green otherwise.
+  const token = days < 7 ? "--danger" : days < 14 ? "--warn" : "--ok";
   const label = days < 0 ? `${Math.abs(days)}d overdue` : days === 0 ? "Due today" : `${days}d left`;
-  return <Badge className={cn("border-transparent font-medium", tone)}>{label}</Badge>;
-}
-
-const STATUS_TONE: Record<string, string> = {
-  draft: MUTED,
-  processing: "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300",
-  ready: GREEN,
-  submitted: "bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300",
-  resolved: "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
-  error: RED,
-};
-
-export function StatusBadge({ status }: { status: string }) {
   return (
-    <Badge className={cn("border-transparent capitalize", STATUS_TONE[status] ?? MUTED)}>
-      {status}
-    </Badge>
+    <span className={cn(PILL, "font-bold")} style={tone(token)}>
+      {label}
+    </span>
   );
 }
 
-const OUTCOME_TONE: Record<string, { label: string; tone: string }> = {
-  overturned: { label: "Overturned ✓", tone: GREEN },
-  upheld: { label: "Upheld ✗", tone: RED },
-  partial: { label: "Partial 🟡", tone: AMBER },
-  pending: { label: "Pending", tone: MUTED },
-  withdrawn: { label: "Withdrawn", tone: MUTED },
+const STATUS: Record<string, { token: string; text?: string; dot?: boolean }> = {
+  draft: { token: "--neutral" },
+  processing: { token: "--info", dot: true },
+  ready: { token: "--ok" },
+  submitted: { token: "--indigo" },
+  resolved: { token: "--neutral", text: "--muted-foreground" },
+  error: { token: "--danger" },
+};
+
+export function StatusBadge({ status }: { status: string }) {
+  const s = STATUS[status] ?? { token: "--neutral", text: "--muted-foreground" };
+  return (
+    <span className={cn(PILL, "capitalize")} style={tone(s.token, s.text)}>
+      {s.dot && (
+        <span
+          className="size-1.5 rounded-full"
+          style={{ background: `var(${s.token})` }}
+          aria-hidden
+        />
+      )}
+      {status}
+    </span>
+  );
+}
+
+const OUTCOME: Record<string, { label: string; token: string; text?: string }> = {
+  overturned: { label: "✓ Overturned", token: "--ok" },
+  upheld: { label: "✗ Upheld", token: "--danger" },
+  partial: { label: "Partial", token: "--warn" },
+  pending: { label: "Pending", token: "--neutral", text: "--muted-foreground" },
+  withdrawn: { label: "Withdrawn", token: "--neutral", text: "--muted-foreground" },
 };
 
 export function OutcomeBadge({ result }: { result: string }) {
-  const o = OUTCOME_TONE[result] ?? { label: result, tone: MUTED };
-  return <Badge className={cn("border-transparent", o.tone)}>{o.label}</Badge>;
+  const o = OUTCOME[result] ?? { label: result, token: "--neutral", text: "--muted-foreground" };
+  return (
+    <span className={PILL} style={tone(o.token, o.text)}>
+      {o.label}
+    </span>
+  );
 }
 
-const BAND_TONE: Record<string, string> = { low: RED, moderate: AMBER, high: GREEN };
+const BAND: Record<string, string> = { low: "--danger", moderate: "--warn", high: "--ok" };
 
 export function ProbabilityBadge({ band }: { band: string | null }) {
   if (!band) return <span className="text-muted-foreground">—</span>;
   return (
-    <Badge className={cn("border-transparent px-3 py-1 text-sm capitalize", BAND_TONE[band] ?? MUTED)}>
+    <span
+      className="inline-flex items-center rounded-md px-4 py-2 text-[15px] font-extrabold capitalize"
+      style={tone(BAND[band] ?? "--neutral")}
+    >
       {band}
-    </Badge>
+    </span>
   );
 }

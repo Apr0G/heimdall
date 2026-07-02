@@ -7,9 +7,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { DeadlineBadge, OutcomeBadge, StatusBadge } from "@/components/case-badges";
-import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
@@ -42,11 +40,11 @@ import {
 } from "@/lib/cases";
 import { formatCents, formatDate, humanize } from "@/lib/format";
 
-const QUICK_RESULTS: { result: string; label: string }[] = [
-  { result: "overturned", label: "Overturned" },
-  { result: "upheld", label: "Upheld" },
-  { result: "partial", label: "Partial" },
-  { result: "pending", label: "Still pending" },
+const QUICK_RESULTS: { result: string; label: string; token: string | null }[] = [
+  { result: "overturned", label: "Overturned", token: "--ok" },
+  { result: "upheld", label: "Upheld", token: "--danger" },
+  { result: "partial", label: "Partial", token: "--warn" },
+  { result: "pending", label: "Still pending", token: null },
 ];
 
 const STATUS_OPTIONS = [
@@ -90,8 +88,8 @@ export default function DashboardPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Appeals</h1>
-          <p className="text-sm text-muted-foreground">Track and act on your denied claims.</p>
+          <h1 className="text-[26px] font-extrabold tracking-tight">Appeals</h1>
+          <p className="text-sm text-muted-foreground">Track every denial from upload to outcome.</p>
         </div>
         <Link href="/cases/new" className={buttonVariants()}>
           + New Appeal
@@ -248,7 +246,7 @@ function CasesTable({ items, now }: { items: CaseListItem[]; now: number }) {
                 <div>{c.payer_name ?? "—"}</div>
                 <div className="text-xs text-muted-foreground">{humanize(c.plan_type)}</div>
               </TableCell>
-              <TableCell className="text-right tabular-nums">
+              <TableCell className="text-right font-mono font-medium">
                 {formatCents(c.denied_amount_cents, c.currency)}
               </TableCell>
               <TableCell>
@@ -258,7 +256,9 @@ function CasesTable({ items, now }: { items: CaseListItem[]; now: number }) {
                     : c.carc_codes.map((code) => (
                         <Tooltip key={code}>
                           <TooltipTrigger className="cursor-help">
-                            <Badge variant="outline">{code}</Badge>
+                            <span className="rounded-md border border-border bg-muted px-2 py-0.5 font-mono text-xs">
+                              {code}
+                            </span>
                           </TooltipTrigger>
                           <TooltipContent className="max-w-xs">{carcMeaning(code)}</TooltipContent>
                         </Tooltip>
@@ -322,26 +322,31 @@ function EmptyState({ hasFilters }: { hasFilters: boolean }) {
 
 function RecoveryStats({ summary }: { summary: CaseSummary }) {
   const winRate = summary.win_rate == null ? "—" : `${Math.round(summary.win_rate * 100)}%`;
-  const stats: { label: string; value: string; hint?: string }[] = [
-    { label: "Cases this month", value: String(summary.month_case_count) },
-    {
-      label: "Win rate",
-      value: winRate,
-      hint: `${summary.win_count}/${summary.resolved_count} resolved`,
-    },
-    { label: "Recovered", value: formatCents(summary.total_recovered_cents) },
-  ];
   return (
-    <div className="grid gap-4 sm:grid-cols-3">
-      {stats.map((s) => (
-        <Card key={s.label}>
-          <CardContent className="py-4">
-            <div className="text-xs text-muted-foreground">{s.label}</div>
-            <div className="mt-1 text-2xl font-semibold tabular-nums">{s.value}</div>
-            {s.hint && <div className="text-xs text-muted-foreground">{s.hint}</div>}
-          </CardContent>
-        </Card>
-      ))}
+    <div className="grid gap-3.5 sm:grid-cols-3">
+      <div className="rounded-lg border border-border bg-card p-[18px] shadow-sm">
+        <div className="mb-2 text-[13px] text-muted-foreground">Cases this month</div>
+        <div className="text-3xl font-extrabold tracking-tight tabular-nums">
+          {summary.month_case_count}
+        </div>
+      </div>
+      <div className="rounded-lg border border-border bg-card p-[18px] shadow-sm">
+        <div className="mb-2 text-[13px] text-muted-foreground">Win rate</div>
+        <div className="flex items-baseline gap-2">
+          <div className="text-ok text-3xl font-extrabold tracking-tight tabular-nums">
+            {winRate}
+          </div>
+          <span className="text-xs text-muted-foreground">
+            {summary.win_count}/{summary.resolved_count} resolved
+          </span>
+        </div>
+      </div>
+      <div className="rounded-lg border border-border bg-card p-[18px] shadow-sm">
+        <div className="mb-2 text-[13px] text-muted-foreground">Recovered</div>
+        <div className="font-mono text-3xl font-extrabold tracking-tight">
+          {formatCents(summary.total_recovered_cents)}
+        </div>
+      </div>
     </div>
   );
 }
@@ -361,28 +366,49 @@ function PendingBanner({ pending }: { pending: PendingOutcomeItem[] }) {
   });
 
   return (
-    <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/40">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm">
-          <span className="font-medium">
+    <div
+      className="overflow-hidden rounded-lg border"
+      style={{
+        borderColor: "color-mix(in oklab, var(--warn) 40%, var(--border))",
+        background: "color-mix(in oklab, var(--warn) 10%, var(--card))",
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-3 px-4 py-3.5 text-left"
+      >
+        <span
+          className="flex size-[26px] shrink-0 items-center justify-center rounded-full text-sm font-bold"
+          style={{ background: "color-mix(in oklab, var(--warn) 22%, var(--card))", color: "var(--warn)" }}
+          aria-hidden
+        >
+          !
+        </span>
+        <span className="flex-1 text-sm">
+          <strong>
             You have {pending.length} pending case{pending.length === 1 ? "" : "s"}.
-          </span>{" "}
-          Tell us how they turned out so we can sharpen future estimates.
-        </p>
-        <Button variant="outline" size="sm" onClick={() => setOpen((o) => !o)}>
-          {open ? "Hide" : "Review"}
-        </Button>
-      </div>
+          </strong>{" "}
+          <span className="text-muted-foreground">
+            Tell us how they turned out so we can sharpen future estimates.
+          </span>
+        </span>
+        <span className="text-xs text-muted-foreground">{open ? "Hide" : "Review"}</span>
+      </button>
       {open && (
-        <div className="mt-3 divide-y divide-amber-200 dark:divide-amber-900">
+        <div className="space-y-2 px-4 pb-3.5">
           {pending.map((c) => (
-            <div key={c.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
-              <div className="text-sm">
-                <span className="font-medium">{c.patient_initials ?? "—"}</span>{" "}
+            <div
+              key={c.id}
+              className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-card px-3 py-2.5"
+            >
+              <div className="text-[13px]">
+                <span className="font-bold">{c.patient_initials ?? "—"}</span>
                 <span className="text-muted-foreground">
+                  {" "}
                   · {c.payer_name ?? "Unknown"} ·{" "}
-                  {formatCents(c.denied_amount_cents, c.currency)} · submitted{" "}
-                  {c.submitted_days_ago}d ago
+                  <span className="font-mono">{formatCents(c.denied_amount_cents, c.currency)}</span>{" "}
+                  · submitted {c.submitted_days_ago}d ago
                 </span>
               </div>
               <div className="flex flex-wrap gap-1.5">
@@ -395,15 +421,22 @@ function PendingBanner({ pending }: { pending: PendingOutcomeItem[] }) {
                   // cases stay clickable.
                   const caseBusy = log.isPending && log.variables?.id === c.id;
                   return (
-                    <Button
+                    <button
                       key={q.result}
-                      variant="outline"
-                      size="sm"
                       disabled={caseBusy}
                       onClick={() => log.mutate({ id: c.id, result: q.result })}
+                      className="inline-flex h-[30px] items-center justify-center rounded-[7px] border border-border px-[11px] text-xs font-semibold disabled:opacity-50"
+                      style={
+                        q.token
+                          ? {
+                              background: `color-mix(in oklab, var(${q.token}) 14%, var(--card))`,
+                              color: `var(${q.token})`,
+                            }
+                          : { color: "var(--muted-foreground)" }
+                      }
                     >
                       {isThis ? <Spinner /> : q.label}
-                    </Button>
+                    </button>
                   );
                 })}
               </div>
