@@ -5,7 +5,7 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
   return (
     <div className="flex min-h-screen flex-col">
       {/* Brand accent bar */}
-      <div className="h-1 bg-gradient-to-r from-amber-400 via-amber-300 to-blue-500" />
+      <div className="h-1 bg-gradient-to-r from-amber-500 to-blue-500" />
       <MarketingHeader />
       <main className="flex-1">{children}</main>
       <MarketingFooter />

@@ -11,36 +11,35 @@ export const metadata: Metadata = {
 export default function ContactPage() {
   return (
     <section className="mx-auto max-w-2xl px-4 py-16">
-      <h1 className="text-3xl font-semibold tracking-tight">Contact us</h1>
-      <p className="mt-3 text-muted-foreground">
-        Questions, a demo, or getting started — we&rsquo;d love to hear from you. Email us and
-        we&rsquo;ll get back to you within one business day.
-      </p>
+      <div className="rounded-xl border border-border bg-card p-8 shadow-md">
+        <h1 className="text-3xl font-extrabold tracking-tight">Talk to us</h1>
+        <p className="mt-2 text-muted-foreground">
+          Questions, a demo, or ready to get started — we&rsquo;ll get back to you fast.
+        </p>
 
-      <div className="mt-6">
-        <CtaLink href={CONTACT_MAILTO} size="lg">
-          Email {CONTACT_EMAIL}
-        </CtaLink>
-      </div>
-
-      <div className="mt-10 grid gap-4 sm:grid-cols-2">
-        <div className="rounded-xl border border-t-2 border-t-amber-400 p-5">
-          <h2 className="font-medium">Request a free demo</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            See Heimdall on your own denials — no commitment.
-          </p>
-          <CtaLink href={DEMO_MAILTO} variant="secondary" size="sm" className="mt-4">
-            Request a demo
-          </CtaLink>
+        <div className="mt-5">
+          <CtaLink href={CONTACT_MAILTO}>Email {CONTACT_EMAIL}</CtaLink>
         </div>
-        <div className="rounded-xl border border-t-2 border-t-blue-500 p-5">
-          <h2 className="font-medium">Get started</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Ready for the full product? Let&rsquo;s set your practice up.
-          </p>
-          <CtaLink href={GET_STARTED_MAILTO} variant="secondary" size="sm" className="mt-4">
-            Get started
-          </CtaLink>
+
+        <div className="mt-6 grid gap-3.5 sm:grid-cols-2">
+          <div className="rounded-lg border border-border bg-background p-[18px]">
+            <div className="font-bold">Request a free demo</div>
+            <p className="mt-1 text-[13px] text-muted-foreground">
+              See it on your denials. No commitment.
+            </p>
+            <CtaLink href={DEMO_MAILTO} size="sm" className="mt-3.5 w-full">
+              Request demo
+            </CtaLink>
+          </div>
+          <div className="rounded-lg border border-border bg-background p-[18px]">
+            <div className="font-bold">Get started</div>
+            <p className="mt-1 text-[13px] text-muted-foreground">
+              Ready for the full product? We&rsquo;ll set you up.
+            </p>
+            <CtaLink href={GET_STARTED_MAILTO} variant="secondary" size="sm" className="mt-3.5 w-full">
+              Get started
+            </CtaLink>
+          </div>
         </div>
       </div>
     </section>

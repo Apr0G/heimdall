@@ -15,18 +15,28 @@ export const metadata: Metadata = {
   },
 };
 
+const HERO_BG = {
+  backgroundImage:
+    "radial-gradient(120% 90% at 20% 0%, color-mix(in oklab, var(--color-amber-500) 20%, transparent), transparent 60%), radial-gradient(120% 90% at 90% 20%, color-mix(in oklab, var(--color-blue-500) 18%, transparent), transparent 55%)",
+};
+
+const CTA_CARD_BG = {
+  backgroundImage:
+    "linear-gradient(120deg, color-mix(in oklab, var(--color-amber-500) 22%, var(--card)), color-mix(in oklab, var(--color-blue-500) 20%, var(--card)))",
+};
+
 const STEPS = [
   {
     title: "Upload",
-    body: "Add the denial (EOB/ERA), the original claim, and your clinical notes. PDF only.",
+    body: "Drop in the denial/EOB, the original claim, and clinical notes. PDF only.",
   },
   {
     title: "Review",
-    body: "See the denial classified, the appeal deadline, and an estimated chance of success.",
+    body: "Check the denial breakdown, success estimate, and the drafted appeal letter.",
   },
   {
     title: "Send",
-    body: "Download the drafted appeal letter as a PDF and submit it to the payer.",
+    body: "Download the PDF, submit it yourself, then log the outcome to sharpen future odds.",
   },
 ];
 
@@ -47,63 +57,45 @@ export default function LandingPage() {
   return (
     <>
       {/* Hero */}
-      <section className="relative overflow-hidden">
-        <div
-          aria-hidden
-          className="absolute inset-x-0 top-0 -z-10 h-72 bg-gradient-to-b from-amber-100/70 to-transparent dark:from-amber-500/10"
-        />
-        <div
-          aria-hidden
-          className="pointer-events-none absolute top-4 -right-16 -z-10 size-72 rounded-full bg-blue-400/20 blur-3xl dark:bg-blue-500/10"
-        />
-        <div className="mx-auto max-w-3xl px-4 pt-20 pb-20 text-center sm:pt-28">
-          <span className="inline-flex items-center gap-2 rounded-full border border-amber-300/70 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800 dark:border-amber-800/50 dark:bg-amber-950/40 dark:text-amber-200">
+      <section style={HERO_BG} className="px-4 pt-20 pb-20 text-center sm:pt-28">
+        <div className="mx-auto max-w-3xl">
+          <span className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-semibold text-muted-foreground shadow-sm">
             <span className="size-1.5 rounded-full bg-amber-500" />
             Built for small US practices
           </span>
-          <h1 className="mt-5 text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
-            Stop writing off{" "}
-            <span className="text-amber-500 dark:text-amber-400">denied claims</span>.
+          <h1 className="mx-auto mt-5 max-w-3xl text-4xl font-extrabold tracking-tight text-balance sm:text-[52px] sm:leading-[1.03]">
+            Stop writing off <span className="text-amber-600">denied claims.</span>
           </h1>
-          <p className="mx-auto mt-5 max-w-2xl text-lg text-muted-foreground">
-            Heimdall reads your insurance denial, tells you whether it&rsquo;s worth appealing, and
-            drafts a payer-ready appeal letter — so your practice recovers revenue it already earned.
+          <p className="mx-auto mt-5 max-w-xl text-lg text-muted-foreground">
+            Upload the denial, the claim, and your notes. Heimdall analyzes the denial, estimates
+            your odds, and drafts a payer-ready appeal letter — in minutes.
           </p>
           <div className="mt-8">
             <CtaButtons />
           </div>
-          <p className="mt-3 text-xs text-muted-foreground">
-            Free demo, no commitment — get started when you&rsquo;re ready.
-          </p>
+          <p className="mt-4 text-[13px] text-muted-foreground">Free demo, no commitment.</p>
         </div>
       </section>
 
-      {/* Problem */}
-      <section className="border-t bg-muted/30">
-        <div className="mx-auto max-w-3xl px-4 py-16">
-          <div className="border-l-2 border-amber-400 pl-5">
-            <p className="text-xs font-semibold tracking-wider text-amber-600 uppercase dark:text-amber-400">
+      {/* Problem / Solution */}
+      <section className="px-4 pb-2">
+        <div className="mx-auto grid max-w-4xl gap-5 sm:grid-cols-2">
+          <div className="rounded-lg border border-border border-l-[3px] border-l-amber-500 bg-card p-6 shadow-sm">
+            <div className="text-xs font-bold tracking-[0.06em] text-amber-700 uppercase">
               The problem
-            </p>
-            <p className="mt-3 text-xl leading-relaxed font-medium text-foreground">
-              Every denied claim takes 30–60 minutes of staff time to fight — find the claim, pull
-              the notes, cite the right policy, write the letter. Most small practices just eat the
-              denial, losing money they&rsquo;re owed.
+            </div>
+            <p className="mt-2.5 text-base leading-relaxed">
+              Each denial eats 30–60 minutes of staff time to fight. So most small practices just
+              write them off — quietly losing revenue they&rsquo;re owed on every single one.
             </p>
           </div>
-        </div>
-      </section>
-
-      {/* Solution */}
-      <section>
-        <div className="mx-auto max-w-3xl px-4 py-16">
-          <div className="border-l-2 border-blue-500 pl-5">
-            <p className="text-xs font-semibold tracking-wider text-blue-600 uppercase dark:text-blue-400">
+          <div className="rounded-lg border border-border border-l-[3px] border-l-blue-500 bg-card p-6 shadow-sm">
+            <div className="text-xs font-bold tracking-[0.06em] text-blue-700 uppercase">
               The solution
-            </p>
-            <p className="mt-3 text-xl leading-relaxed font-medium text-foreground">
-              Upload three documents. Heimdall extracts the details, classifies the denial, estimates
-              your odds of winning, and writes a payer-ready appeal letter you review, download, and
+            </div>
+            <p className="mt-2.5 text-base leading-relaxed">
+              Upload three documents. Heimdall reads them, classifies the denial, estimates the odds
+              of a successful appeal, and drafts the letter — ready for your staff to review and
               send.
             </p>
           </div>
@@ -111,53 +103,41 @@ export default function LandingPage() {
       </section>
 
       {/* How it works */}
-      <section className="border-t bg-muted/30">
-        <div className="mx-auto max-w-5xl px-4 py-16">
-          <div className="mx-auto max-w-xl text-center">
-            <p className="text-xs font-semibold tracking-wider text-blue-600 uppercase dark:text-blue-400">
-              How it works
-            </p>
-            <h2 className="mt-2 text-2xl font-semibold tracking-tight">
-              From denial to appeal in three steps
-            </h2>
-          </div>
-          <div className="mt-10 grid gap-6 sm:grid-cols-3">
+      <section className="px-4 py-16">
+        <div className="mx-auto max-w-5xl">
+          <h2 className="text-center text-2xl font-extrabold tracking-tight sm:text-[26px]">
+            How it works
+          </h2>
+          <div className="mt-8 grid gap-4 sm:grid-cols-3">
             {STEPS.map((step, i) => (
-              <div
-                key={step.title}
-                className="rounded-xl border bg-background p-6 transition-colors hover:border-amber-300"
-              >
-                <div className="flex size-9 items-center justify-center rounded-full bg-amber-400 text-sm font-bold text-amber-950">
+              <div key={step.title} className="rounded-lg border border-border bg-card p-6 shadow-sm">
+                <div className="flex size-9 items-center justify-center rounded-[9px] bg-amber-500 text-base font-extrabold text-primary-foreground">
                   {i + 1}
                 </div>
-                <h3 className="mt-4 font-medium">{step.title}</h3>
+                <h3 className="mt-3.5 text-lg font-bold">{step.title}</h3>
                 <p className="mt-1.5 text-sm text-muted-foreground">{step.body}</p>
               </div>
             ))}
           </div>
-        </div>
-      </section>
-
-      {/* Assurance */}
-      <section>
-        <div className="mx-auto max-w-3xl px-4 py-12 text-center">
-          <p className="text-base text-muted-foreground">
-            Built for healthcare from day one. Every clinical, financial, and submission decision
-            stays with your practice.
+          <p className="mt-7 text-center text-[15px] text-muted-foreground">
+            Every clinical, financial, and submission decision stays with your practice.
           </p>
         </div>
       </section>
 
       {/* Closing CTA */}
-      <section className="px-4 pt-4 pb-20">
-        <div className="mx-auto max-w-4xl rounded-2xl border bg-gradient-to-br from-amber-50 to-blue-50 px-6 py-14 text-center dark:from-amber-950/30 dark:to-blue-950/30">
-          <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-            See it on your own denials.
+      <section className="px-4 pb-20">
+        <div
+          style={CTA_CARD_BG}
+          className="mx-auto max-w-4xl rounded-2xl border border-border px-6 py-12 text-center"
+        >
+          <h2 className="text-2xl font-extrabold tracking-tight sm:text-3xl">
+            Recover what you&rsquo;re owed.
           </h2>
-          <p className="mx-auto mt-2 max-w-md text-muted-foreground">
-            A short walkthrough with your team — no commitment.
+          <p className="mx-auto mt-2.5 max-w-md text-base text-foreground/80">
+            See Heimdall on your own denials in a free demo.
           </p>
-          <div className="mt-7">
+          <div className="mt-6">
             <CtaButtons />
           </div>
         </div>
