@@ -127,7 +127,7 @@ resource "aws_iam_role" "app" {
     Version = "2012-10-17"
     Statement = [{
       Effect    = "Allow"
-      Principal = { Service = ["ecs-tasks.amazonaws.com", "tasks.apprunner.amazonaws.com"] }
+      Principal = { Service = "ecs-tasks.amazonaws.com" } # ECS task role (used by Express)
       Action    = "sts:AssumeRole"
     }]
   })

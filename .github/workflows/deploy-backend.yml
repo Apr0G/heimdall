@@ -1,0 +1,36 @@
+name: deploy-backend
+
+# Builds the backend image and pushes it to ECR. Run this once (manually) before
+# the first `deploy_backend_service=true` apply, and again to ship backend
+# changes. Uses GitHub OIDC — no AWS keys stored in GitHub.
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # Created by Terraform (aws_iam_role.gha_deploy). Account 000000000000.
+          role-to-assume: arn:aws:iam::000000000000:role/heimdall-gha-deploy
+          aws-region: us-east-1
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      - name: Build and push image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          REPO: heimdall-backend
+          SHA: ${{ github.sha }}
+        run: |
+          docker build -t "$REGISTRY/$REPO:latest" -t "$REGISTRY/$REPO:$SHA" backend
+          docker push "$REGISTRY/$REPO:latest"
+          docker push "$REGISTRY/$REPO:$SHA"
