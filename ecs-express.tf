@@ -111,6 +111,12 @@ resource "aws_iam_role_policy" "gha_deploy" {
         ]
         Resource = aws_ecr_repository.backend.arn
       },
+      {
+        # Redeploy the running service so it pulls the freshly pushed image.
+        Effect   = "Allow"
+        Action   = ["ecs:UpdateService", "ecs:DescribeServices"]
+        Resource = "arn:aws:ecs:us-east-1:${data.aws_caller_identity.current.account_id}:service/default/heimdall-api"
+      },
     ]
   })
 }
