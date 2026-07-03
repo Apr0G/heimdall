@@ -47,6 +47,14 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:3000"
     log_level: str = "INFO"
 
+    # Rate limiting (tunable without redeploy). redis_url empty -> in-memory
+    # storage (single-process dev/test only); set a redis:// URL in production.
+    redis_url: str = ""
+    rate_limit_general: str = "150/minute"  # authed general API, per user
+    rate_limit_auth: str = "10/15minutes"  # login, per IP
+    rate_limit_public: str = "15/minute"  # unauthenticated public endpoints, per IP
+    rate_limit_ai: str = "15/minute;50/day"  # Bedrock/Textract endpoints, per user
+
 
 @lru_cache
 def get_settings() -> Settings:

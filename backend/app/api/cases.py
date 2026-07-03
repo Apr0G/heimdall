@@ -16,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from app.core.auth import get_current_user
+from app.core.config import settings as _settings
+from app.core.rate_limit import limiter
 from app.db.session import get_db
 from app.models import (
     Analysis,
@@ -269,9 +271,11 @@ async def create_upload_urls(
 
 
 @router.post("", response_model=CreateCaseResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit(_settings.rate_limit_ai)
 async def create_case(
     body: CreateCaseRequest,
     request: Request,
+    response: Response,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
@@ -620,10 +624,12 @@ async def create_additional_upload_urls(
 
 
 @router.post("/{case_id}/reanalyze", response_model=CaseStatusResponse)
+@limiter.limit(_settings.rate_limit_ai)
 async def reanalyze_case(
     case_id: UUID,
     body: ReanalyzeRequest,
     request: Request,
+    response: Response,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),

@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from app.core.auth import get_current_user, verify_access_token
+from app.core.config import settings
+from app.core.rate_limit import limiter
 from app.db.session import get_db
 from app.models import User
 from app.schemas.auth import LoginRequest, LoginResponse, UserOut
@@ -14,9 +16,11 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=LoginResponse)
+@limiter.limit(settings.rate_limit_auth)
 async def login(
     body: LoginRequest,
     request: Request,
+    response: Response,
     session: AsyncSession = Depends(get_db),
 ) -> LoginResponse:
     ip = safe_ip(request.client.host if request.client else None)
@@ -52,9 +56,7 @@ async def login(
 
     # Trust-but-verify: confirm the access token validates, and use its sub.
     claims = await verify_access_token(auth["AccessToken"])
-    user = await upsert_user_on_login(
-        session, cognito_sub=claims["sub"], email=body.email
-    )
+    user = await upsert_user_on_login(session, cognito_sub=claims["sub"], email=body.email)
     await log_audit(
         session,
         action="login_success",
