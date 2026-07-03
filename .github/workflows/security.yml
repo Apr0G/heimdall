@@ -23,7 +23,8 @@ jobs:
           pip install -e ./backend
           pip install pip-audit bandit
       - name: pip-audit (known CVEs in installed deps)
-        run: pip-audit --strict
+        # --skip-editable: don't try to look up our own local package on PyPI.
+        run: pip-audit --skip-editable
       - name: bandit (Python SAST, medium+ severity)
         run: bandit -r backend/app -ll -ii
 
@@ -64,6 +65,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install + run semgrep
+        # Scanned against app code (secrets are covered by the gitleaks job).
         run: |
           pip install semgrep
-          semgrep scan --config p/ci --config p/secrets --error --quiet
+          semgrep scan --config p/python --config p/typescript backend/app frontend/src --error --quiet

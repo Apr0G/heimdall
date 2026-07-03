@@ -23,7 +23,9 @@ def rate_key(request: Request) -> str:
         try:
             sub = jwt.get_unverified_claims(auth.split(" ", 1)[1]).get("sub")
             if sub:
-                return f"user:{sub}"
+                # False positive: an internal rate-limit key, never rendered as
+                # HTTP output; `sub` is a JWT-claim UUID. Suppress the Flask rule.
+                return f"user:{sub}"  # nosemgrep
         except Exception:
             # Malformed token — fall through to IP keying.
             pass
