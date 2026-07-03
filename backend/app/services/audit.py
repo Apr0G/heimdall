@@ -3,8 +3,9 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.requests import Request
 
-from app.models import AuditLog
+from app.models import AuditLog, User
 
 
 async def log_audit(
@@ -47,3 +48,26 @@ def safe_ip(host: str | None) -> str | None:
         return host
     except ValueError:
         return None
+
+
+async def log_read(
+    session: AsyncSession,
+    request: Request,
+    user: User,
+    action: str,
+    resource_type: str,
+    resource_id: UUID,
+) -> None:
+    """Append a PHI-access (read/export) audit row and commit it. Metadata only —
+    never document content. Satisfies HIPAA §164.312(b) audit controls for reads."""
+    await log_audit(
+        session,
+        action=action,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        user_id=user.id,
+        practice_id=user.practice_id,
+        ip=safe_ip(request.client.host if request.client else None),
+        user_agent=request.headers.get("user-agent"),
+    )
+    await session.commit()

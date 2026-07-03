@@ -50,7 +50,7 @@ from app.schemas.case import (
 )
 from app.services import pdf_gen
 from app.services.analysis import SUPPLEMENTAL_DOC_TYPES
-from app.services.audit import log_audit, safe_ip
+from app.services.audit import log_audit, log_read, safe_ip
 from app.services.pipeline import run_full_pipeline, run_reanalysis
 from app.services.s3 import (
     REQUIRED_DOC_TYPES,
@@ -365,10 +365,13 @@ async def _latest(session: AsyncSession, model, case_id: UUID, order):
 @router.get("/{case_id}", response_model=CaseDetailResponse)
 async def get_case(
     case_id: UUID,
+    request: Request,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> CaseDetailResponse:
     case = await _get_owned_case(session, case_id, current_user)
+    # PHI-access audit (§164.312(b)) — records who viewed which case.
+    await log_read(session, request, current_user, "case_view", "case", case_id)
 
     documents = (
         await session.scalars(
@@ -579,6 +582,7 @@ async def retry_case(
 @router.get("/{case_id}/letter.pdf")
 async def download_letter_pdf(
     case_id: UUID,
+    request: Request,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> Response:
@@ -586,6 +590,8 @@ async def download_letter_pdf(
     letter = await _latest(session, AppealLetter, case_id, AppealLetter.version.desc())
     if letter is None or not letter.body:
         raise HTTPException(status_code=404, detail="No appeal letter for this case")
+    # PHI export audit — the drafted letter contains patient/claim detail.
+    await log_read(session, request, current_user, "letter_download", "case", case_id)
     pdf = await run_in_threadpool(pdf_gen.render_letter_pdf, letter.body)
     filename = f"appeal-{case.claim_number or case.id}.pdf"
     return Response(
