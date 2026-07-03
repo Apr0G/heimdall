@@ -80,8 +80,10 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "trail" {
   bucket = aws_s3_bucket.trail.id
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm     = "aws:kms"
-      kms_master_key_id = aws_kms_key.heimdall.arn
+      # SSE-S3 (not the CMK) so CloudTrail can write without a KMS key-policy
+      # grant. Still encrypted at rest. To upgrade to the customer key later,
+      # add a CloudTrail grant to the key policy first (see SECURITY.md).
+      sse_algorithm = "AES256"
     }
   }
 }
@@ -127,7 +129,6 @@ resource "aws_cloudtrail" "main" {
   is_multi_region_trail         = true
   include_global_service_events = true
   enable_log_file_validation    = true
-  kms_key_id                    = aws_kms_key.heimdall.arn
   depends_on                    = [aws_s3_bucket_policy.trail]
 }
 
@@ -200,7 +201,7 @@ resource "aws_secretsmanager_secret_version" "db" {
 # in a follow-up (Phase 2). CLOUDFRONT scope must live in us-east-1 (it does).
 resource "aws_wafv2_web_acl" "cloudfront" {
   name        = "heimdall-waf"
-  description = "Heimdall edge WAF (count mode until reviewed)"
+  description = "Heimdall edge WAF - count mode until reviewed"
   scope       = "CLOUDFRONT"
 
   default_action {
