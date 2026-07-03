@@ -1,9 +1,14 @@
 name: deploy-backend
 
-# Builds the backend image and pushes it to ECR. Run this once (manually) before
-# the first `deploy_backend_service=true` apply, and again to ship backend
-# changes. Uses GitHub OIDC — no AWS keys stored in GitHub.
+# Builds the backend image, pushes it to ECR, and redeploys the ECS Express
+# service so it pulls the new image. Runs automatically on backend changes to
+# main, or manually. Uses GitHub OIDC — no AWS keys stored in GitHub.
 on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-backend.yml"
   workflow_dispatch:
 
 permissions:
@@ -11,14 +16,13 @@ permissions:
   contents: read
 
 jobs:
-  build-push:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          # Created by Terraform (aws_iam_role.gha_deploy). Account 000000000000.
           role-to-assume: arn:aws:iam::000000000000:role/heimdall-gha-deploy
           aws-region: us-east-1
 
@@ -34,3 +38,11 @@ jobs:
           docker build -t "$REGISTRY/$REPO:latest" -t "$REGISTRY/$REPO:$SHA" backend
           docker push "$REGISTRY/$REPO:latest"
           docker push "$REGISTRY/$REPO:$SHA"
+
+      - name: Redeploy the ECS Express service
+        run: |
+          aws ecs update-service \
+            --cluster default \
+            --service heimdall-api \
+            --force-new-deployment \
+            --query 'service.serviceName' --output text
