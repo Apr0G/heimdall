@@ -2,15 +2,20 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
+import { toast } from "sonner";
 
 import { Disclaimer } from "@/components/disclaimer";
 import { ReadyNotifier } from "@/components/ready-notifier";
 import { SiteHeader } from "@/components/site-header";
 import { useAuth } from "@/lib/auth-context";
+import { useIdleLogout } from "@/lib/use-idle-logout";
+
+// HIPAA automatic logoff — sign out after 15 minutes of inactivity.
+const IDLE_LOGOUT_MS = 15 * 60 * 1000;
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const { user, loading } = useAuth();
+  const { user, loading, logout } = useAuth();
 
   // Safety net for when the presence cookie and the stored token disagree
   // (e.g. token cleared out-of-band): force unauthenticated users to /login.
@@ -19,6 +24,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       router.replace("/login");
     }
   }, [loading, user, router]);
+
+  useIdleLogout(IDLE_LOGOUT_MS, () => {
+    if (user) {
+      toast.message("Signed out for inactivity.");
+      logout();
+    }
+  });
 
   if (loading || !user) {
     return (

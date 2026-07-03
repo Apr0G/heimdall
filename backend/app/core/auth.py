@@ -86,3 +86,25 @@ async def get_current_user(
     if user is None:
         raise _unauthorized("User is not provisioned")
     return user
+
+
+def role_allowed(role: str | None, allowed: tuple[str, ...]) -> bool:
+    """Whether a user's role is permitted. Pure, so it's unit-testable."""
+    return role in allowed
+
+
+def require_role(*allowed: str):
+    """Dependency factory for role-gated endpoints, e.g.
+    `Depends(require_role("admin"))`. Server-side RBAC — hiding a button is not
+    security. Non-breaking: no existing route uses it; attach to new privileged
+    routes as they are introduced (roles: doctor, office_manager, admin)."""
+
+    async def _dep(user: User = Depends(get_current_user)) -> User:
+        if not role_allowed(user.role, allowed):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions",
+            )
+        return user
+
+    return _dep
