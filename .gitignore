@@ -58,3 +58,5 @@ yarn-error.log*
 *.swp
 Thumbs.db
 
+# ===== Markdown docs — kept on disk, never pushed to GitHub =====
+*.md
