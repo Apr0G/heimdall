@@ -127,7 +127,7 @@ resource "aws_iam_role" "app" {
     Version = "2012-10-17"
     Statement = [{
       Effect    = "Allow"
-      Principal = { Service = "ecs-tasks.amazonaws.com" } # update when you pick compute
+      Principal = { Service = ["ecs-tasks.amazonaws.com", "tasks.apprunner.amazonaws.com"] }
       Action    = "sts:AssumeRole"
     }]
   })
@@ -165,9 +165,12 @@ resource "aws_iam_role_policy" "app" {
         Resource = aws_kms_key.heimdall.arn
       },
       {
-        Effect   = "Allow"
-        Action   = ["secretsmanager:GetSecretValue"]
-        Resource = aws_secretsmanager_secret.db.arn
+        Effect = "Allow"
+        Action = ["secretsmanager:GetSecretValue"]
+        Resource = [
+          aws_secretsmanager_secret.db.arn,
+          aws_secretsmanager_secret.database_url.arn,
+        ]
       }
     ]
   })
