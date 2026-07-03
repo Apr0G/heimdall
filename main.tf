@@ -77,18 +77,18 @@ resource "aws_s3_bucket_cors_configuration" "documents" {
 
 # --- RDS: encrypted Postgres database ---
 resource "aws_db_instance" "heimdall" {
-  identifier             = "heimdall-db"
-  engine                 = "postgres"
-  instance_class         = "db.t4g.micro"   # smallest / cheapest
-  allocated_storage      = 20
-  db_name                = "heimdall"
-  username               = "heimdall_admin"
-  password               = var.db_password
-  storage_encrypted      = true
-  kms_key_id             = aws_kms_key.heimdall.arn
-  skip_final_snapshot    = true             # dev only
-  publicly_accessible    = true             # ⚠️ DEV ONLY — make false + private subnet before PHI (Part 12)
-  apply_immediately      = true
+  identifier          = "heimdall-db"
+  engine              = "postgres"
+  instance_class      = "db.t4g.micro" # smallest / cheapest
+  allocated_storage   = 20
+  db_name             = "heimdall"
+  username            = "heimdall_admin"
+  password            = var.db_password
+  storage_encrypted   = true
+  kms_key_id          = aws_kms_key.heimdall.arn
+  skip_final_snapshot = true # dev only
+  publicly_accessible = true # ⚠️ DEV ONLY — make false + private subnet before PHI (Part 12)
+  apply_immediately   = true
 }
 
 # --- Cognito: user login for your app ---
@@ -99,10 +99,10 @@ resource "aws_cognito_user_pool" "heimdall" {
 
   password_policy {
     minimum_length    = 12
-    require_lowercase  = true
-    require_uppercase  = true
-    require_numbers    = true
-    require_symbols    = true
+    require_lowercase = true
+    require_uppercase = true
+    require_numbers   = true
+    require_symbols   = true
   }
 
   software_token_mfa_configuration { enabled = true }
@@ -140,8 +140,18 @@ resource "aws_iam_role_policy" "app" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect   = "Allow"
-        Action   = ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"]
+        Effect = "Allow"
+        Action = ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"]
+        # Scoped to foundation models + inference profiles (not "*").
+        Resource = [
+          "arn:aws:bedrock:*::foundation-model/*",
+          "arn:aws:bedrock:*:${data.aws_caller_identity.current.account_id}:inference-profile/*",
+        ]
+      },
+      {
+        Effect = "Allow"
+        # Async Textract jobs do not support resource-level permissions.
+        Action   = ["textract:StartDocumentTextDetection", "textract:GetDocumentTextDetection"]
         Resource = "*"
       },
       {
@@ -153,13 +163,18 @@ resource "aws_iam_role_policy" "app" {
         Effect   = "Allow"
         Action   = ["kms:Decrypt", "kms:GenerateDataKey"]
         Resource = aws_kms_key.heimdall.arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = aws_secretsmanager_secret.db.arn
       }
     ]
   })
 }
 
 # --- outputs: useful values printed after apply ---
-output "s3_bucket_name"      { value = aws_s3_bucket.documents.bucket }
-output "db_endpoint"         { value = aws_db_instance.heimdall.endpoint }
-output "cognito_pool_id"     { value = aws_cognito_user_pool.heimdall.id }
-output "cognito_client_id"   { value = aws_cognito_user_pool_client.heimdall.id }
+output "s3_bucket_name" { value = aws_s3_bucket.documents.bucket }
+output "db_endpoint" { value = aws_db_instance.heimdall.endpoint }
+output "cognito_pool_id" { value = aws_cognito_user_pool.heimdall.id }
+output "cognito_client_id" { value = aws_cognito_user_pool_client.heimdall.id }
