@@ -6,7 +6,7 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
-import { Wordmark } from "@/components/wordmark";
+import { MarketingHeader } from "@/components/marketing-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -47,41 +47,46 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center px-4">
-      <div aria-hidden style={GLOW} className="pointer-events-none absolute inset-0" />
-      <div className="relative w-full max-w-sm rounded-lg border border-border bg-card p-8 shadow-md">
-        <div className="mb-5 flex justify-center">
-          <Wordmark className="text-xl" />
+    <div className="flex min-h-screen flex-col">
+      {/* Brand bar + header so visitors can click the logo back to the landing page. */}
+      <div className="h-1 bg-gradient-to-r from-amber-500 to-blue-500" />
+      <MarketingHeader showLogin={false} />
+      <div className="relative flex flex-1 items-center justify-center px-4 py-12">
+        <div aria-hidden style={GLOW} className="pointer-events-none absolute inset-0" />
+        <div className="relative w-full max-w-sm rounded-lg border border-border bg-card p-8 shadow-md">
+          <h1 className="mb-6 text-center text-base font-semibold">
+            Sign in to your practice account
+          </h1>
+          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
+            <div className="space-y-1.5">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                autoComplete="email"
+                autoFocus
+                {...register("email")}
+              />
+              {errors.email && <p className="text-sm text-destructive">{errors.email.message}</p>}
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="password">Password</Label>
+              <Input
+                id="password"
+                type="password"
+                autoComplete="current-password"
+                {...register("password")}
+              />
+              {errors.password && (
+                <p className="text-sm text-destructive">{errors.password.message}</p>
+              )}
+            </div>
+            {formError && <p className="text-sm text-destructive">{formError}</p>}
+            <Button type="submit" className="w-full" disabled={isSubmitting}>
+              {isSubmitting ? "Signing in…" : "Sign in"}
+            </Button>
+          </form>
         </div>
-        <p className="mb-6 text-center text-sm text-muted-foreground">
-          Sign in to your practice account
-        </p>
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
-          <div className="space-y-1.5">
-            <Label htmlFor="email">Email</Label>
-            <Input id="email" type="email" autoComplete="email" autoFocus {...register("email")} />
-            {errors.email && <p className="text-sm text-destructive">{errors.email.message}</p>}
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="password">Password</Label>
-            <Input
-              id="password"
-              type="password"
-              autoComplete="current-password"
-              {...register("password")}
-            />
-            {errors.password && (
-              <p className="text-sm text-destructive">{errors.password.message}</p>
-            )}
-          </div>
-          {formError && <p className="text-sm text-destructive">{formError}</p>}
-          <Button type="submit" className="w-full" disabled={isSubmitting}>
-            {isSubmitting ? "Signing in…" : "Sign in"}
-          </Button>
-        </form>
-        <p className="mt-4 text-center text-xs text-muted-foreground">
-          Accounts are provisioned by Heimdall — no self-serve signup.
-        </p>
       </div>
     </div>
   );

@@ -147,9 +147,34 @@
   }
   html {
     @apply font-sans;
+    /* Reserve the scrollbar gutter so short (login) and tall (landing) pages
+       keep the same content width — otherwise centered headers shift a few px. */
+    scrollbar-gutter: stable;
   }
   ::selection {
     background: var(--amber-300, oklch(0.86 0.1 80));
     color: var(--foreground);
+  }
+}
+
+/* Slow drift for the hero background aurora. Disabled under reduced-motion. */
+@keyframes hero-aurora {
+  0%,
+  100% {
+    transform: translate3d(-3%, -2%, 0) scale(1.06);
+  }
+  50% {
+    transform: translate3d(3%, 2%, 0) scale(1.12);
+  }
+}
+
+.animate-aurora {
+  animation: hero-aurora 20s ease-in-out infinite;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-aurora {
+    animation: none;
   }
 }

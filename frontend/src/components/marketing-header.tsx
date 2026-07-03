@@ -3,9 +3,9 @@ import Link from "next/link";
 import { CtaLink } from "@/components/cta-link";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Wordmark } from "@/components/wordmark";
-import { DEMO_MAILTO } from "@/lib/site";
 
-export function MarketingHeader() {
+/** `showLogin` is false on the login page itself (a Login button there is redundant). */
+export function MarketingHeader({ showLogin = true }: { showLogin?: boolean }) {
   return (
     <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur">
       <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-4">
@@ -13,19 +13,12 @@ export function MarketingHeader() {
           <Wordmark />
         </Link>
         <nav className="flex items-center gap-3 text-sm sm:gap-4">
-          <Link
-            href="/contact"
-            className="hidden text-muted-foreground hover:text-foreground sm:inline"
-          >
-            Contact
-          </Link>
-          <Link href="/login" className="text-muted-foreground hover:text-foreground">
-            Log in
-          </Link>
           <ThemeToggle />
-          <CtaLink href={DEMO_MAILTO} size="sm">
-            Request a free demo
-          </CtaLink>
+          {showLogin && (
+            <CtaLink href="/login" size="sm">
+              Login
+            </CtaLink>
+          )}
         </nav>
       </div>
     </header>
