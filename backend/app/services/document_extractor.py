@@ -21,25 +21,33 @@ def _textract_client():
     return _textract
 
 
+class NotAPdfError(ValueError):
+    """The uploaded object is not a PDF (magic-byte check failed)."""
+
+
+def _assert_pdf(data: bytes) -> None:
+    # Validate by content, not the client-declared type/extension. The %PDF
+    # signature must appear at the very start (allowing a small BOM/whitespace).
+    if b"%PDF-" not in data[:1024]:
+        raise NotAPdfError("uploaded file is not a valid PDF")
+
+
 def extract_digital_text(s3_key: str) -> str | None:
     """Return embedded PDF text, or None if the PDF looks scanned (and so needs
     OCR). Downloads the bytes for pypdf — internal processing only."""
     data = s3.get_bytes(s3_key)
+    _assert_pdf(data)
     reader = PdfReader(io.BytesIO(data))
     text = "\n".join((page.extract_text() or "") for page in reader.pages).strip()
     return text if len(text) >= MIN_DIGITAL_CHARS else None
 
 
-def run_textract(
-    s3_key: str, poll_seconds: float = 2.0, timeout_seconds: int = 180
-) -> str:
+def run_textract(s3_key: str, poll_seconds: float = 2.0, timeout_seconds: int = 180) -> str:
     """OCR a scanned PDF with Textract async text detection. Textract reads the
     object straight from S3 — the body never flows through the app."""
     client = _textract_client()
     job_id = client.start_document_text_detection(
-        DocumentLocation={
-            "S3Object": {"Bucket": settings.s3_bucket_name, "Name": s3_key}
-        }
+        DocumentLocation={"S3Object": {"Bucket": settings.s3_bucket_name, "Name": s3_key}}
     )["JobId"]
 
     waited = 0.0

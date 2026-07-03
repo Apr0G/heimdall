@@ -9,7 +9,7 @@ from app.services.claude_client import _extract_json
 
 def test_prompt_version_is_pinned():
     # Guards against silently changing the prompt without bumping the version.
-    assert extraction_prompt.VERSION == "extract_v1"
+    assert extraction_prompt.VERSION == "extract_v2"
 
 
 def test_extract_json_tolerates_fences_and_preamble():
@@ -38,14 +38,8 @@ def test_empty_strings_become_none_or_empty_list():
 
 
 def test_unknown_plan_type_normalized():
-    assert (
-        ExtractionResult.model_validate({"plan_type": "ppo-gold"}).plan_type
-        == "unknown"
-    )
-    assert (
-        ExtractionResult.model_validate({"plan_type": "medicare"}).plan_type
-        == "medicare"
-    )
+    assert ExtractionResult.model_validate({"plan_type": "ppo-gold"}).plan_type == "unknown"
+    assert ExtractionResult.model_validate({"plan_type": "medicare"}).plan_type == "medicare"
 
 
 def test_well_formed_extraction_parses():

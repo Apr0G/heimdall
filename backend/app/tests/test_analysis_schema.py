@@ -4,7 +4,7 @@ from app.services.analysis import probability_band
 
 
 def test_prompt_version_is_pinned():
-    assert analysis_prompt.VERSION == "analyze_v2"
+    assert analysis_prompt.VERSION == "analyze_v3"
 
 
 def test_probability_band_thresholds():
