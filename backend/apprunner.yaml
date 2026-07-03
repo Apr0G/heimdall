@@ -1,0 +1,20 @@
+# AWS App Runner build/run config — source-based deploy (no Docker, no ECR).
+# App Runner installs the backend from pyproject and starts uvicorn.
+#
+# Real configuration and secrets (DATABASE_URL, Cognito, Bedrock, FRONTEND_URL)
+# are injected as runtime environment variables by Terraform (see apprunner.tf),
+# NOT stored here — this file is committed to the repo.
+version: 1.0
+runtime: python3
+build:
+  commands:
+    build:
+      - pip install .
+run:
+  runtime-version: 3.11.9
+  command: uvicorn app.main:app --host 0.0.0.0 --port 8080
+  network:
+    port: 8080
+  env:
+    - name: APP_ENV
+      value: production
