@@ -1,0 +1,66 @@
+name: wipe-test-data
+
+# DESTRUCTIVE: deletes ALL case/document data (empties the dashboard) as a one-off
+# ECS task in the VPC. Keeps users, practices, and the append-only audit_logs.
+# Requires typing WIPE in the confirmation box. Keyless via GitHub OIDC.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type WIPE to confirm deleting ALL case data'
+        required: true
+        default: ''
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  wipe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check confirmation
+        run: |
+          if [ "${{ inputs.confirm }}" != "WIPE" ]; then
+            echo "Confirmation failed — type WIPE to proceed."
+            exit 1
+          fi
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::000000000000:role/heimdall-gha-deploy
+          aws-region: us-east-1
+
+      - name: Run the wipe as a one-off ECS task
+        run: |
+          set -euo pipefail
+          CLUSTER=default
+          TASKDEF=default-heimdall-api
+
+          CONTAINER=$(aws ecs describe-task-definition --task-definition "$TASKDEF" \
+            --query 'taskDefinition.containerDefinitions[0].name' --output text)
+          VPC=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true \
+            --query 'Vpcs[0].VpcId' --output text)
+          SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC" \
+            --query 'Subnets[].SubnetId' --output text | tr '\t' ',')
+          SG=$(aws ec2 describe-security-groups \
+            --filters "Name=group-name,Values=default-heimdall-api-$VPC" "Name=vpc-id,Values=$VPC" \
+            --query 'SecurityGroups[0].GroupId' --output text)
+
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "$CLUSTER" \
+            --task-definition "$TASKDEF" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=ENABLED}" \
+            --overrides "{\"containerOverrides\":[{\"name\":\"$CONTAINER\",\"command\":[\"python\",\"-m\",\"app.scripts.wipe_test_data\"],\"environment\":[{\"name\":\"WIPE_CONFIRM\",\"value\":\"WIPE\"}]}]}" \
+            --query 'tasks[0].taskArn' --output text)
+          echo "Started wipe task: $TASK_ARN"
+
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN"
+
+          EXIT=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+          REASON=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].stoppedReason' --output text)
+          echo "wipe container exit code: $EXIT ($REASON)"
+          test "$EXIT" = "0"
