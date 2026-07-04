@@ -10,7 +10,7 @@ from app.models import User
 from app.schemas.auth import LoginRequest, LoginResponse, UserOut
 from app.services.audit import log_audit, safe_ip
 from app.services.cognito import CognitoError, InvalidCredentialsError, initiate_auth
-from app.services.users import upsert_user_on_login
+from app.services.users import link_user_on_login
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -56,7 +56,22 @@ async def login(
 
     # Trust-but-verify: confirm the access token validates, and use its sub.
     claims = await verify_access_token(auth["AccessToken"])
-    user = await upsert_user_on_login(session, cognito_sub=claims["sub"], email=body.email)
+    user = await link_user_on_login(session, cognito_sub=claims["sub"], email=body.email)
+    if user is None:
+        # Valid Cognito credentials but no provisioned app account — deny, never
+        # auto-create (that would drop the login into an existing practice).
+        await log_audit(
+            session,
+            action="login_denied",
+            ip=ip,
+            user_agent=user_agent,
+            metadata={"email": body.email},
+        )
+        await session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account is not provisioned. Contact your administrator.",
+        )
     await log_audit(
         session,
         action="login_success",

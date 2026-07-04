@@ -116,6 +116,12 @@ resource "aws_cognito_user_pool" "heimdall" {
   }
 
   software_token_mfa_configuration { enabled = true }
+
+  # Login-only product: no self-service signup. Only admins create users, so a
+  # stranger can't register and get auto-provisioned into a practice.
+  admin_create_user_config {
+    allow_admin_create_user_only = true
+  }
 }
 
 resource "aws_cognito_user_pool_client" "heimdall" {
