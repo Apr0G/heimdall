@@ -117,6 +117,29 @@ resource "aws_iam_role_policy" "gha_deploy" {
         Action   = ["ecs:UpdateService", "ecs:DescribeServices"]
         Resource = "arn:aws:ecs:us-east-1:${data.aws_caller_identity.current.account_id}:service/default/heimdall-api"
       },
+      {
+        # Run one-off DB migration tasks (alembic upgrade head) inside the VPC.
+        Effect   = "Allow"
+        Action   = "ecs:RunTask"
+        Resource = "arn:aws:ecs:us-east-1:${data.aws_caller_identity.current.account_id}:task-definition/default-heimdall-api:*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ecs:DescribeTasks",
+          "ecs:DescribeTaskDefinition",
+          "ec2:DescribeVpcs",
+          "ec2:DescribeSubnets",
+          "ec2:DescribeSecurityGroups",
+        ]
+        Resource = "*"
+      },
+      {
+        # PassRole is needed so run-task can hand the migration task its roles.
+        Effect   = "Allow"
+        Action   = "iam:PassRole"
+        Resource = [aws_iam_role.ecs_execution.arn, aws_iam_role.app.arn]
+      },
     ]
   })
 }
