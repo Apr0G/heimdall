@@ -35,16 +35,14 @@ resource "aws_s3_bucket_public_access_block" "tfstate" {
   restrict_public_buckets = true
 }
 
-# STEP 2 — after the bucket exists, uncomment this and run:
+# State now lives in the encrypted S3 bucket above. To activate/migrate, run:
 #   terraform init -migrate-state
-# (replace <ACCOUNT_ID> with your account number, 000000000000)
-#
-# terraform {
-#   backend "s3" {
-#     bucket       = "heimdall-tfstate-000000000000"
-#     key          = "heimdall/terraform.tfstate"
-#     region       = "us-east-1"
-#     encrypt      = true
-#     use_lockfile = true
-#   }
-# }
+terraform {
+  backend "s3" {
+    bucket       = "heimdall-tfstate-000000000000"
+    key          = "heimdall/terraform.tfstate"
+    region       = "us-east-1"
+    encrypt      = true
+    use_lockfile = true
+  }
+}
