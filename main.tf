@@ -94,7 +94,7 @@ resource "aws_db_instance" "heimdall" {
   # Default (false) keeps today's behavior so applying changes nothing.
   skip_final_snapshot        = !var.rds_production
   final_snapshot_identifier  = "heimdall-db-final"
-  backup_retention_period    = var.rds_production ? 7 : 0
+  backup_retention_period    = var.rds_production ? 30 : 0
   deletion_protection        = var.rds_production
   copy_tags_to_snapshot      = true
   auto_minor_version_upgrade = true

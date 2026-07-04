@@ -12,9 +12,9 @@ variable "rds_production" {
 }
 
 variable "rds_parameter_group_family" {
-  description = "Must match the DB's Postgres major version. Check with: aws rds describe-db-instances --db-instance-identifier heimdall-db --query 'DBInstances[0].EngineVersion'."
+  description = "Must match the DB's Postgres major version (DB is on 18.3)."
   type        = string
-  default     = "postgres16"
+  default     = "postgres18"
 }
 
 # Forces every DB connection to use TLS (defense-in-depth; the app already sets
