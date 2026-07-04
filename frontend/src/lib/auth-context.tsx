@@ -1,5 +1,6 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 
@@ -38,6 +39,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
+  const queryClient = useQueryClient();
 
   // On mount, hydrate the user from a stored token (and validate it via /me).
   // All state updates happen in promise callbacks — never synchronously in the
@@ -70,19 +72,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const res = await api.post("/api/auth/login", { email, password });
       window.localStorage.setItem(TOKEN_KEY, res.data.access_token);
       setAuthedCookie();
+      // Wipe any cached data from a previous session before loading this user's.
+      queryClient.clear();
       const me = await api.get<User>("/api/auth/me");
       setUser(me.data);
       router.replace("/dashboard");
     },
-    [router],
+    [router, queryClient],
   );
 
   const logout = useCallback(() => {
     window.localStorage.removeItem(TOKEN_KEY);
     clearAuthedCookie();
     setUser(null);
+    // Drop all cached queries so the next user never sees this session's PHI.
+    queryClient.clear();
     router.replace("/login");
-  }, [router]);
+  }, [router, queryClient]);
 
   return (
     <AuthContext.Provider value={{ user, loading, login, logout }}>
