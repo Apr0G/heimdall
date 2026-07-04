@@ -77,18 +77,19 @@ resource "aws_s3_bucket_cors_configuration" "documents" {
 
 # --- RDS: encrypted Postgres database ---
 resource "aws_db_instance" "heimdall" {
-  identifier          = "heimdall-db"
-  engine              = "postgres"
-  instance_class      = "db.t4g.micro" # smallest / cheapest
-  allocated_storage   = 20
-  db_name             = "heimdall"
-  username            = "heimdall_admin"
-  password            = var.db_password
-  storage_encrypted   = true
-  kms_key_id          = aws_kms_key.heimdall.arn
-  skip_final_snapshot = true # dev only
-  publicly_accessible = true # ⚠️ DEV ONLY — make false + private subnet before PHI (Part 12)
-  apply_immediately   = true
+  identifier             = "heimdall-db"
+  engine                 = "postgres"
+  instance_class         = "db.t4g.micro" # smallest / cheapest
+  allocated_storage      = 20
+  db_name                = "heimdall"
+  username               = "heimdall_admin"
+  password               = var.db_password
+  storage_encrypted      = true
+  kms_key_id             = aws_kms_key.heimdall.arn
+  skip_final_snapshot    = true # dev only
+  vpc_security_group_ids = [aws_security_group.rds.id]
+  publicly_accessible    = !var.rds_private # Phase gate (see rds-private.tf)
+  apply_immediately      = true
 }
 
 # --- Cognito: user login for your app ---
