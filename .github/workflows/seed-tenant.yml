@@ -1,0 +1,76 @@
+name: seed-tenant
+
+# Creates a second test tenant (Practice + User row) for isolation testing, as a
+# one-off ECS task in the VPC. The Cognito account is created separately (admin
+# CLI); pass its sub here so first login links by sub. Keyless via GitHub OIDC.
+on:
+  workflow_dispatch:
+    inputs:
+      practice_name:
+        description: "Practice name, e.g. Practice B (test)"
+        required: true
+      email:
+        description: "User email (must match the Cognito account)"
+        required: true
+      cognito_sub:
+        description: "The Cognito user's sub (from admin-get-user)"
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::000000000000:role/heimdall-gha-deploy
+          aws-region: us-east-1
+
+      - name: Seed the tenant as a one-off ECS task
+        env:
+          P_NAME: ${{ inputs.practice_name }}
+          P_EMAIL: ${{ inputs.email }}
+          P_SUB: ${{ inputs.cognito_sub }}
+        run: |
+          set -euo pipefail
+          CLUSTER=default
+          TASKDEF=default-heimdall-api
+
+          CONTAINER=$(aws ecs describe-task-definition --task-definition "$TASKDEF" \
+            --query 'taskDefinition.containerDefinitions[0].name' --output text)
+          VPC=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true \
+            --query 'Vpcs[0].VpcId' --output text)
+          SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC" \
+            --query 'Subnets[].SubnetId' --output text | tr '\t' ',')
+          SG=$(aws ec2 describe-security-groups \
+            --filters "Name=group-name,Values=default-heimdall-api-$VPC" "Name=vpc-id,Values=$VPC" \
+            --query 'SecurityGroups[0].GroupId' --output text)
+
+          OVERRIDES=$(cat <<JSON
+          {"containerOverrides":[{"name":"$CONTAINER",
+            "command":["python","-m","app.scripts.seed_tenant"],
+            "environment":[
+              {"name":"TENANT_PRACTICE_NAME","value":"$P_NAME"},
+              {"name":"TENANT_EMAIL","value":"$P_EMAIL"},
+              {"name":"TENANT_COGNITO_SUB","value":"$P_SUB"}
+            ]}]}
+          JSON
+          )
+
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "$CLUSTER" --task-definition "$TASKDEF" --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=ENABLED}" \
+            --overrides "$OVERRIDES" \
+            --query 'tasks[0].taskArn' --output text)
+          echo "Started seed task: $TASK_ARN"
+
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN"
+          EXIT=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+          REASON=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].stoppedReason' --output text)
+          echo "seed container exit code: $EXIT ($REASON)"
+          test "$EXIT" = "0"
