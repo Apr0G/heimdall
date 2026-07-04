@@ -2,6 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import axios from "axios";
+import Link from "next/link";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -86,6 +87,12 @@ export default function LoginPage() {
               {isSubmitting ? "Signing in…" : "Sign in"}
             </Button>
           </form>
+          <p className="mt-5 text-center text-sm text-muted-foreground">
+            Don&rsquo;t have an account?{" "}
+            <Link href="/get-started" className="font-medium text-foreground hover:underline">
+              Get started
+            </Link>
+          </p>
         </div>
       </div>
     </div>

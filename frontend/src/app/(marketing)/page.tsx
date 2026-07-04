@@ -3,7 +3,6 @@ import type { Metadata } from "next";
 import { CtaLink } from "@/components/cta-link";
 import { HeroPreview } from "@/components/hero-preview";
 import { Reveal } from "@/components/reveal";
-import { GET_STARTED_MAILTO } from "@/lib/site";
 
 export const metadata: Metadata = {
   title: "Heimdall — Appeal denied insurance claims",
@@ -60,7 +59,7 @@ export default function LandingPage() {
             your odds, and drafts a payer-ready appeal letter — in minutes.
           </p>
           <div className="mt-8 flex justify-center">
-            <CtaLink href={GET_STARTED_MAILTO} size="lg">
+            <CtaLink href="/get-started" size="lg">
               Get started
             </CtaLink>
           </div>

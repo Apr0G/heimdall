@@ -1,6 +1,7 @@
 "use client";
 
 import axios from "axios";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -80,6 +81,12 @@ export default function NewCasePage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
+      <Link
+        href="/dashboard"
+        className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <span aria-hidden>←</span> Appeals
+      </Link>
       <div>
         <h1 className="text-[22px] font-extrabold tracking-tight">New appeal</h1>
         <p className="text-sm text-muted-foreground">

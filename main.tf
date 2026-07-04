@@ -186,6 +186,11 @@ resource "aws_iam_role_policy" "app" {
           aws_secretsmanager_secret.db.arn,
           aws_secretsmanager_secret.database_url.arn,
         ]
+      },
+      {
+        Effect   = "Allow"
+        Action   = "sns:Publish"
+        Resource = aws_sns_topic.leads.arn
       }
     ]
   })

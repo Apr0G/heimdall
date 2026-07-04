@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     aws_region: str = "us-east-1"
     s3_bucket_name: str = ""
     kms_key_alias: str = "alias/heimdall"
+    leads_topic_arn: str = ""  # SNS topic for "get started" lead notifications
 
     # Database
     database_url: str = ""

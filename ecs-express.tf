@@ -224,6 +224,7 @@ resource "aws_cloudformation_stack" "express" {
               { Name = "COGNITO_REGION", Value = "us-east-1" },
               { Name = "BEDROCK_MODEL_ID", Value = var.bedrock_model_id },
               { Name = "FRONTEND_URL", Value = var.frontend_url },
+              { Name = "LEADS_TOPIC_ARN", Value = aws_sns_topic.leads.arn },
               { Name = "LOG_LEVEL", Value = "INFO" },
             ]
             Secrets = [
