@@ -29,12 +29,13 @@ async def login(
     try:
         auth = await run_in_threadpool(initiate_auth, body.email, body.password)
     except InvalidCredentialsError:
+        # No email in metadata: on a failed login it's attacker-supplied and would
+        # let anyone flood the append-only audit table with arbitrary PII.
         await log_audit(
             session,
             action="login_failure",
             ip=ip,
             user_agent=user_agent,
-            metadata={"email": body.email},
         )
         await session.commit()
         raise HTTPException(
@@ -46,7 +47,6 @@ async def login(
             action="login_error",
             ip=ip,
             user_agent=user_agent,
-            metadata={"email": body.email},
         )
         await session.commit()
         raise HTTPException(
@@ -88,7 +88,6 @@ async def login(
     return LoginResponse(
         access_token=auth["AccessToken"],
         id_token=auth["IdToken"],
-        refresh_token=auth["RefreshToken"],
         token_type=auth.get("TokenType", "Bearer"),
         expires_in=auth.get("ExpiresIn", 3600),
     )

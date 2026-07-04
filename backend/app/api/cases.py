@@ -71,6 +71,10 @@ _WIN_RESULTS = {"overturned", "partial"}
 # Days after submission before we nag for an outcome.
 OUTCOME_REMINDER_DAYS = 30
 
+# Reject oversized uploads before Textract/analysis. Presigned PUT URLs carry no
+# size limit of their own, so we enforce it here after the object lands.
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB
+
 
 def case_status_after_outcome(result: str) -> str:
     return "resolved" if result in _TERMINAL_RESULTS else "submitted"
@@ -287,8 +291,13 @@ async def create_case(
     for doc in body.documents:
         if not doc.s3_key.startswith(tmp_prefix):
             raise HTTPException(status_code=400, detail="Invalid upload key")
-        if await run_in_threadpool(head_object, doc.s3_key) is None:
+        head = await run_in_threadpool(head_object, doc.s3_key)
+        if head is None:
             raise HTTPException(status_code=400, detail=f"Upload missing for {doc.doc_type}")
+        if (head.get("ContentLength") or 0) > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413, detail=f"{doc.doc_type} file is too large (25 MB max)."
+            )
 
     case = Case(
         practice_id=current_user.practice_id,
@@ -651,8 +660,13 @@ async def reanalyze_case(
     for doc in body.documents:
         if not doc.s3_key.startswith(tmp_prefix):
             raise HTTPException(status_code=400, detail="Invalid upload key")
-        if await run_in_threadpool(head_object, doc.s3_key) is None:
+        head = await run_in_threadpool(head_object, doc.s3_key)
+        if head is None:
             raise HTTPException(status_code=400, detail=f"Upload missing for {doc.doc_type}")
+        if (head.get("ContentLength") or 0) > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413, detail=f"{doc.doc_type} file is too large (25 MB max)."
+            )
 
     ip = safe_ip(request.client.host if request.client else None)
     user_agent = request.headers.get("user-agent")
