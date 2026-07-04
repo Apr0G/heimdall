@@ -2,6 +2,7 @@ import io
 import time
 
 import boto3
+from botocore.exceptions import ClientError
 from pypdf import PdfReader
 
 from app.core.config import settings
@@ -12,6 +13,20 @@ from app.services import s3
 MIN_DIGITAL_CHARS = 20
 
 _textract = None
+
+
+def _with_retries(fn, *args, attempts: int = 4, base_delay: float = 1.5, **kwargs):
+    """Retry a boto3 read on transient ClientErrors. Just after a document is
+    written or moved to its final key, S3/Textract can briefly fail to see it;
+    the same call succeeds a few seconds later (which is why a manual Retry
+    worked). Retrying automatically removes that first-attempt failure."""
+    for attempt in range(attempts):
+        try:
+            return fn(*args, **kwargs)
+        except ClientError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(base_delay * (attempt + 1))
 
 
 def _textract_client():
@@ -35,7 +50,7 @@ def _assert_pdf(data: bytes) -> None:
 def extract_digital_text(s3_key: str) -> str | None:
     """Return embedded PDF text, or None if the PDF looks scanned (and so needs
     OCR). Downloads the bytes for pypdf — internal processing only."""
-    data = s3.get_bytes(s3_key)
+    data = _with_retries(s3.get_bytes, s3_key)
     _assert_pdf(data)
     reader = PdfReader(io.BytesIO(data))
     text = "\n".join((page.extract_text() or "") for page in reader.pages).strip()
@@ -46,8 +61,9 @@ def run_textract(s3_key: str, poll_seconds: float = 2.0, timeout_seconds: int = 
     """OCR a scanned PDF with Textract async text detection. Textract reads the
     object straight from S3 — the body never flows through the app."""
     client = _textract_client()
-    job_id = client.start_document_text_detection(
-        DocumentLocation={"S3Object": {"Bucket": settings.s3_bucket_name, "Name": s3_key}}
+    job_id = _with_retries(
+        client.start_document_text_detection,
+        DocumentLocation={"S3Object": {"Bucket": settings.s3_bucket_name, "Name": s3_key}},
     )["JobId"]
 
     waited = 0.0
