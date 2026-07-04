@@ -129,7 +129,11 @@ resource "aws_cloudtrail" "main" {
   is_multi_region_trail         = true
   include_global_service_events = true
   enable_log_file_validation    = true
-  depends_on                    = [aws_s3_bucket_policy.trail]
+  # Also stream to CloudWatch Logs so the security metric-filter alarms fire
+  # (see monitoring.tf). Kept optional-safe: both refs live in monitoring.tf.
+  cloud_watch_logs_group_arn = "${aws_cloudwatch_log_group.cloudtrail.arn}:*"
+  cloud_watch_logs_role_arn  = aws_iam_role.cloudtrail_cw.arn
+  depends_on                 = [aws_s3_bucket_policy.trail]
 }
 
 # --- VPC Flow Logs on the default VPC ----------------------------------------
