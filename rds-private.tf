@@ -29,7 +29,7 @@ data "aws_security_group" "ecs_tasks" {
 # The database's own security group: Postgres, only from the backend tasks.
 resource "aws_security_group" "rds" {
   name        = "heimdall-rds"
-  description = "Postgres access for Heimdall — backend ECS tasks only"
+  description = "Postgres access for Heimdall - backend ECS tasks only"
   vpc_id      = data.aws_vpc.default.id
 
   ingress {
