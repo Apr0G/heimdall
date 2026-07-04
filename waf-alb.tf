@@ -18,7 +18,7 @@ variable "alb_arn" {
 
 resource "aws_wafv2_web_acl" "alb" {
   name        = "heimdall-alb-waf"
-  description = "Heimdall backend WAF - count mode until reviewed"
+  description = "Heimdall backend WAF - enforcing (block)"
   scope       = "REGIONAL"
 
   default_action {
@@ -35,7 +35,7 @@ resource "aws_wafv2_web_acl" "alb" {
     name     = "AWSManagedRulesCommonRuleSet"
     priority = 1
     override_action {
-      count {}
+      none {}
     }
     statement {
       managed_rule_group_statement {
@@ -54,7 +54,7 @@ resource "aws_wafv2_web_acl" "alb" {
     name     = "AWSManagedRulesKnownBadInputsRuleSet"
     priority = 2
     override_action {
-      count {}
+      none {}
     }
     statement {
       managed_rule_group_statement {
@@ -73,7 +73,7 @@ resource "aws_wafv2_web_acl" "alb" {
     name     = "AWSManagedRulesAmazonIpReputationList"
     priority = 3
     override_action {
-      count {}
+      none {}
     }
     statement {
       managed_rule_group_statement {
@@ -92,7 +92,7 @@ resource "aws_wafv2_web_acl" "alb" {
     name     = "RateLimitPerIp"
     priority = 4
     action {
-      count {}
+      block {}
     }
     statement {
       rate_based_statement {
