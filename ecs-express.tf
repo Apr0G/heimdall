@@ -225,6 +225,7 @@ resource "aws_cloudformation_stack" "express" {
               { Name = "BEDROCK_MODEL_ID", Value = var.bedrock_model_id },
               { Name = "FRONTEND_URL", Value = var.frontend_url },
               { Name = "LEADS_TOPIC_ARN", Value = aws_sns_topic.leads.arn },
+              { Name = "REDIS_URL", Value = "redis://${aws_elasticache_cluster.redis.cache_nodes[0].address}:6379" },
               { Name = "LOG_LEVEL", Value = "INFO" },
             ]
             Secrets = [
