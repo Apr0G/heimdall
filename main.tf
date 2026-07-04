@@ -86,10 +86,19 @@ resource "aws_db_instance" "heimdall" {
   password               = var.db_password
   storage_encrypted      = true
   kms_key_id             = aws_kms_key.heimdall.arn
-  skip_final_snapshot    = true # dev only
   vpc_security_group_ids = [aws_security_group.rds.id]
   publicly_accessible    = !var.rds_private # Phase gate (see rds-private.tf)
   apply_immediately      = true
+
+  # PHI-readiness, flipped on together via rds_production (see rds-hardening.tf).
+  # Default (false) keeps today's behavior so applying changes nothing.
+  skip_final_snapshot        = !var.rds_production
+  final_snapshot_identifier  = "heimdall-db-final"
+  backup_retention_period    = var.rds_production ? 7 : 0
+  deletion_protection        = var.rds_production
+  copy_tags_to_snapshot      = true
+  auto_minor_version_upgrade = true
+  parameter_group_name       = var.rds_production ? aws_db_parameter_group.heimdall.name : null
 }
 
 # --- Cognito: user login for your app ---
@@ -143,10 +152,10 @@ resource "aws_iam_role_policy" "app" {
       {
         Effect = "Allow"
         Action = ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"]
-        # Scoped to foundation models + inference profiles (not "*").
+        # Scoped to Anthropic Claude models + their inference profiles.
         Resource = [
-          "arn:aws:bedrock:*::foundation-model/*",
-          "arn:aws:bedrock:*:${data.aws_caller_identity.current.account_id}:inference-profile/*",
+          "arn:aws:bedrock:*::foundation-model/anthropic.claude-*",
+          "arn:aws:bedrock:*:${data.aws_caller_identity.current.account_id}:inference-profile/us.anthropic.claude-*",
         ]
       },
       {
@@ -156,9 +165,14 @@ resource "aws_iam_role_policy" "app" {
         Resource = "*"
       },
       {
-        Effect   = "Allow"
-        Action   = ["s3:GetObject", "s3:PutObject"]
-        Resource = "${aws_s3_bucket.documents.arn}/*"
+        Effect = "Allow"
+        Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+        # Scoped to the exact prefixes the app writes (see services/s3.py).
+        Resource = [
+          "${aws_s3_bucket.documents.arn}/tmp-uploads/*",
+          "${aws_s3_bucket.documents.arn}/practices/*",
+          "${aws_s3_bucket.documents.arn}/model_runs/*",
+        ]
       },
       {
         Effect   = "Allow"
