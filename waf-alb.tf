@@ -18,7 +18,7 @@ variable "alb_arn" {
 
 resource "aws_wafv2_web_acl" "alb" {
   name        = "heimdall-alb-waf"
-  description = "Heimdall backend WAF - enforcing (block)"
+  description = "Heimdall backend WAF - enforcing block mode"
   scope       = "REGIONAL"
 
   default_action {
