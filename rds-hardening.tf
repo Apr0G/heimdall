@@ -22,7 +22,7 @@ variable "rds_parameter_group_family" {
 resource "aws_db_parameter_group" "heimdall" {
   name        = "heimdall-pg"
   family      = var.rds_parameter_group_family
-  description = "Heimdall Postgres params — enforce TLS"
+  description = "Heimdall Postgres params - enforce TLS"
 
   parameter {
     name         = "rds.force_ssl"
