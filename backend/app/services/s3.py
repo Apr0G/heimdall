@@ -57,7 +57,10 @@ def presigned_get_url(key: str, expires: int = 900) -> str:
 
 
 def head_object(key: str) -> dict[str, Any] | None:
-    """Return object metadata, or None if it does not exist."""
+    """Return object metadata, or None if it does not exist. Without s3:ListBucket
+    (least privilege) S3 answers a HEAD for a missing object with 403 rather than
+    404, so we treat that as 'not found' too. A genuine access problem would still
+    surface on the subsequent GetObject."""
     try:
         return _get_client().head_object(Bucket=settings.s3_bucket_name, Key=key)
     except ClientError as exc:
@@ -65,6 +68,8 @@ def head_object(key: str) -> dict[str, Any] | None:
             "404",
             "NoSuchKey",
             "NotFound",
+            "403",
+            "Forbidden",
         }:
             return None
         raise
