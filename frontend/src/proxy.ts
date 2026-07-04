@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 // Public marketing + auth routes. Everything else is app and requires login.
-const PUBLIC_PATHS = ["/", "/contact", "/terms", "/privacy", "/login"];
+const PUBLIC_PATHS = ["/", "/contact", "/terms", "/privacy", "/login", "/get-started"];
 
 // Presence-based route gating using the `hd_authed` cookie. The real security
 // boundary is the backend, which verifies the JWT on every API call; this only
