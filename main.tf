@@ -61,14 +61,14 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "documents" {
   }
 }
 
-# CORS: the browser uploads documents directly to S3 via presigned URLs, so the
-# dev frontend origin must be allowed. Add the deployed origin here in Part 12.
+# CORS: the browser uploads documents directly to S3 via presigned URLs, so both
+# the local dev origin and the deployed frontend (var.frontend_url) must be allowed.
 resource "aws_s3_bucket_cors_configuration" "documents" {
   bucket = aws_s3_bucket.documents.id
 
   cors_rule {
     allowed_methods = ["PUT", "GET", "HEAD"]
-    allowed_origins = ["http://localhost:3000"]
+    allowed_origins = distinct(["http://localhost:3000", var.frontend_url])
     allowed_headers = ["*"]
     expose_headers  = ["ETag"]
     max_age_seconds = 3000
