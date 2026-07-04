@@ -64,8 +64,10 @@ async def main() -> None:
         s3.delete_objects(Bucket=bucket, Delete={"Objects": batch, "Quiet": True})
 
     async with engine.begin() as conn:
+        # CASE_TABLES is a hardcoded module constant, never user input, so
+        # interpolating it into the TRUNCATE is not a SQL-injection vector.
         await conn.execute(
-            text(f"TRUNCATE TABLE {', '.join(CASE_TABLES)} RESTART IDENTITY CASCADE")
+            text(f"TRUNCATE TABLE {', '.join(CASE_TABLES)} RESTART IDENTITY CASCADE")  # nosemgrep
         )
 
     await engine.dispose()

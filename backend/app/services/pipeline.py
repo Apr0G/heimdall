@@ -117,7 +117,11 @@ async def _mark_error(session: AsyncSession, case_id: UUID, exc: Exception) -> N
     case = await session.get(Case, case_id)
     if case is not None:
         case.status = "error"
-        # Exception type only — never the message (could echo a key or path).
-        case.error_message = f"Processing failed ({type(exc).__name__})."
+        # Exception type + AWS error code only (both safe enums like "NoSuchKey")
+        # — never the raw message, which could echo a key or path.
+        detail = type(exc).__name__
+        response = getattr(exc, "response", None)
+        code = response.get("Error", {}).get("Code") if isinstance(response, dict) else None
+        case.error_message = f"Processing failed ({detail}{f': {code}' if code else ''})."
         await session.commit()
     logger.exception("pipeline failed", extra={"context": {"case_id": str(case_id)}})

@@ -1,3 +1,4 @@
+import time
 import uuid
 from typing import Any
 
@@ -35,9 +36,7 @@ def case_document_key(practice_id: uuid.UUID, case_id: uuid.UUID, doc_type: str)
     return f"practices/{practice_id}/cases/{case_id}/{doc_type}/{uuid.uuid4()}.pdf"
 
 
-def presigned_put_url(
-    key: str, content_type: str = "application/pdf", expires: int = 900
-) -> str:
+def presigned_put_url(key: str, content_type: str = "application/pdf", expires: int = 900) -> str:
     return _get_client().generate_presigned_url(
         "put_object",
         Params={
@@ -85,11 +84,18 @@ def move_object(src_key: str, dst_key: str) -> None:
 
 
 def get_bytes(key: str) -> bytes:
-    """Read an object's bytes — internal processing only (e.g. pypdf), never
-    for serving file bodies to clients."""
-    return (
-        _get_client().get_object(Bucket=settings.s3_bucket_name, Key=key)["Body"].read()
-    )
+    """Read an object's bytes — internal processing only (e.g. pypdf), never for
+    serving file bodies to clients. Retries transient ClientErrors: an object
+    that was just written or moved to its final key can be briefly invisible,
+    which is why a first analysis attempt could fail but a Retry succeeded."""
+    for attempt in range(4):
+        try:
+            return _get_client().get_object(Bucket=settings.s3_bucket_name, Key=key)["Body"].read()
+        except ClientError:
+            if attempt == 3:
+                raise
+            time.sleep(1.5 * (attempt + 1))
+    raise RuntimeError("unreachable")  # for type-checkers; the loop always returns or raises
 
 
 def put_text(key: str, text: str) -> None:

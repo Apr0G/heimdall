@@ -50,7 +50,7 @@ def _assert_pdf(data: bytes) -> None:
 def extract_digital_text(s3_key: str) -> str | None:
     """Return embedded PDF text, or None if the PDF looks scanned (and so needs
     OCR). Downloads the bytes for pypdf — internal processing only."""
-    data = _with_retries(s3.get_bytes, s3_key)
+    data = s3.get_bytes(s3_key)  # s3.get_bytes already retries transient reads
     _assert_pdf(data)
     reader = PdfReader(io.BytesIO(data))
     text = "\n".join((page.extract_text() or "") for page in reader.pages).strip()
