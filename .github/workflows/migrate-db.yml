@@ -23,12 +23,10 @@ jobs:
         run: |
           set -euo pipefail
           CLUSTER=default
-          SERVICE=heimdall-api
+          TASKDEF=default-heimdall-api # family name → resolves to the latest active revision
 
-          # Discover the current task definition, its primary container, and the
-          # VPC networking so the one-off task matches the running service.
-          TASKDEF=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
-            --query 'services[0].taskDefinition' --output text)
+          # Discover the primary container name + the VPC networking so the
+          # one-off task matches the running service.
           CONTAINER=$(aws ecs describe-task-definition --task-definition "$TASKDEF" \
             --query 'taskDefinition.containerDefinitions[0].name' --output text)
           VPC=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true \
