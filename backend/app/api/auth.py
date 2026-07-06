@@ -1,10 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from app.core.auth import get_current_user, verify_access_token
-from app.core.config import settings
-from app.core.rate_limit import limiter
+from app.core.rate_limit import login_rate_ok, rate_key
 from app.db.session import get_db
 from app.models import User
 from app.schemas.auth import LoginRequest, LoginResponse, UserOut
@@ -16,13 +15,17 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=LoginResponse)
-@limiter.limit(settings.rate_limit_auth)
 async def login(
     body: LoginRequest,
     request: Request,
-    response: Response,
     session: AsyncSession = Depends(get_db),
 ) -> LoginResponse:
+    # Fail-closed login throttle — a Redis outage must not reopen brute-force.
+    if not await run_in_threadpool(login_rate_ok, rate_key(request)):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many login attempts. Please try again later.",
+        )
     ip = safe_ip(request.client.host if request.client else None)
     user_agent = request.headers.get("user-agent")
 
