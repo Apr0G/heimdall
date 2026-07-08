@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import TypeVar
 
 import boto3
+from botocore.config import Config
 from pydantic import BaseModel, ValidationError
 from starlette.concurrency import run_in_threadpool
 
@@ -28,7 +29,19 @@ class ClaudeJSONError(Exception):
 def _bedrock():
     global _client
     if _client is None:
-        _client = boto3.client("bedrock-runtime", region_name=settings.aws_region)
+        # Default botocore read timeout is 60s — a multi-thousand-token letter draft
+        # at low throughput can exceed it and error a case the model would finish.
+        # Adaptive retries add throttling backoff (client-side retry loop only
+        # handles bad JSON, not Bedrock TPS limits).
+        _client = boto3.client(
+            "bedrock-runtime",
+            region_name=settings.aws_region,
+            config=Config(
+                connect_timeout=10,
+                read_timeout=300,
+                retries={"max_attempts": 4, "mode": "adaptive"},
+            ),
+        )
     return _client
 
 
@@ -51,9 +64,7 @@ class ModelOutcome:
     output_tokens: int
 
 
-def _invoke(
-    system: str, messages: list[dict], max_tokens: int, temperature: float
-) -> _RawCall:
+def _invoke(system: str, messages: list[dict], max_tokens: int, temperature: float) -> _RawCall:
     """One synchronous Bedrock invoke_model call (run via threadpool)."""
     body = {
         "anthropic_version": ANTHROPIC_VERSION,
@@ -63,15 +74,11 @@ def _invoke(
         "messages": messages,
     }
     start = time.perf_counter()
-    response = _bedrock().invoke_model(
-        modelId=settings.bedrock_model_id, body=json.dumps(body)
-    )
+    response = _bedrock().invoke_model(modelId=settings.bedrock_model_id, body=json.dumps(body))
     latency_ms = int((time.perf_counter() - start) * 1000)
     payload = json.loads(response["body"].read())
     text = "".join(
-        block.get("text", "")
-        for block in payload.get("content", [])
-        if block.get("type") == "text"
+        block.get("text", "") for block in payload.get("content", []) if block.get("type") == "text"
     )
     usage = payload.get("usage", {})
     return _RawCall(
@@ -151,9 +158,7 @@ async def complete_json(
     messages: list[dict] = [{"role": "user", "content": user_prompt}]
 
     for _ in range(2):
-        call = await run_in_threadpool(
-            _invoke, system, messages, max_tokens, temperature
-        )
+        call = await run_in_threadpool(_invoke, system, messages, max_tokens, temperature)
         run_id = uuid.uuid4()
 
         validated: ModelT | None = None
