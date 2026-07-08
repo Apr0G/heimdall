@@ -72,9 +72,25 @@ _WIN_RESULTS = {"overturned", "partial"}
 # Days after submission before we nag for an outcome.
 OUTCOME_REMINDER_DAYS = 30
 
+# A `processing` case whose row hasn't advanced in this long is treated as stalled:
+# the in-process BackgroundTasks pipeline was killed (deploy/crash/OOM) and will
+# never finish. Such a case may be retried and the UI surfaces a retry affordance.
+# The threshold is generous — a legitimate phase (incl. Textract) stays well under it.
+STALE_PROCESSING = timedelta(minutes=15)
+
 # Reject oversized uploads before Textract/analysis. Presigned PUT URLs carry no
 # size limit of their own, so we enforce it here after the object lands.
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB
+
+
+def _is_stalled(case: Case) -> bool:
+    """True when a `processing` case's row hasn't advanced within STALE_PROCESSING
+    — i.e. the background pipeline died and the case is safe to retry."""
+    return (
+        case.status == "processing"
+        and case.updated_at is not None
+        and datetime.now(UTC) - case.updated_at > STALE_PROCESSING
+    )
 
 
 def case_status_after_outcome(result: str) -> str:
@@ -414,6 +430,7 @@ async def get_case(
     return CaseDetailResponse(
         id=case.id,
         status=case.status,
+        stalled=_is_stalled(case),
         error_message=case.error_message,
         patient_initials=case.patient_initials,
         payer_name=case.payer_name,
@@ -570,8 +587,8 @@ async def retry_case(
     session: AsyncSession = Depends(get_db),
 ) -> CaseStatusResponse:
     case = await _get_owned_case(session, case_id, current_user)
-    if case.status != "error":
-        raise HTTPException(status_code=409, detail="Only a failed case can be retried")
+    if case.status != "error" and not _is_stalled(case):
+        raise HTTPException(status_code=409, detail="Only a failed or stalled case can be retried")
     case.status = "processing"
     case.error_message = None
     await log_audit(

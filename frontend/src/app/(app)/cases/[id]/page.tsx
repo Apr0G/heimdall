@@ -109,7 +109,11 @@ export default function CaseDetailPage() {
       </div>
 
       {data.status === "processing" ? (
-        <ProcessingView />
+        <ProcessingView
+          stalled={data.stalled ?? false}
+          onRetry={() => retry.mutate()}
+          retrying={retry.isPending}
+        />
       ) : data.status === "error" ? (
         <ErrorView message={data.error_message} onRetry={() => retry.mutate()} retrying={retry.isPending} />
       ) : (
@@ -149,7 +153,43 @@ function CaseDetailSkeleton() {
   );
 }
 
-function ProcessingView() {
+function ProcessingView({
+  stalled,
+  onRetry,
+  retrying,
+}: {
+  stalled: boolean;
+  onRetry: () => void;
+  retrying: boolean;
+}) {
+  // The pipeline runs in-process, so a deploy/crash can strand a case in
+  // `processing`. Once the server flags it stalled, offer a way out.
+  if (stalled) {
+    return (
+      <div className="flex flex-col items-center rounded-lg border border-border bg-card px-6 py-24 text-center shadow-sm">
+        <span
+          className="mb-5 flex size-[52px] items-center justify-center rounded-full text-2xl font-bold"
+          style={{ background: "color-mix(in oklab, var(--warn) 16%, var(--card))", color: "var(--warn)" }}
+          aria-hidden
+        >
+          ⏱
+        </span>
+        <div className="mb-2 text-xl font-extrabold tracking-tight">This is taking longer than expected</div>
+        <p className="max-w-md text-[15px] leading-relaxed text-muted-foreground">
+          Your documents are safe — nothing was lost. The analysis didn&rsquo;t finish, which can
+          happen after a system update. Retry to pick it back up.
+        </p>
+        <div className="mt-6 flex gap-2.5">
+          <Button onClick={onRetry} disabled={retrying}>
+            {retrying ? "Retrying…" : "Retry"}
+          </Button>
+          <a href={CONTACT_MAILTO} className={buttonVariants({ variant: "outline" })}>
+            Contact support
+          </a>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="flex flex-col items-center rounded-lg border border-border bg-card px-6 py-24 text-center shadow-sm">
       <span className="mb-6 size-11 animate-spin rounded-full border-[3px] border-border border-t-primary" />

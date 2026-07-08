@@ -136,6 +136,8 @@ class OutcomeDetail(BaseModel):
 class CaseDetailResponse(BaseModel):
     id: UUID
     status: str
+    # True when a `processing` case has stalled (pipeline killed) and can be retried.
+    stalled: bool = False
     error_message: str | None
     patient_initials: str | None
     payer_name: str | None

@@ -102,6 +102,7 @@ export type OutcomeDetail = {
 export type CaseDetail = {
   id: string;
   status: string;
+  stalled?: boolean;
   error_message: string | null;
   patient_initials: string | null;
   payer_name: string | null;
