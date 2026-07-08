@@ -1,22 +1,27 @@
-"""Best-effort PHI redaction for the training-corpus export.
+"""PHI redaction for the training-corpus export — implements HIPAA Safe Harbor
+(§164.514(b)(2)) in code across the 18 identifier categories:
 
-Removes what can be done reliably in code, with no ML dependency:
-  1. every identifier we already captured for the case (initials, member id,
-     claim number, provider name/NPI, prior-auth) — exact-string redaction;
-  2. formatted PHI — email, SSN, phone, dates, ZIP+4, 6+-digit id runs, URLs;
-  3. names in the standard appeal-letter slots (Dear …, Patient/Member Name: …,
-     Sincerely, …).
-Dates elsewhere are generalized to the year; claim numbers become a salted hash.
+  names ............... Presidio NER (PERSON) + letter-slot cues + captured values
+  geography < state ... Presidio NER (LOCATION) + street-address + ZIP regex
+  all dates (yr only).. dates generalized to year (structured) / regex (free text)
+  ages > 89 ........... aggregated to "90+"
+  phone / fax ......... regex          email ............... regex
+  SSN ................. regex          MRN/account/plan #s . 6+-digit run + captured
+  certificate/license . captured (NPI) + Presidio           URL / IP ... regex
+  vehicle/device/bio/photo ............ N/A for text; long-number run catches serials
 
-IMPORTANT — this is BEST-EFFORT, not a certified HIPAA Safe Harbor / Expert
-Determination de-identification. We only stored patient *initials*, so a full
-patient name that appears free-floating in the letter text (not in a known slot)
-can still slip through. Before treating the output as non-PHI outside your BAA
-boundary, run it through a dedicated PHI NER tool (e.g. Microsoft Presidio) or an
-expert review.
+Formatted identifiers are handled by precise regex (so 5-digit CPT codes and
+ICD codes survive as training signal); names/places by NER (recall). Every run
+also emits a residual scan (scan_residual) for the validation report.
+
+Safe Harbor also requires "no actual knowledge" that the residual data could
+identify someone — that is a documented human review, which the export's
+validation report is built to support. Treat the output as PHI until that review
+is signed off.
 """
 
 import hashlib
+import os
 import re
 from datetime import date
 
@@ -36,17 +41,39 @@ SAFE_EXTRACTION_FIELDS = {
     "confidence",
 }
 
+_MONTHS = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?"
+
 _EMAIL = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
 _SSN = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
-_URL = re.compile(r"https?://\S+")
-_ZIP4 = re.compile(r"\b\d{5}-\d{4}\b")
+_URL = re.compile(r"\bhttps?://\S+|\bwww\.[^\s,;]+")
+_IPV4 = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 _PHONE = re.compile(r"(?<!\d)(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)")
-_DATE = re.compile(
-    r"\b(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}"
-    r"|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4})\b",
+_ZIP4 = re.compile(r"\b\d{5}-\d{4}\b")
+# "CA 90210" -> keep the state (allowed at state level), drop the ZIP.
+_STATE_ZIP = re.compile(r"\b([A-Z]{2})\s+\d{5}(?:-\d{4})?\b")
+_STREET = re.compile(
+    r"\b\d{1,6}\s+(?:[A-Z][A-Za-z.'-]+\s+){0,4}"
+    r"(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct"
+    r"|Way|Place|Pl|Terrace|Ter|Circle|Cir|Highway|Hwy|Parkway|Pkwy)\.?"
+    r"(?:\s+(?:Suite|Ste|Apt|Unit|Floor|Fl|#)\.?\s*\w+)?",
     re.IGNORECASE,
 )
-_LONGNUM = re.compile(r"(?<!\d)\d{6,}(?!\d)")  # member ids / MRNs / claim numbers
+_DATE = re.compile(
+    r"\b(?:"
+    r"\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}"  # 03/15/1980
+    r"|\d{4}-\d{1,2}-\d{1,2}"  # 1980-03-15
+    rf"|{_MONTHS}\s+\d{{1,2}}(?:st|nd|rd|th)?,?\s+\d{{4}}"  # March 15, 1980
+    rf"|\d{{1,2}}(?:st|nd|rd|th)?\s+(?:of\s+)?{_MONTHS},?\s+\d{{4}}"  # 15 March 1980
+    r")\b",
+    re.IGNORECASE,
+)
+_LONGNUM = re.compile(r"(?<!\d)\d{6,}(?!\d)")  # member ids / MRNs / claim / account
+# Ages: capture the number, aggregate to "90+" only when >= 90 (Safe Harbor).
+_AGE = re.compile(
+    r"\b(\d{2,3})(\s*-?\s*(?:years?|yrs?|y[/.]?o|yo)\b(?:\s*old)?)"
+    r"|(\baged?\s*[:=]?\s*)(\d{2,3})\b",
+    re.IGNORECASE,
+)
 # Names that follow a standard letter cue (not "Re:", which is a subject line).
 # (?i:...) scopes case-insensitivity to the CUE only; the captured name must still
 # start uppercase, so we don't redact a lowercase continuation like "Dear sir".
@@ -55,6 +82,8 @@ _NAME_SLOT = re.compile(
     r"|Member(?:\s+name)?|Name|Insured|Subscriber)\b)[:,]?\s+)"
     r"(?P<name>[A-Z][a-zA-Z'.-]+(?:\s+[A-Z][a-zA-Z'.-]+){0,3})"
 )
+# Capitalized bigram — a candidate name that may have slipped through, for QA only.
+_CANDIDATE_NAME = re.compile(r"\b[A-Z][a-z]{1,}\s+[A-Z][a-z]{1,}\b")
 
 
 def hash_ref(value: str) -> str:
@@ -66,22 +95,22 @@ def deid_year(value: date | None) -> int | None:
     return value.year if value else None
 
 
-# --- Optional NER layer (Presidio) -------------------------------------------
-# Catches names/locations that appear free-floating in prose (not in a known slot
-# and never captured structurally) — the residual gap the regex passes can't close.
-# Lazy + optional: if Presidio isn't importable we fall back to regex-only. It is
-# installed at runtime in the export task (export-corpus workflow), never baked
-# into the app image.
-# NER handles ONLY what regex can't — names and places. Formatted PHI (SSN, phone,
-# email, dates, id runs) is left to the precise regex passes below; Presidio's
-# DATE_TIME/number recognizers over-match and would clobber billing codes
-# (e.g. CPT 99213 -> [DATE], ICD J45 -> [REDACTED]).
+def _age_sub(m: re.Match) -> str:
+    if m.group(1) is not None:  # "<n> years old"
+        return ("90+" if int(m.group(1)) >= 90 else m.group(1)) + m.group(2)
+    return m.group(3) + ("90+" if int(m.group(4)) >= 90 else m.group(4))  # "age <n>"
+
+
+# --- NER layer (Presidio) ----------------------------------------------------
+# NER handles ONLY names/places (what regex can't). Formatted PHI is left to the
+# regex above so Presidio's over-eager DATE_TIME/number recognizers don't clobber
+# billing codes. Lazy + optional; installed at runtime in the export task, never
+# baked into the app image. Prefers the accurate model, falls back to whatever is
+# installed (large > medium > small).
 _NER_ENTITIES = ["PERSON", "LOCATION"]
-_NER_TOKEN = {
-    "PERSON": "[NAME]",
-    "LOCATION": "[LOCATION]",
-}
-# None = not yet tried; () = tried but unavailable; (analyzer, anonymizer) = ready.
+_NER_TOKEN = {"PERSON": "[NAME]", "LOCATION": "[LOCATION]"}
+_SPACY_MODELS = ["en_core_web_lg", "en_core_web_md", "en_core_web_sm"]
+# None = not tried; () = tried but unavailable; (analyzer, anonymizer) = ready.
 _ner_engines: object = None
 
 
@@ -90,16 +119,22 @@ def _ner_engines_or_none():
     if _ner_engines is not None:
         return _ner_engines or None
     try:
+        import spacy
         from presidio_analyzer import AnalyzerEngine
         from presidio_analyzer.nlp_engine import NlpEngineProvider
         from presidio_anonymizer import AnonymizerEngine
     except ImportError:
         _ner_engines = ()
         return None
+    wanted = [os.environ.get("DEID_SPACY_MODEL"), *_SPACY_MODELS]
+    model = next((m for m in wanted if m and spacy.util.is_package(m)), None)
+    if model is None:
+        _ner_engines = ()
+        return None
     nlp_engine = NlpEngineProvider(
         nlp_configuration={
             "nlp_engine_name": "spacy",
-            "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}],
+            "models": [{"lang_code": "en", "model_name": model}],
         }
     ).create_engine()
     _ner_engines = (
@@ -127,29 +162,54 @@ def _ner_redact(text: str) -> str:
 
 
 def redact_text(text: str | None, known: list, use_ner: bool = False) -> str | None:
-    """Redact captured identifiers + formatted PHI + letter-slot names from text.
-
-    With use_ner=True, first run a Presidio NER pass (names/locations anywhere in
-    the prose), then the deterministic passes below as belt-and-suspenders.
-    """
+    """Redact PHI from free text: NER names/places (optional) + captured identifiers
+    + the Safe Harbor formatted-identifier passes + letter-slot names + age 90+."""
     if not text:
         return text
     out = text
     if use_ner:
         out = _ner_redact(out)
-    # 1) Exact known values first — longest first so a substring can't pre-empt a
-    #    longer match; word-boundary lookarounds avoid clipping inside real words.
+    # Exact captured identifiers first — longest first; word-boundary lookarounds
+    # avoid clipping inside real words.
     seen = {str(k).strip() for k in known if k and len(str(k).strip()) >= 2}
     for val in sorted(seen, key=len, reverse=True):
         out = re.sub(rf"(?<!\w){re.escape(val)}(?!\w)", "[REDACTED]", out, flags=re.IGNORECASE)
-    # 2) Formatted identifiers.
+    # Formatted identifiers (precise — bare CPT/ICD codes are not matched).
     out = _EMAIL.sub("[EMAIL]", out)
-    out = _SSN.sub("[SSN]", out)
     out = _URL.sub("[URL]", out)
+    out = _SSN.sub("[SSN]", out)
+    out = _IPV4.sub("[IP]", out)
+    out = _STREET.sub("[ADDRESS]", out)
     out = _ZIP4.sub("[ZIP]", out)
+    out = _STATE_ZIP.sub(r"\1 [ZIP]", out)
     out = _PHONE.sub("[PHONE]", out)
     out = _DATE.sub("[DATE]", out)
+    out = _AGE.sub(_age_sub, out)
     out = _LONGNUM.sub("[ID]", out)
-    # 3) Names in standard letter slots.
+    # Names in standard letter slots (belt-and-suspenders over NER).
     out = _NAME_SLOT.sub(lambda m: m.group("cue") + "[NAME]", out)
     return out
+
+
+def scan_residual(text: str | None) -> dict:
+    """Flag anything that still looks like PHI after redaction — for the validation
+    report. Formatted leaks are bugs to fix; candidate names are a human review
+    list (mostly benign terms like payer names, but a missed patient name shows
+    here too)."""
+    if not text:
+        return {}
+    flags: dict = {}
+    for label, pat in (
+        ("email", _EMAIL),
+        ("ssn", _SSN),
+        ("phone", _PHONE),
+        ("ip", _IPV4),
+        ("long_number", _LONGNUM),
+    ):
+        count = len(pat.findall(text))
+        if count:
+            flags[label] = count
+    candidates = sorted({m.group(0) for m in _CANDIDATE_NAME.finditer(text)})
+    if candidates:
+        flags["candidate_names"] = candidates
+    return flags

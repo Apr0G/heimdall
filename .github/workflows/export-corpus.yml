@@ -57,7 +57,7 @@ jobs:
           INC=$([ "$INCLUDE" = "true" ] && echo 1 || echo 0)
           if [ "$NER" = "true" ]; then
             USE_NER=1
-            CMD='["sh","-c","pip install presidio-analyzer presidio-anonymizer && python -m spacy download en_core_web_sm && python -m app.scripts.export_corpus"]'
+            CMD='["sh","-c","pip install presidio-analyzer presidio-anonymizer && python -m spacy download en_core_web_lg && python -m app.scripts.export_corpus"]'
           else
             USE_NER=0
             CMD='["python","-m","app.scripts.export_corpus"]'

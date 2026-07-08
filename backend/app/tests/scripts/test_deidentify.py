@@ -2,7 +2,7 @@ from datetime import date
 
 import pytest
 
-from app.scripts.deidentify import deid_year, hash_ref, redact_text
+from app.scripts.deidentify import deid_year, hash_ref, redact_text, scan_residual
 
 
 def test_redacts_formatted_phi():
@@ -27,6 +27,29 @@ def test_preserves_billing_codes():
     # Codes are training signal, not PHI — must survive redaction.
     out = redact_text("CPT 99213 denied under CO-197, ICD J45.909", [])
     assert "99213" in out and "CO-197" in out and "J45.909" in out
+
+
+def test_redacts_geography_ip_and_ages():
+    out = redact_text(
+        "123 Main Street, City, CA 90210. IP 10.0.0.1. A 92-year-old; a 40 yr old.", []
+    )
+    for leaked in ("Main Street", "90210", "10.0.0.1"):
+        assert leaked not in out
+    assert "90+" in out and "40 yr old" in out  # >=90 aggregated, <90 kept
+    assert "CA" in out  # state is allowed under Safe Harbor
+
+
+def test_redacts_many_date_formats():
+    out = redact_text("on 1980-03-15 and March 5, 2021 and 15 Jan 2020", [])
+    for leaked in ("1980-03-15", "March 5, 2021", "15 Jan 2020"):
+        assert leaked not in out
+
+
+def test_scan_residual_flags_leaks_and_candidates():
+    flags = scan_residual("Leftover a@b.com and Zorp Yelling here")
+    assert flags.get("email") == 1
+    assert "Zorp Yelling" in flags.get("candidate_names", [])
+    assert scan_residual("fully clean text") == {}
 
 
 def test_helpers():

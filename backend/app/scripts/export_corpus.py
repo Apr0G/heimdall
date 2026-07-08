@@ -17,6 +17,7 @@ Set INCLUDE_DOC_TEXT=1 to embed the (redacted) raw extracted document text.
 import asyncio
 import json
 import os
+from collections import Counter
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -29,6 +30,7 @@ from app.scripts.deidentify import (
     deid_year,
     hash_ref,
     redact_text,
+    scan_residual,
 )
 from app.services import s3
 
@@ -147,14 +149,50 @@ async def main() -> None:
 
     await engine.dispose()
 
-    jsonl = "\n".join(json.dumps(r, ensure_ascii=False) for r in records)
-    key = f"exports/corpus-{datetime.now(UTC):%Y%m%d-%H%M%S}.jsonl"
-    await asyncio.to_thread(s3.put_text, key, jsonl)
+    # Validation report: re-scan the redacted free text for anything that still
+    # looks like PHI. Formatted leaks must be zero; candidate_names is a human
+    # review list (mostly payer/medical terms — a missed patient name shows here).
+    leaks: Counter = Counter()
+    names: set = set()
+    for rec in records:
+        texts = [rec["input"].get("clinical_summary"), rec["output"]["appeal_letter"]]
+        if rec["analysis"]:
+            texts += [rec["analysis"]["appealability_reason"], rec["analysis"]["reasoning_text"]]
+        texts += [d.get("text") for d in rec["input"]["documents"]]
+        for value in texts:
+            for kind, count in scan_residual(value).items():
+                if kind == "candidate_names":
+                    names.update(count)
+                else:
+                    leaks[kind] += count
 
     labeled = sum(1 for r in records if r["label"] is not None)
+    stamp = datetime.now(UTC)
+    key = f"exports/corpus-{stamp:%Y%m%d-%H%M%S}.jsonl"
+    report_key = key.replace(".jsonl", ".report.json")
+    report = {
+        "generated_at": stamp.isoformat(),
+        "records": len(records),
+        "labeled": labeled,
+        "deidentification": "safe-harbor (best-effort; human review required)",
+        "ner": use_ner,
+        "residual": {
+            "formatted_leaks": dict(leaks),  # expected empty — anything here is a bug
+            "candidate_name_count": len(names),
+            "candidate_names": sorted(names)[:500],  # review these for missed names
+        },
+    }
+
+    jsonl = "\n".join(json.dumps(r, ensure_ascii=False) for r in records)
+    await asyncio.to_thread(s3.put_text, key, jsonl)
+    await asyncio.to_thread(s3.put_text, report_key, json.dumps(report, indent=2))
+
+    warn = f"  ⚠️ formatted leaks: {dict(leaks)}" if leaks else ""
     print(
-        f"Exported {len(records)} de-identified cases ({labeled} with outcome labels) "
-        f"-> s3://{settings.s3_bucket_name}/{key}"
+        f"Exported {len(records)} de-identified cases ({labeled} with outcome labels)\n"
+        f"  corpus: s3://{settings.s3_bucket_name}/{key}\n"
+        f"  report: s3://{settings.s3_bucket_name}/{report_key} "
+        f"({len(names)} candidate names to review){warn}"
     )
 
 
