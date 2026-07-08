@@ -92,10 +92,11 @@ _CANDIDATE_NAME = re.compile(r"\b[A-Z][a-z]{1,}[ \t]+[A-Z][a-z]{1,}\b")
 # ICD-10 "I48.91"); we keep them — they're training signal, not PHI, and a code
 # never contains a real name. Used to filter NER detections.
 _CODE = re.compile(
-    r"[A-Z]\d{2}(?:\.[A-Z0-9]{1,4})?"  # ICD-10-CM: I48.91, M23.205
+    r"[A-Z]\d[0-9A-Z](?:\.[A-Z0-9]{1,4})?"  # ICD-10-CM: I48.91, M23.205, S72.001A
     r"|\d{5}"  # CPT: 93306
     r"|[A-Z]\d{4}"  # HCPCS Level II: J1234
-    r"|[A-Z]{1,3}-\d{1,3}"  # CARC / group: CO-197
+    r"|[A-Z]{1,3}-\d{1,3}"  # CARC / group code: CO-197
+    r"|(?:MA|[MN])\d{1,3}"  # RARC: N115, M76, MA13
 )
 
 

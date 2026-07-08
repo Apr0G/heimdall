@@ -79,3 +79,11 @@ def test_ner_keeps_alphanumeric_diagnosis_codes():
     out = redact_text("Dx I48.91 and M23.205 support CPT 93306 for Mary Chen.", [], use_ner=True)
     assert "I48.91" in out and "M23.205" in out and "93306" in out
     assert "Mary Chen" not in out
+
+
+def test_ner_keeps_rarc_codes():
+    # RARC remark codes (N115, M76, MA13) get NER-tagged as a PERSON; must survive.
+    pytest.importorskip("presidio_analyzer")
+    out = redact_text("CARC CO-50 with RARC N115, M76, and MA13 denied John Roe.", [], use_ner=True)
+    assert "N115" in out and "M76" in out and "MA13" in out and "CO-50" in out
+    assert "John Roe" not in out
