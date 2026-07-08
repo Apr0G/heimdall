@@ -68,6 +68,9 @@ _DATE = re.compile(
     re.IGNORECASE,
 )
 _LONGNUM = re.compile(r"(?<!\d)\d{6,}(?!\d)")  # member ids / MRNs / claim / account
+# Authorization / reference numbers (AUTH-555, CASE-1234). 4+ letter prefix so
+# 2-3 letter form/adjustment codes survive (CO-197, UB-04, CMS-1500).
+_AUTH = re.compile(r"\b[A-Z]{4,}-\d{2,}[A-Z0-9-]*\b")
 # Ages: capture the number, aggregate to "90+" only when >= 90 (Safe Harbor).
 _AGE = re.compile(
     r"\b(\d{2,3})(\s*-?\s*(?:years?|yrs?|y[/.]?o|yo)\b(?:\s*old)?)"
@@ -83,7 +86,8 @@ _NAME_SLOT = re.compile(
     r"(?P<name>[A-Z][a-zA-Z'.-]+(?:\s+[A-Z][a-zA-Z'.-]+){0,3})"
 )
 # Capitalized bigram — a candidate name that may have slipped through, for QA only.
-_CANDIDATE_NAME = re.compile(r"\b[A-Z][a-z]{1,}\s+[A-Z][a-z]{1,}\b")
+# [ \t] (not \s) so a candidate never spans a line break.
+_CANDIDATE_NAME = re.compile(r"\b[A-Z][a-z]{1,}[ \t]+[A-Z][a-z]{1,}\b")
 
 
 def hash_ref(value: str) -> str:
@@ -185,6 +189,7 @@ def redact_text(text: str | None, known: list, use_ner: bool = False) -> str | N
     out = _PHONE.sub("[PHONE]", out)
     out = _DATE.sub("[DATE]", out)
     out = _AGE.sub(_age_sub, out)
+    out = _AUTH.sub("[ID]", out)
     out = _LONGNUM.sub("[ID]", out)
     # Names in standard letter slots (belt-and-suspenders over NER).
     out = _NAME_SLOT.sub(lambda m: m.group("cue") + "[NAME]", out)
@@ -205,6 +210,7 @@ def scan_residual(text: str | None) -> dict:
         ("phone", _PHONE),
         ("ip", _IPV4),
         ("long_number", _LONGNUM),
+        ("auth_ref", _AUTH),
     ):
         count = len(pat.findall(text))
         if count:

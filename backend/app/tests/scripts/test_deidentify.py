@@ -29,6 +29,12 @@ def test_preserves_billing_codes():
     assert "99213" in out and "CO-197" in out and "J45.909" in out
 
 
+def test_redacts_auth_numbers_but_keeps_form_and_carc_codes():
+    out = redact_text("Auth #: AUTH-555 for CMS-1500 claim under CO-197, UB-04", [])
+    assert "AUTH-555" not in out
+    assert "CMS-1500" in out and "CO-197" in out and "UB-04" in out
+
+
 def test_redacts_geography_ip_and_ages():
     out = redact_text(
         "123 Main Street, City, CA 90210. IP 10.0.0.1. A 92-year-old; a 40 yr old.", []
