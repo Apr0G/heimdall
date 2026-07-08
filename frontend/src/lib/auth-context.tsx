@@ -81,7 +81,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [router, queryClient],
   );
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    // Best-effort server sign-out (Cognito global sign-out + audit); clear locally
+    // regardless so the user is always signed out client-side.
+    try {
+      await api.post("/api/auth/logout");
+    } catch {
+      // ignore — proceed with local sign-out
+    }
     window.localStorage.removeItem(TOKEN_KEY);
     clearAuthedCookie();
     setUser(null);

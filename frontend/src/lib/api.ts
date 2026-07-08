@@ -17,3 +17,23 @@ api.interceptors.request.use((config) => {
   }
   return config;
 });
+
+// On any 401 (expired/invalidated token), drop the local session and bounce to
+// login instead of leaving a half-dead session that toasts "session expired"
+// forever. Skip the login call itself, where 401 is just a bad-credentials error.
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error?.response?.status;
+    const url: string = error?.config?.url ?? "";
+    if (status === 401 && !url.includes("/api/auth/login") && typeof window !== "undefined") {
+      window.localStorage.removeItem(TOKEN_KEY);
+      // Clear the presence cookie so Next middleware doesn't think we're authed.
+      document.cookie = "hd_authed=; path=/; max-age=0; samesite=lax";
+      if (window.location.pathname !== "/login") {
+        window.location.assign("/login");
+      }
+    }
+    return Promise.reject(error);
+  },
+);

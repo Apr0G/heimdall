@@ -1,15 +1,21 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
-from app.core.auth import get_current_user, verify_access_token
+from app.core.auth import get_current_user, security, verify_access_token
 from app.core.net import client_ip
 from app.core.rate_limit import login_rate_ok, rate_key
 from app.db.session import get_db
 from app.models import User
 from app.schemas.auth import LoginRequest, LoginResponse, UserOut
 from app.services.audit import log_audit, safe_ip
-from app.services.cognito import CognitoError, InvalidCredentialsError, initiate_auth
+from app.services.cognito import (
+    CognitoError,
+    InvalidCredentialsError,
+    global_sign_out,
+    initiate_auth,
+)
 from app.services.users import link_user_on_login
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -95,6 +101,34 @@ async def login(
         token_type=auth.get("TokenType", "Bearer"),
         expires_in=auth.get("ExpiresIn", 3600),
     )
+
+
+@router.post("/logout")
+async def logout(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    creds: HTTPAuthorizationCredentials = Depends(security),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    """Sign out server-side: best-effort Cognito global sign-out (revokes refresh
+    tokens so the session can't be renewed) plus an audit row. The client clears
+    its own token regardless of the Cognito result."""
+    try:
+        await run_in_threadpool(global_sign_out, creds.credentials)
+    except CognitoError:
+        pass  # never block the user's sign-out on a Cognito hiccup
+    await log_audit(
+        session,
+        action="logout",
+        resource_type="user",
+        resource_id=current_user.id,
+        user_id=current_user.id,
+        practice_id=current_user.practice_id,
+        ip=safe_ip(client_ip(request)),
+        user_agent=request.headers.get("user-agent"),
+    )
+    await session.commit()
+    return {"detail": "signed out"}
 
 
 @router.get("/me", response_model=UserOut)

@@ -50,3 +50,16 @@ def initiate_auth(email: str, password: str) -> dict:
     if result is None:
         raise CognitoError(resp.get("ChallengeName", "no_authentication_result"))
     return result
+
+
+def global_sign_out(access_token: str) -> None:
+    """Revoke the user's refresh tokens across devices (Cognito GlobalSignOut).
+
+    Access tokens remain valid until they expire (~1h) — Cognito cannot revoke an
+    already-issued access token — so this stops session *renewal*, not the current
+    token. Synchronous (boto3); call via a threadpool.
+    """
+    try:
+        _get_client().global_sign_out(AccessToken=access_token)
+    except ClientError as exc:
+        raise CognitoError(exc.response.get("Error", {}).get("Code", "")) from exc
