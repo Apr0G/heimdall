@@ -3,7 +3,12 @@
 Dependency-free, minimal-but-valid single-page PDFs with a little text.
 Synthetic data only (Jane Doe, CLM-TEST-...). Run from the repo root:
 
-    python scripts/make_fixtures.py   ->  fixtures/{denial,claim,clinical}.pdf
+    python scripts/make_fixtures.py
+      ->  fixtures/{denial,claim,clinical}.pdf                (case 1: Aetna CO-50)
+      ->  fixtures/cardiology-co11/{denial,claim,clinical}.pdf (case 3: Cigna CO-11)
+
+The co197/ case (UnitedHealthcare CO-197, with a prior_auth doc) already exists
+on disk and is intentionally left untouched by this script.
 """
 
 from pathlib import Path
@@ -49,36 +54,71 @@ def _pdf(lines: list[str]) -> bytes:
     return pdf
 
 
-DOCS = {
-    "denial": [
-        "EXPLANATION OF BENEFITS (SYNTHETIC TEST DATA)",
-        "Payer: Aetna    Plan: Commercial    Claim #: CLM-TEST-0001",
-        "Patient: Jane Doe    Member ID: MBR-TEST-000123",
-        "DOS: 2026-05-04    Denial date: 2026-05-10",
-        "Denial: CARC CO-50 (RARC N115) - not deemed a medical necessity.",
-        "Group code: CO    Billed: $600.00    Denied amount: $450.00",
-    ],
-    "claim": [
-        "CMS-1500 PROFESSIONAL CLAIM (SYNTHETIC TEST DATA)",
-        "Billing provider NPI: 0000000000",
-        "Box 21 ICD-10: M54.50    Box 24 CPT: 73721",
-        "Patient: Jane Doe    Claim #: CLM-TEST-0001",
-    ],
-    "clinical": [
-        "CLINICAL NOTE (SYNTHETIC TEST DATA)",
-        "Patient: Jane Doe",
-        "MRI of the knee ordered for persistent pain after six weeks of",
-        "conservative therapy; medically necessary per exam findings.",
-    ],
+# Each case maps a sub-directory ("" = fixtures root) to its document set. Cases
+# are deliberately distinct — different payer, plan, CARC, specialty, and codes —
+# so each exercises a different branch of the triage/analysis logic.
+CASES = {
+    # Case 1 — Aetna, commercial, CO-50 medical-necessity (knee MRI).
+    "": {
+        "denial": [
+            "EXPLANATION OF BENEFITS (SYNTHETIC TEST DATA)",
+            "Payer: Aetna    Plan: Commercial    Claim #: CLM-TEST-0001",
+            "Patient: Jane Doe    Member ID: MBR-TEST-000123",
+            "DOS: 2026-05-04    Denial date: 2026-05-10",
+            "Denial: CARC CO-50 (RARC N115) - not deemed a medical necessity.",
+            "Group code: CO    Billed: $600.00    Denied amount: $450.00",
+        ],
+        "claim": [
+            "CMS-1500 PROFESSIONAL CLAIM (SYNTHETIC TEST DATA)",
+            "Billing provider NPI: 0000000000",
+            "Box 21 ICD-10: M54.50    Box 24 CPT: 73721",
+            "Patient: Jane Doe    Claim #: CLM-TEST-0001",
+        ],
+        "clinical": [
+            "CLINICAL NOTE (SYNTHETIC TEST DATA)",
+            "Patient: Jane Doe",
+            "MRI of the knee ordered for persistent pain after six weeks of",
+            "conservative therapy; medically necessary per exam findings.",
+        ],
+    },
+    # Case 3 — Cigna, Medicare Advantage, CO-11 diagnosis/procedure mismatch.
+    # Cardiology: atrial fibrillation (I48.91) -> echocardiogram (93306), a
+    # textbook indication, so the "dx inconsistent with procedure" denial is a
+    # strong, winnable appeal on different codes/payer/plan than the other cases.
+    "cardiology-co11": {
+        "denial": [
+            "EXPLANATION OF BENEFITS (SYNTHETIC TEST DATA)",
+            "Payer: Cigna    Plan: Medicare Advantage    Claim #: CLM-TEST-0003",
+            "Patient: Mary Chen    Member ID: MBR-TEST-000888",
+            "DOS: 2026-03-09    Denial date: 2026-03-18",
+            "Denial: CARC CO-11 - the diagnosis is inconsistent with the procedure.",
+            "Group code: CO    Billed: $650.00    Denied amount: $650.00",
+        ],
+        "claim": [
+            "CMS-1500 PROFESSIONAL CLAIM (SYNTHETIC TEST DATA)",
+            "Billing provider NPI: 0000000000",
+            "Box 21 ICD-10: I48.91    Box 24 CPT: 93306",
+            "Patient: Mary Chen    Claim #: CLM-TEST-0003",
+        ],
+        "clinical": [
+            "CLINICAL NOTE (SYNTHETIC TEST DATA)",
+            "Patient: Mary Chen",
+            "New-onset palpitations with an irregular pulse; 12-lead ECG confirmed",
+            "atrial fibrillation. Transthoracic echocardiogram ordered to assess",
+            "left atrial size and structural heart disease before anticoagulation.",
+        ],
+    },
 }
 
 
 def main() -> None:
-    FIXTURES_DIR.mkdir(exist_ok=True)
-    for name, lines in DOCS.items():
-        path = FIXTURES_DIR / f"{name}.pdf"
-        path.write_bytes(_pdf(lines))
-        print(f"wrote {path} ({path.stat().st_size} bytes)")
+    for subdir, docs in CASES.items():
+        case_dir = FIXTURES_DIR / subdir
+        case_dir.mkdir(parents=True, exist_ok=True)
+        for name, lines in docs.items():
+            path = case_dir / f"{name}.pdf"
+            path.write_bytes(_pdf(lines))
+            print(f"wrote {path} ({path.stat().st_size} bytes)")
 
 
 if __name__ == "__main__":
