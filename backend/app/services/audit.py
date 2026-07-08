@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
+from app.core.net import client_ip
 from app.models import AuditLog, User
 
 
@@ -67,7 +68,7 @@ async def log_read(
         resource_id=resource_id,
         user_id=user.id,
         practice_id=user.practice_id,
-        ip=safe_ip(request.client.host if request.client else None),
+        ip=safe_ip(client_ip(request)),
         user_agent=request.headers.get("user-agent"),
     )
     await session.commit()

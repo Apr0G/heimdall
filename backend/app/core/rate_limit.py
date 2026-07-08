@@ -14,10 +14,10 @@ from limits import parse
 from limits.storage import storage_from_string
 from limits.strategies import MovingWindowRateLimiter
 from slowapi import Limiter
-from slowapi.util import get_remote_address
 from starlette.requests import Request
 
 from app.core.config import settings
+from app.core.net import client_ip
 
 
 def rate_key(request: Request) -> str:
@@ -32,7 +32,9 @@ def rate_key(request: Request) -> str:
         except Exception:
             # Malformed token — fall through to IP keying.
             pass
-    return f"ip:{get_remote_address(request)}"
+    # Real client IP (from X-Forwarded-For behind the ALB), not the ALB's own IP —
+    # otherwise every caller shares one bucket (a global login lockout).
+    return f"ip:{client_ip(request) or 'unknown'}"
 
 
 limiter = Limiter(

@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     app_env: str = "development"
     frontend_url: str = "http://localhost:3000"
     log_level: str = "INFO"
+    # Number of trusted proxies in front of the app (the ECS Express ALB = 1). The
+    # real client IP is read this many entries in from the right of X-Forwarded-For.
+    # Bump only if another trusted hop (e.g. a CDN) is added ahead of the ALB.
+    trusted_proxy_hops: int = 1
 
     # Rate limiting (tunable without redeploy). redis_url empty -> in-memory
     # storage (single-process dev/test only); set a redis:// URL in production.

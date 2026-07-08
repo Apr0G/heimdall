@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from app.core.auth import get_current_user, verify_access_token
+from app.core.net import client_ip
 from app.core.rate_limit import login_rate_ok, rate_key
 from app.db.session import get_db
 from app.models import User
@@ -26,7 +27,7 @@ async def login(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many login attempts. Please try again later.",
         )
-    ip = safe_ip(request.client.host if request.client else None)
+    ip = safe_ip(client_ip(request))
     user_agent = request.headers.get("user-agent")
 
     try:

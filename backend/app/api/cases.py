@@ -17,6 +17,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.core.auth import get_current_user
 from app.core.config import settings as _settings
+from app.core.net import client_ip
 from app.core.rate_limit import limiter
 from app.db.session import get_db
 from app.models import (
@@ -307,7 +308,7 @@ async def create_case(
     session.add(case)
     await session.flush()
 
-    ip = safe_ip(request.client.host if request.client else None)
+    ip = safe_ip(client_ip(request))
     user_agent = request.headers.get("user-agent")
 
     for doc in body.documents:
@@ -510,7 +511,7 @@ async def mark_submitted(
         resource_id=case.id,
         user_id=current_user.id,
         practice_id=current_user.practice_id,
-        ip=safe_ip(request.client.host if request.client else None),
+        ip=safe_ip(client_ip(request)),
         user_agent=request.headers.get("user-agent"),
     )
     await session.commit()
@@ -552,7 +553,7 @@ async def upsert_outcome(
         resource_id=case.id,
         user_id=current_user.id,
         practice_id=current_user.practice_id,
-        ip=safe_ip(request.client.host if request.client else None),
+        ip=safe_ip(client_ip(request)),
         user_agent=request.headers.get("user-agent"),
         metadata={"result": body.result},
     )
@@ -580,7 +581,7 @@ async def retry_case(
         resource_id=case.id,
         user_id=current_user.id,
         practice_id=current_user.practice_id,
-        ip=safe_ip(request.client.host if request.client else None),
+        ip=safe_ip(client_ip(request)),
         user_agent=request.headers.get("user-agent"),
     )
     await session.commit()
@@ -668,7 +669,7 @@ async def reanalyze_case(
                 status_code=413, detail=f"{doc.doc_type} file is too large (25 MB max)."
             )
 
-    ip = safe_ip(request.client.host if request.client else None)
+    ip = safe_ip(client_ip(request))
     user_agent = request.headers.get("user-agent")
     for doc in body.documents:
         final_key = case_document_key(current_user.practice_id, case.id, doc.doc_type)
