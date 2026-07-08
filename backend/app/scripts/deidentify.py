@@ -88,6 +88,15 @@ _NAME_SLOT = re.compile(
 # Capitalized bigram — a candidate name that may have slipped through, for QA only.
 # [ \t] (not \s) so a candidate never spans a line break.
 _CANDIDATE_NAME = re.compile(r"\b[A-Z][a-z]{1,}[ \t]+[A-Z][a-z]{1,}\b")
+# Billing/diagnosis code shapes. NER sometimes mis-tags these as a PERSON (e.g.
+# ICD-10 "I48.91"); we keep them — they're training signal, not PHI, and a code
+# never contains a real name. Used to filter NER detections.
+_CODE = re.compile(
+    r"[A-Z]\d{2}(?:\.[A-Z0-9]{1,4})?"  # ICD-10-CM: I48.91, M23.205
+    r"|\d{5}"  # CPT: 93306
+    r"|[A-Z]\d{4}"  # HCPCS Level II: J1234
+    r"|[A-Z]{1,3}-\d{1,3}"  # CARC / group: CO-197
+)
 
 
 def hash_ref(value: str) -> str:
@@ -156,6 +165,8 @@ def _ner_redact(text: str) -> str:
 
     analyzer, anonymizer = engines
     results = analyzer.analyze(text=text, language="en", entities=_NER_ENTITIES)
+    # Keep billing/diagnosis codes NER mis-tagged as a PERSON/LOCATION.
+    results = [r for r in results if not _CODE.fullmatch(text[r.start : r.end].strip(" \t().,;:"))]
     if not results:
         return text
     operators = {

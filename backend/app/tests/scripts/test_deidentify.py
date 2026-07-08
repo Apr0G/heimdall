@@ -71,3 +71,11 @@ def test_ner_catches_free_floating_names_and_keeps_codes():
     assert "Jane Doe" not in out and "Boston" not in out
     codes = redact_text("CPT 99213 denied under CO-197, ICD J45.909", [], use_ner=True)
     assert "99213" in codes and "CO-197" in codes and "J45.909" in codes
+
+
+def test_ner_keeps_alphanumeric_diagnosis_codes():
+    # NER mis-tags codes like I48.91 as a PERSON; they must survive regardless.
+    pytest.importorskip("presidio_analyzer")
+    out = redact_text("Dx I48.91 and M23.205 support CPT 93306 for Mary Chen.", [], use_ner=True)
+    assert "I48.91" in out and "M23.205" in out and "93306" in out
+    assert "Mary Chen" not in out
