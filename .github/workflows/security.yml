@@ -24,7 +24,11 @@ jobs:
           pip install pip-audit bandit
       - name: pip-audit (known CVEs in installed deps)
         # --skip-editable: don't try to look up our own local package on PyPI.
-        run: pip-audit --skip-editable
+        # PYSEC-2026-1325: ecdsa timing side-channel, transitive via python-jose,
+        # with NO fixed release (0.19.2 is the latest). Not exploitable here —
+        # Cognito issues RS256 (RSA) JWTs so the ECDSA verify path isn't used, and
+        # the attack needs local timing measurement. Re-check when a fix ships.
+        run: pip-audit --skip-editable --ignore-vuln PYSEC-2026-1325
       - name: bandit (Python SAST, medium+ severity)
         run: bandit -r backend/app -ll -ii
 
