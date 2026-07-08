@@ -1,5 +1,7 @@
 from datetime import date
 
+import pytest
+
 from app.scripts.deidentify import deid_year, hash_ref, redact_text
 
 
@@ -31,3 +33,12 @@ def test_helpers():
     assert deid_year(date(1980, 3, 15)) == 1980
     assert deid_year(None) is None
     assert hash_ref("CLM-1").startswith("ref_") and hash_ref("CLM-1") == hash_ref("clm-1")
+
+
+def test_ner_catches_free_floating_names_and_keeps_codes():
+    # Skips in CI (Presidio not installed there); runs where it is.
+    pytest.importorskip("presidio_analyzer")
+    out = redact_text("The report for Jane Doe was reviewed in Boston.", [], use_ner=True)
+    assert "Jane Doe" not in out and "Boston" not in out
+    codes = redact_text("CPT 99213 denied under CO-197, ICD J45.909", [], use_ner=True)
+    assert "99213" in codes and "CO-197" in codes and "J45.909" in codes

@@ -1,14 +1,20 @@
 name: export-corpus
 
-# Exports the training corpus (case -> extraction -> analysis -> letter -> outcome)
-# as JSONL to s3://<bucket>/exports/, as a one-off in-VPC ECS task. Keyless via
-# GitHub OIDC. The file contains PHI — download it with your own admin creds
-# (it is NOT surfaced in this log) and de-identify before training.
+# Exports a DE-IDENTIFIED training corpus (case -> extraction -> analysis -> letter
+# -> outcome) as JSONL to s3://<bucket>/exports/, as a one-off in-VPC ECS task.
+# Keyless via GitHub OIDC. The redacted file is NOT surfaced in this log — download
+# it with your own admin creds. With ner=true, Presidio (installed at runtime, not
+# baked into the app image) adds NER name/location detection over the regex passes.
 on:
   workflow_dispatch:
     inputs:
+      ner:
+        description: "Use Presidio NER for name detection (slower, higher assurance)?"
+        type: choice
+        options: ["true", "false"]
+        default: "true"
       include_doc_text:
-        description: "Embed raw extracted document text (heavier PHI)?"
+        description: "Embed the (redacted) raw extracted document text?"
         type: choice
         options: ["false", "true"]
         default: "false"
@@ -29,6 +35,7 @@ jobs:
       - name: Export the corpus as a one-off ECS task
         env:
           INCLUDE: ${{ inputs.include_doc_text }}
+          NER: ${{ inputs.ner }}
         run: |
           set -euo pipefail
           CLUSTER=default
@@ -47,10 +54,22 @@ jobs:
             --filters "Name=group-name,Values=default-heimdall-api-$VPC" "Name=vpc-id,Values=$VPC" \
             --query 'SecurityGroups[0].GroupId' --output text)
 
+          INC=$([ "$INCLUDE" = "true" ] && echo 1 || echo 0)
+          if [ "$NER" = "true" ]; then
+            USE_NER=1
+            CMD='["sh","-c","pip install presidio-analyzer presidio-anonymizer && python -m spacy download en_core_web_sm && python -m app.scripts.export_corpus"]'
+          else
+            USE_NER=0
+            CMD='["python","-m","app.scripts.export_corpus"]'
+          fi
+
           OVERRIDES=$(cat <<JSON
           {"containerOverrides":[{"name":"$CONTAINER",
-            "command":["python","-m","app.scripts.export_corpus"],
-            "environment":[{"name":"INCLUDE_DOC_TEXT","value":"$([ "$INCLUDE" = "true" ] && echo 1 || echo 0)"}]}]}
+            "command":$CMD,
+            "environment":[
+              {"name":"INCLUDE_DOC_TEXT","value":"$INC"},
+              {"name":"USE_NER","value":"$USE_NER"}
+            ]}]}
           JSON
           )
 

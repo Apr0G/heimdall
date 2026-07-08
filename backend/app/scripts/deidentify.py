@@ -66,11 +66,77 @@ def deid_year(value: date | None) -> int | None:
     return value.year if value else None
 
 
-def redact_text(text: str | None, known: list) -> str | None:
-    """Redact captured identifiers + formatted PHI + letter-slot names from text."""
+# --- Optional NER layer (Presidio) -------------------------------------------
+# Catches names/locations that appear free-floating in prose (not in a known slot
+# and never captured structurally) — the residual gap the regex passes can't close.
+# Lazy + optional: if Presidio isn't importable we fall back to regex-only. It is
+# installed at runtime in the export task (export-corpus workflow), never baked
+# into the app image.
+# NER handles ONLY what regex can't — names and places. Formatted PHI (SSN, phone,
+# email, dates, id runs) is left to the precise regex passes below; Presidio's
+# DATE_TIME/number recognizers over-match and would clobber billing codes
+# (e.g. CPT 99213 -> [DATE], ICD J45 -> [REDACTED]).
+_NER_ENTITIES = ["PERSON", "LOCATION"]
+_NER_TOKEN = {
+    "PERSON": "[NAME]",
+    "LOCATION": "[LOCATION]",
+}
+# None = not yet tried; () = tried but unavailable; (analyzer, anonymizer) = ready.
+_ner_engines: object = None
+
+
+def _ner_engines_or_none():
+    global _ner_engines
+    if _ner_engines is not None:
+        return _ner_engines or None
+    try:
+        from presidio_analyzer import AnalyzerEngine
+        from presidio_analyzer.nlp_engine import NlpEngineProvider
+        from presidio_anonymizer import AnonymizerEngine
+    except ImportError:
+        _ner_engines = ()
+        return None
+    nlp_engine = NlpEngineProvider(
+        nlp_configuration={
+            "nlp_engine_name": "spacy",
+            "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}],
+        }
+    ).create_engine()
+    _ner_engines = (
+        AnalyzerEngine(nlp_engine=nlp_engine, supported_languages=["en"]),
+        AnonymizerEngine(),
+    )
+    return _ner_engines
+
+
+def _ner_redact(text: str) -> str:
+    engines = _ner_engines_or_none()
+    if not engines:
+        return text
+    from presidio_anonymizer.entities import OperatorConfig
+
+    analyzer, anonymizer = engines
+    results = analyzer.analyze(text=text, language="en", entities=_NER_ENTITIES)
+    if not results:
+        return text
+    operators = {
+        ent: OperatorConfig("replace", {"new_value": tok}) for ent, tok in _NER_TOKEN.items()
+    }
+    operators["DEFAULT"] = OperatorConfig("replace", {"new_value": "[REDACTED]"})
+    return anonymizer.anonymize(text=text, analyzer_results=results, operators=operators).text
+
+
+def redact_text(text: str | None, known: list, use_ner: bool = False) -> str | None:
+    """Redact captured identifiers + formatted PHI + letter-slot names from text.
+
+    With use_ner=True, first run a Presidio NER pass (names/locations anywhere in
+    the prose), then the deterministic passes below as belt-and-suspenders.
+    """
     if not text:
         return text
     out = text
+    if use_ner:
+        out = _ner_redact(out)
     # 1) Exact known values first — longest first so a substring can't pre-empt a
     #    longer match; word-boundary lookarounds avoid clipping inside real words.
     seen = {str(k).strip() for k in known if k and len(str(k).strip()) >= 2}

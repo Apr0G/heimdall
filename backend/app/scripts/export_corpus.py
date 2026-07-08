@@ -46,6 +46,7 @@ def _latest(rows, key="created_at"):
 
 async def main() -> None:
     include_text = os.environ.get("INCLUDE_DOC_TEXT") == "1"
+    use_ner = os.environ.get("USE_NER") == "1"
     engine = create_async_engine(settings.database_url)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -85,7 +86,7 @@ async def main() -> None:
             if include_text:
                 try:
                     body = await asyncio.to_thread(s3.get_bytes, s3.extracted_text_key(doc.s3_key))
-                    entry["text"] = redact_text(body.decode("utf-8", "replace"), known)
+                    entry["text"] = redact_text(body.decode("utf-8", "replace"), known, use_ner)
                 except Exception:  # noqa: BLE001 — a missing extraction shouldn't abort the export
                     entry["text"] = None
             docs_out.append(entry)
@@ -107,7 +108,7 @@ async def main() -> None:
                     "date_of_service_year": deid_year(case.date_of_service),
                     "denial_date_year": deid_year(case.denial_date),
                     "extraction": safe_extraction,
-                    "clinical_summary": redact_text(raw.get("clinical_summary"), known),
+                    "clinical_summary": redact_text(raw.get("clinical_summary"), known, use_ner),
                     "documents": docs_out,
                 },
                 "analysis": (
@@ -116,18 +117,22 @@ async def main() -> None:
                     else {
                         "denial_category": analysis.denial_category,
                         "is_appealable": analysis.is_appealable,
-                        "appealability_reason": redact_text(analysis.appealability_reason, known),
+                        "appealability_reason": redact_text(
+                            analysis.appealability_reason, known, use_ner
+                        ),
                         "success_probability": (
                             float(analysis.success_probability)
                             if analysis.success_probability is not None
                             else None
                         ),
                         "probability_band": analysis.probability_band,
-                        "reasoning_text": redact_text(analysis.reasoning_text, known),
+                        "reasoning_text": redact_text(analysis.reasoning_text, known, use_ner),
                         "recommended_appeal_level": analysis.recommended_appeal_level,
                     }
                 ),
-                "output": {"appeal_letter": redact_text(letter.body if letter else None, known)},
+                "output": {
+                    "appeal_letter": redact_text(letter.body if letter else None, known, use_ner)
+                },
                 "label": (
                     None
                     if outcome is None
