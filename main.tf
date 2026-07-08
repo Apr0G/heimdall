@@ -174,10 +174,12 @@ resource "aws_iam_role_policy" "app" {
         Effect = "Allow"
         Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
         # Scoped to the exact prefixes the app writes (see services/s3.py).
+        # exports/ holds the training-corpus JSONL (scripts/export_corpus.py).
         Resource = [
           "${aws_s3_bucket.documents.arn}/tmp-uploads/*",
           "${aws_s3_bucket.documents.arn}/practices/*",
           "${aws_s3_bucket.documents.arn}/model_runs/*",
+          "${aws_s3_bucket.documents.arn}/exports/*",
         ]
       },
       {

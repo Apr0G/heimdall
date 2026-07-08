@@ -1,0 +1,75 @@
+name: export-corpus
+
+# Exports the training corpus (case -> extraction -> analysis -> letter -> outcome)
+# as JSONL to s3://<bucket>/exports/, as a one-off in-VPC ECS task. Keyless via
+# GitHub OIDC. The file contains PHI — download it with your own admin creds
+# (it is NOT surfaced in this log) and de-identify before training.
+on:
+  workflow_dispatch:
+    inputs:
+      include_doc_text:
+        description: "Embed raw extracted document text (heavier PHI)?"
+        type: choice
+        options: ["false", "true"]
+        default: "false"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::000000000000:role/heimdall-gha-deploy
+          aws-region: us-east-1
+
+      - name: Export the corpus as a one-off ECS task
+        env:
+          INCLUDE: ${{ inputs.include_doc_text }}
+        run: |
+          set -euo pipefail
+          CLUSTER=default
+          TASKDEF=default-heimdall-api
+
+          CONTAINER=$(aws ecs describe-task-definition --task-definition "$TASKDEF" \
+            --query 'taskDefinition.containerDefinitions[0].name' --output text)
+          BUCKET=$(aws ecs describe-task-definition --task-definition "$TASKDEF" \
+            --query "taskDefinition.containerDefinitions[0].environment[?name=='S3_BUCKET_NAME'].value | [0]" \
+            --output text)
+          VPC=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true \
+            --query 'Vpcs[0].VpcId' --output text)
+          SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC" \
+            --query 'Subnets[].SubnetId' --output text | tr '\t' ',')
+          SG=$(aws ec2 describe-security-groups \
+            --filters "Name=group-name,Values=default-heimdall-api-$VPC" "Name=vpc-id,Values=$VPC" \
+            --query 'SecurityGroups[0].GroupId' --output text)
+
+          OVERRIDES=$(cat <<JSON
+          {"containerOverrides":[{"name":"$CONTAINER",
+            "command":["python","-m","app.scripts.export_corpus"],
+            "environment":[{"name":"INCLUDE_DOC_TEXT","value":"$([ "$INCLUDE" = "true" ] && echo 1 || echo 0)"}]}]}
+          JSON
+          )
+
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "$CLUSTER" --task-definition "$TASKDEF" --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=ENABLED}" \
+            --overrides "$OVERRIDES" \
+            --query 'tasks[0].taskArn' --output text)
+          echo "Started export task: $TASK_ARN"
+
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN"
+          EXIT=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+          REASON=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].stoppedReason' --output text)
+          echo "export container exit code: $EXIT ($REASON)"
+          test "$EXIT" = "0"
+
+          echo ""
+          echo "Corpus written to s3://$BUCKET/exports/ . Download with your OWN admin creds:"
+          echo "  aws s3 ls s3://$BUCKET/exports/"
+          echo "  aws s3 cp s3://$BUCKET/exports/<file>.jsonl ."

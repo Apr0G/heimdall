@@ -1,13 +1,16 @@
 name: wipe-test-data
 
-# DESTRUCTIVE: deletes ALL case/document data (empties the dashboard) as a one-off
-# ECS task in the VPC. Keeps users, practices, and the append-only audit_logs.
-# Requires typing WIPE in the confirmation box. Keyless via GitHub OIDC.
+# ☢️ IRREVERSIBLE (short of RDS point-in-time restore): deletes EVERY case,
+# document, extraction, analysis, letter, model_run and outcome across ALL
+# practices — i.e. the entire training corpus — plus their S3 objects. Keeps
+# only users, practices, and the append-only audit_logs. Not scoped to "test".
+# Export the corpus first (export-corpus workflow) if you might want the data.
+# Two-key guard: type the full phrase below AND the short WIPE token.
 on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: 'Type WIPE to confirm deleting ALL case data'
+        description: 'Type exactly: ERASE-ALL-PRODUCTION-DATA'
         required: true
         default: ''
 
@@ -21,8 +24,9 @@ jobs:
     steps:
       - name: Check confirmation
         run: |
-          if [ "${{ inputs.confirm }}" != "WIPE" ]; then
-            echo "Confirmation failed — type WIPE to proceed."
+          if [ "${{ inputs.confirm }}" != "ERASE-ALL-PRODUCTION-DATA" ]; then
+            echo "Confirmation failed — type exactly ERASE-ALL-PRODUCTION-DATA to proceed."
+            echo "This deletes the entire training corpus across all practices."
             exit 1
           fi
 

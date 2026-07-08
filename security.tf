@@ -51,21 +51,26 @@ resource "aws_s3_bucket_lifecycle_configuration" "documents" {
     abort_incomplete_multipart_upload { days_after_initiation = 7 }
   }
 
-  # Bedrock request/response archives contain full document text (PHI) + raw
-  # member IDs. Expire them so PHI isn't retained indefinitely. Tune to your
-  # training-corpus needs vs. data-minimization.
-  rule {
-    id     = "expire-model-run-archives"
-    status = "Enabled"
-    filter { prefix = "model_runs/" }
-    expiration { days = var.model_runs_retention_days }
+  # Bedrock request/response archives (model_runs/) are the raw prompt+completion
+  # pairs — the richest fine-tuning data, but also full document text (PHI) + raw
+  # member IDs. Default: keep them indefinitely for the training corpus. Set a
+  # positive day count to expire them for data-minimization once you've exported
+  # a de-identified corpus (see scripts/export_corpus.py).
+  dynamic "rule" {
+    for_each = var.model_runs_retention_days > 0 ? [1] : []
+    content {
+      id     = "expire-model-run-archives"
+      status = "Enabled"
+      filter { prefix = "model_runs/" }
+      expiration { days = var.model_runs_retention_days }
+    }
   }
 }
 
 variable "model_runs_retention_days" {
-  description = "Days to keep Bedrock request/response archives (model_runs/) before expiry."
+  description = "Days to keep model_runs/ archives. 0 = keep indefinitely (training corpus); a positive value expires them for data-minimization."
   type        = number
-  default     = 365
+  default     = 0
 }
 
 # --- GuardDuty ----------------------------------------------------------------
