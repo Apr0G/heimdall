@@ -1,13 +1,17 @@
-"""Export a training corpus: one JSONL record per case joining the input
-(extraction + optional document text), the model's analysis, the generated
-appeal letter (the output), and the reported outcome (the label). Writes to
-s3://<bucket>/exports/corpus-<timestamp>.jsonl.
+"""Export a DE-IDENTIFIED training corpus: one JSONL record per case joining the
+input (safe extraction fields + optional redacted document text), the model's
+analysis, the generated appeal letter (the output), and the reported outcome (the
+label). Writes to s3://<bucket>/exports/corpus-<timestamp>.jsonl.
 
-Contains PHI — this is for building your OWN training corpus and must be
-de-identified before any model training. INCLUDE_DOC_TEXT=1 embeds the raw
-extracted document text (heavier PHI); default off exports structured data only.
+Every free-text field (letter, reasoning, clinical summary, doc text) is run
+through best-effort PHI redaction (see deidentify.py): captured identifiers are
+removed, formatted PHI is masked, dates are generalized to the year, and claim
+numbers become a salted hash. This is BEST-EFFORT, not certified Safe Harbor — a
+free-floating name never captured structurally can still slip through free text;
+review or run a PHI NER pass before using outside your BAA boundary.
 
 Run as a one-off in-VPC ECS task:  python -m app.scripts.export_corpus
+Set INCLUDE_DOC_TEXT=1 to embed the (redacted) raw extracted document text.
 """
 
 import asyncio
@@ -20,6 +24,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import settings
 from app.models import Analysis, AppealLetter, Case, Document, Extraction, Outcome
+from app.scripts.deidentify import (
+    SAFE_EXTRACTION_FIELDS,
+    deid_year,
+    hash_ref,
+    redact_text,
+)
 from app.services import s3
 
 
@@ -52,39 +62,52 @@ async def main() -> None:
         extraction = _latest(extractions.get(case.id, []))
         analysis = _latest(analyses.get(case.id, []))
         case_letters = letters.get(case.id, [])
-        # A finalized letter is the real output; else the latest draft.
         letter = next((al for al in case_letters if al.finalized_at), None) or _latest(case_letters)
         case_outcomes = outcomes.get(case.id, [])
         outcome = _latest(case_outcomes, key="reported_at") if case_outcomes else None
+
+        raw = extraction.extracted_json if (extraction and extraction.extracted_json) else {}
+        # Exact identifiers we captured for this case — redacted from all free text.
+        known = [
+            case.patient_initials,
+            case.claim_number,
+            raw.get("member_id"),
+            raw.get("patient_initials"),
+            raw.get("claim_number"),
+            raw.get("provider_name"),
+            raw.get("provider_npi"),
+            raw.get("prior_auth_number"),
+        ]
 
         docs_out = []
         for doc in documents.get(case.id, []):
             entry = {"doc_type": doc.doc_type}
             if include_text:
                 try:
-                    raw = await asyncio.to_thread(s3.get_bytes, s3.extracted_text_key(doc.s3_key))
-                    entry["text"] = raw.decode("utf-8", "replace")
+                    body = await asyncio.to_thread(s3.get_bytes, s3.extracted_text_key(doc.s3_key))
+                    entry["text"] = redact_text(body.decode("utf-8", "replace"), known)
                 except Exception:  # noqa: BLE001 — a missing extraction shouldn't abort the export
                     entry["text"] = None
             docs_out.append(entry)
 
+        safe_extraction = {k: v for k, v in raw.items() if k in SAFE_EXTRACTION_FIELDS}
+
         records.append(
             {
-                "case_id": str(case.id),
-                "created_at": case.created_at.isoformat() if case.created_at else None,
+                "case_id": str(case.id),  # internal random UUID, not derived from PHI
+                "created_year": deid_year(case.created_at),
                 "status": case.status,
+                "claim_ref": hash_ref(case.claim_number) if case.claim_number else None,
+                "deidentification": "best-effort",
                 "input": {
                     "payer_name": case.payer_name,
                     "plan_type": case.plan_type,
-                    "claim_number": case.claim_number,
-                    "patient_initials": case.patient_initials,
-                    "date_of_service": (
-                        case.date_of_service.isoformat() if case.date_of_service else None
-                    ),
-                    "denial_date": case.denial_date.isoformat() if case.denial_date else None,
                     "billed_amount_cents": case.billed_amount_cents,
                     "denied_amount_cents": case.denied_amount_cents,
-                    "extraction": extraction.extracted_json if extraction else None,
+                    "date_of_service_year": deid_year(case.date_of_service),
+                    "denial_date_year": deid_year(case.denial_date),
+                    "extraction": safe_extraction,
+                    "clinical_summary": redact_text(raw.get("clinical_summary"), known),
                     "documents": docs_out,
                 },
                 "analysis": (
@@ -93,27 +116,25 @@ async def main() -> None:
                     else {
                         "denial_category": analysis.denial_category,
                         "is_appealable": analysis.is_appealable,
-                        "appealability_reason": analysis.appealability_reason,
+                        "appealability_reason": redact_text(analysis.appealability_reason, known),
                         "success_probability": (
                             float(analysis.success_probability)
                             if analysis.success_probability is not None
                             else None
                         ),
                         "probability_band": analysis.probability_band,
-                        "reasoning_text": analysis.reasoning_text,
+                        "reasoning_text": redact_text(analysis.reasoning_text, known),
                         "recommended_appeal_level": analysis.recommended_appeal_level,
                     }
                 ),
-                "output": {"appeal_letter": letter.body if letter else None},
+                "output": {"appeal_letter": redact_text(letter.body if letter else None, known)},
                 "label": (
                     None
                     if outcome is None
                     else {
                         "result": outcome.result,
                         "amount_recovered_cents": outcome.amount_recovered_cents,
-                        "resolution_date": (
-                            outcome.resolution_date.isoformat() if outcome.resolution_date else None
-                        ),
+                        "resolution_year": deid_year(outcome.resolution_date),
                     }
                 ),
             }
@@ -127,7 +148,7 @@ async def main() -> None:
 
     labeled = sum(1 for r in records if r["label"] is not None)
     print(
-        f"Exported {len(records)} cases ({labeled} with outcome labels) "
+        f"Exported {len(records)} de-identified cases ({labeled} with outcome labels) "
         f"-> s3://{settings.s3_bucket_name}/{key}"
     )
 
