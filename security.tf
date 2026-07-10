@@ -42,6 +42,9 @@ resource "aws_s3_bucket_lifecycle_configuration" "documents" {
     status = "Enabled"
     filter { prefix = "tmp-uploads/" }
     expiration { days = 1 }
+    # Bucket is versioned: also purge noncurrent versions so the transient PHI
+    # upload is actually deleted, not just hidden behind a delete marker.
+    noncurrent_version_expiration { noncurrent_days = 1 }
   }
 
   rule {
@@ -51,11 +54,11 @@ resource "aws_s3_bucket_lifecycle_configuration" "documents" {
     abort_incomplete_multipart_upload { days_after_initiation = 7 }
   }
 
-  # Bedrock request/response archives (model_runs/) are the raw prompt+completion
-  # pairs — the richest fine-tuning data, but also full document text (PHI) + raw
-  # member IDs. Default: keep them indefinitely for the training corpus. Set a
-  # positive day count to expire them for data-minimization once you've exported
-  # a de-identified corpus (see scripts/export_corpus.py).
+  # Raw Bedrock request/response archives (model_runs/) contain full document text
+  # (PHI) + raw member IDs. Strategy: keep them only long enough to debug/reprocess,
+  # then delete. The DE-IDENTIFIED corpus (scripts/export_corpus.py -> exports/) is
+  # the permanent training store and is reproducible from the DB, so raw PHI is NOT
+  # kept forever. Set model_runs_retention_days = 0 to keep indefinitely (not advised).
   dynamic "rule" {
     for_each = var.model_runs_retention_days > 0 ? [1] : []
     content {
@@ -63,14 +66,16 @@ resource "aws_s3_bucket_lifecycle_configuration" "documents" {
       status = "Enabled"
       filter { prefix = "model_runs/" }
       expiration { days = var.model_runs_retention_days }
+      # Versioned bucket: purge noncurrent versions too, so the PHI is truly gone.
+      noncurrent_version_expiration { noncurrent_days = 1 }
     }
   }
 }
 
 variable "model_runs_retention_days" {
-  description = "Days to keep model_runs/ archives. 0 = keep indefinitely (training corpus); a positive value expires them for data-minimization."
+  description = "Days to keep raw model_runs/ PHI archives before deletion. The de-identified corpus (exports/) is the permanent training store. 0 = keep indefinitely (not advised)."
   type        = number
-  default     = 0
+  default     = 30
 }
 
 # --- GuardDuty ----------------------------------------------------------------
