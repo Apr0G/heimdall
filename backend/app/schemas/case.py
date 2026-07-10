@@ -163,6 +163,11 @@ class CaseStatusResponse(BaseModel):
     status: str
 
 
+class ProcessingIdsResponse(BaseModel):
+    # PHI-free feed for the background "is anything done yet?" poll.
+    ids: list[UUID]
+
+
 class OutcomeRequest(BaseModel):
     result: str
     action_taken: str = "appealed"

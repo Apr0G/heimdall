@@ -44,6 +44,13 @@ export async function fetchCases(
   return res.data;
 }
 
+// PHI-free feed of in-flight case ids, for the background "is it done yet?" poll
+// (so the full PHI-bearing list isn't fetched/audited every few seconds).
+export async function fetchProcessingIds(): Promise<string[]> {
+  const res = await api.get<{ ids: string[] }>("/api/cases/processing-ids");
+  return res.data.ids;
+}
+
 // ---- Case detail (Phase 10) ----
 
 export type DocumentDetail = {

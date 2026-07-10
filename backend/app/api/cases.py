@@ -44,6 +44,7 @@ from app.schemas.case import (
     OutcomeDetail,
     OutcomeRequest,
     PendingOutcomeItem,
+    ProcessingIdsResponse,
     ReanalyzeRequest,
     UploadSlot,
     UploadUrlsRequest,
@@ -106,6 +107,7 @@ def win_rate(win_count: int, resolved_count: int) -> float | None:
 
 @router.get("", response_model=CaseListResponse)
 async def list_cases(
+    request: Request,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
     status: str | None = Query(None, description="Filter by case status"),
@@ -189,11 +191,26 @@ async def list_cases(
         for c in cases
     ]
 
+    # PHI-access audit (§164.312(b)): the list carries patient initials, claim
+    # numbers, dates and amounts. Coarse "list viewed" row — the background poll
+    # uses the PHI-free /processing-ids feed, so this fires on real page loads only.
+    await log_audit(
+        session,
+        action="case_list_view",
+        resource_type="case_list",
+        user_id=current_user.id,
+        practice_id=current_user.practice_id,
+        ip=safe_ip(client_ip(request)),
+        user_agent=request.headers.get("user-agent"),
+    )
+    await session.commit()
+
     return CaseListResponse(items=items, total=total or 0, page=page, page_size=page_size)
 
 
 @router.get("/summary", response_model=CaseSummaryResponse)
 async def case_summary(
+    request: Request,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> CaseSummaryResponse:
@@ -247,6 +264,18 @@ async def case_summary(
         )
     ).all()
 
+    # PHI-access audit (§164.312(b)): pending_outcomes carries patient initials.
+    await log_audit(
+        session,
+        action="case_summary_view",
+        resource_type="case_summary",
+        user_id=current_user.id,
+        practice_id=current_user.practice_id,
+        ip=safe_ip(client_ip(request)),
+        user_agent=request.headers.get("user-agent"),
+    )
+    await session.commit()
+
     return CaseSummaryResponse(
         month_case_count=month_case_count or 0,
         resolved_count=resolved_count,
@@ -265,6 +294,25 @@ async def case_summary(
             for c in pending_rows
         ],
     )
+
+
+@router.get("/processing-ids", response_model=ProcessingIdsResponse)
+async def processing_case_ids(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> ProcessingIdsResponse:
+    """IDs of the practice's in-flight cases — a PHI-free feed for the background
+    'is anything done yet?' poll, so the full (PHI-bearing) list isn't fetched
+    (or audited) every few seconds."""
+    ids = (
+        await session.scalars(
+            select(Case.id).where(
+                Case.practice_id == current_user.practice_id,
+                Case.status == "processing",
+            )
+        )
+    ).all()
+    return ProcessingIdsResponse(ids=list(ids))
 
 
 def _require_three_docs(doc_types: list[str]) -> None:

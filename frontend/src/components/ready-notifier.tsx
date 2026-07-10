@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 
-import { fetchCase, fetchCases } from "@/lib/cases";
+import { fetchCase, fetchProcessingIds } from "@/lib/cases";
 import { notifyUntilSeen } from "@/lib/notify";
 
 /**
@@ -19,17 +19,17 @@ export function ReadyNotifier() {
 
   const { data } = useQuery({
     queryKey: ["watch-processing"],
-    queryFn: () => fetchCases({ status: "processing" }),
+    queryFn: () => fetchProcessingIds(),
     // Poll quickly while something is processing, slowly otherwise. Keep polling
     // in the background, and refetch on return so a finish is caught right away.
-    refetchInterval: (query) => ((query.state.data?.items.length ?? 0) > 0 ? 3000 : 12000),
+    refetchInterval: (query) => ((query.state.data?.length ?? 0) > 0 ? 3000 : 12000),
     refetchIntervalInBackground: true,
     refetchOnWindowFocus: true,
   });
 
   useEffect(() => {
     if (!data) return;
-    const current = new Set(data.items.map((c) => c.id));
+    const current = new Set(data);
 
     if (primed.current) {
       for (const id of processingIds.current) {
