@@ -1,3 +1,4 @@
+import logging
 import time
 import uuid
 from typing import Any
@@ -7,6 +8,8 @@ from botocore.client import Config
 from botocore.exceptions import ClientError
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 # The three documents every case requires.
 REQUIRED_DOC_TYPES = ("denial", "claim", "clinical")
@@ -64,13 +67,17 @@ def head_object(key: str) -> dict[str, Any] | None:
     try:
         return _get_client().head_object(Bucket=settings.s3_bucket_name, Key=key)
     except ClientError as exc:
-        if exc.response.get("Error", {}).get("Code") in {
-            "404",
-            "NoSuchKey",
-            "NotFound",
-            "403",
-            "Forbidden",
-        }:
+        code = exc.response.get("Error", {}).get("Code")
+        if code in {"404", "NoSuchKey", "NotFound"}:
+            return None
+        if code in {"403", "Forbidden"}:
+            # Without s3:ListBucket a missing object returns 403, so we still treat
+            # this as not-found — but log it (key only, no PHI), because a real
+            # IAM/KMS misconfig looks identical and would otherwise fail silently.
+            logger.warning(
+                "head_object returned 403 (treated as not-found)",
+                extra={"context": {"key": key}},
+            )
             return None
         raise
 
