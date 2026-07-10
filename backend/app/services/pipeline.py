@@ -1,3 +1,4 @@
+import hashlib
 import logging
 from datetime import UTC, datetime
 from uuid import UUID
@@ -82,7 +83,11 @@ async def run_reanalysis(case_id: UUID) -> None:
 
 
 async def _extract_one(session: AsyncSession, doc: Document) -> None:
-    text = await run_in_threadpool(document_extractor.extract_digital_text, doc.s3_key)
+    # Read the PDF once: hash it for an integrity anchor (§164.312(c)(1)) and reuse
+    # the same bytes for digital-text extraction (no second S3 read).
+    data = await run_in_threadpool(s3.get_bytes, doc.s3_key)
+    doc.content_hash = hashlib.sha256(data).hexdigest()
+    text = await run_in_threadpool(document_extractor.digital_text_from_bytes, data)
     if text is None:
         # Scanned PDF -> OCR. Mark pending so the state is observable.
         doc.ocr_status = "pending"
