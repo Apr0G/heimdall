@@ -261,6 +261,8 @@ async def case_summary(
                 Case.id.not_in(select(Outcome.case_id)),
             )
             .order_by(Case.submitted_at.asc())
+            # Bound the payload — oldest overdue cases first; the tail keeps nagging.
+            .limit(200)
         )
     ).all()
 
@@ -668,7 +670,9 @@ async def download_letter_pdf(
     # PHI export audit — the drafted letter contains patient/claim detail.
     await log_read(session, request, current_user, "letter_download", "case", case_id)
     pdf = await run_in_threadpool(pdf_gen.render_letter_pdf, letter.body)
-    filename = f"appeal-{case.claim_number or case.id}.pdf"
+    # Minimum-necessary: keep the claim number out of the filename (it lands in
+    # browser download history / OS logs) — initials + a short id still identify it.
+    filename = f"appeal-{case.patient_initials or 'case'}-{str(case.id)[:8]}.pdf"
     return Response(
         content=pdf,
         media_type="application/pdf",

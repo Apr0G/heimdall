@@ -28,7 +28,9 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 const AUTH_COOKIE = "hd_authed";
 
 function setAuthedCookie() {
-  document.cookie = `${AUTH_COOKIE}=1; path=/; max-age=2592000; samesite=lax`;
+  // Secure over HTTPS (prod); omitted on http://localhost so dev auth-gating works.
+  const secure = window.location.protocol === "https:" ? "; secure" : "";
+  document.cookie = `${AUTH_COOKIE}=1; path=/; max-age=2592000; samesite=lax${secure}`;
 }
 
 function clearAuthedCookie() {

@@ -16,4 +16,6 @@ COPY alembic.ini ./
 RUN pip install .
 
 EXPOSE 8080
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# --no-server-header: don't advertise the uvicorn version (matches the header
+# posture in app/core/security_headers.py).
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--no-server-header"]
