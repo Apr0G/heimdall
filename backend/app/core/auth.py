@@ -18,7 +18,9 @@ _JWKS_URL = f"{_ISSUER}/.well-known/jwks.json"
 # Cognito's signing keys are stable and small; cache them by kid after first use.
 _jwks_by_kid: dict[str, dict] | None = None
 
-security = HTTPBearer()
+# auto_error=False so a MISSING header yields our 401 (+ WWW-Authenticate) rather
+# than HTTPBearer's default 403 — the frontend maps only 401 to the sign-in flow.
+security = HTTPBearer(auto_error=False)
 
 
 def _unauthorized(detail: str = "Invalid or expired token") -> HTTPException:
@@ -78,9 +80,11 @@ async def verify_access_token(token: str) -> dict:
 
 
 async def get_current_user(
-    creds: HTTPAuthorizationCredentials = Depends(security),
+    creds: HTTPAuthorizationCredentials | None = Depends(security),
     session: AsyncSession = Depends(get_db),
 ) -> User:
+    if creds is None:
+        raise _unauthorized("Missing bearer token")
     claims = await verify_access_token(creds.credentials)
     user = await session.scalar(select(User).where(User.cognito_sub == claims["sub"]))
     if user is None:
