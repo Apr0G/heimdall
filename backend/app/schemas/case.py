@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CaseListItem(BaseModel):
@@ -171,7 +171,8 @@ class ProcessingIdsResponse(BaseModel):
 class OutcomeRequest(BaseModel):
     result: str
     action_taken: str = "appealed"
-    amount_recovered_cents: int | None = None
+    # Non-negative integer cents (defense in depth over the client-side check).
+    amount_recovered_cents: int | None = Field(default=None, ge=0)
     resolution_date: date | None = None
     notes: str | None = None
 

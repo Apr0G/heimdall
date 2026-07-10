@@ -632,6 +632,18 @@ function LetterHistory({ letters }: { letters: LetterDetail[] }) {
 
 const RESULT_OPTIONS = ["overturned", "upheld", "partial", "pending", "withdrawn"];
 
+// Strict money parse: "" -> null (not reported), a valid dollar amount -> integer
+// cents, anything else -> "invalid" (block submit). parseFloat silently turned
+// "1,234.50" into $1.00 and junk into NaN -> null, corrupting the recovery
+// dashboard and the training labels.
+function parseAmountToCents(raw: string): number | null | "invalid" {
+  const t = raw.trim();
+  if (t === "") return null;
+  if (!/^\d+(\.\d{1,2})?$/.test(t)) return "invalid";
+  const cents = Math.round(Number(t) * 100);
+  return Number.isSafeInteger(cents) && cents >= 0 ? cents : "invalid";
+}
+
 function OutcomeCard({ c, onChanged }: { c: CaseDetail; onChanged: () => void }) {
   const existing = c.outcome;
   const [result, setResult] = useState(existing?.result ?? "overturned");
@@ -641,12 +653,14 @@ function OutcomeCard({ c, onChanged }: { c: CaseDetail; onChanged: () => void })
   const [resolutionDate, setResolutionDate] = useState(existing?.resolution_date ?? "");
   const [notes, setNotes] = useState(existing?.notes ?? "");
 
+  const amountCents = parseAmountToCents(amount);
+  const amountInvalid = amountCents === "invalid";
+
   const save = useMutation({
     mutationFn: () => {
       const payload: OutcomePayload = {
         result,
-        amount_recovered_cents:
-          amount.trim() === "" ? null : Math.round(parseFloat(amount) * 100),
+        amount_recovered_cents: amountCents === "invalid" ? null : amountCents,
         resolution_date: resolutionDate || null,
         notes: notes.trim() || null,
       };
@@ -711,10 +725,16 @@ function OutcomeCard({ c, onChanged }: { c: CaseDetail; onChanged: () => void })
             <Input
               type="number"
               inputMode="decimal"
+              min="0"
+              step="0.01"
               placeholder="0.00"
               value={amount}
+              aria-invalid={amountInvalid}
               onChange={(e) => setAmount(e.target.value)}
             />
+            {amountInvalid && (
+              <p className="text-xs text-destructive">Enter a dollar amount like 1234.50.</p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label>Resolution date</Label>
@@ -729,7 +749,7 @@ function OutcomeCard({ c, onChanged }: { c: CaseDetail; onChanged: () => void })
             <Textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
           </div>
         </div>
-        <Button onClick={() => save.mutate()} disabled={save.isPending}>
+        <Button onClick={() => save.mutate()} disabled={save.isPending || amountInvalid}>
           {save.isPending ? "Saving…" : existing?.result ? "Update outcome" : "Save outcome"}
         </Button>
       </CardContent>
