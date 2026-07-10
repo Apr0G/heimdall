@@ -4,14 +4,19 @@ import type { NextConfig } from "next";
 // API + our exact S3 bucket (presigned uploads) so an XSS can't exfiltrate PHI to
 // an attacker-owned origin; script-src is 'self' (+ inline for Next).
 const apiOrigin = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
-// Exact upload bucket origin in prod (e.g. https://<bucket>.s3.us-east-1.amazonaws.com,
-// set in Vercel). Falls back to a region-scoped wildcard so uploads still work if
-// unset — narrower than the previous global *.s3.amazonaws.com.
-const uploadOrigin =
-  process.env.NEXT_PUBLIC_UPLOAD_ORIGIN ?? "https://*.s3.us-east-1.amazonaws.com";
+// Presigned S3 uploads: us-east-1 signs to the GLOBAL endpoint
+// (<bucket>.s3.amazonaws.com); other configs use the REGIONAL one
+// (<bucket>.s3.us-east-1.amazonaws.com). Allow both forms of the one bucket so the
+// upload PUT is never CSP-blocked. Set NEXT_PUBLIC_UPLOAD_ORIGIN (in either form)
+// to pin the bucket; falls back to region-scoped wildcards if unset.
+function uploadOrigins(): string[] {
+  const bucket = process.env.NEXT_PUBLIC_UPLOAD_ORIGIN?.match(/^https:\/\/([^.]+)\.s3\./)?.[1];
+  if (!bucket) return ["https://*.s3.amazonaws.com", "https://*.s3.us-east-1.amazonaws.com"];
+  return [`https://${bucket}.s3.amazonaws.com`, `https://${bucket}.s3.us-east-1.amazonaws.com`];
+}
 const isProd = process.env.NODE_ENV === "production";
 // localhost is a dev-only backend; never ship it in the production policy.
-const connectSrc = ["'self'", apiOrigin, uploadOrigin, ...(isProd ? [] : ["http://localhost:8000"])]
+const connectSrc = ["'self'", apiOrigin, ...uploadOrigins(), ...(isProd ? [] : ["http://localhost:8000"])]
   .filter(Boolean)
   .join(" ");
 const securityHeaders = [
