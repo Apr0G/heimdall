@@ -34,6 +34,7 @@ from app.schemas.case import (
     CaseDetailResponse,
     CaseListItem,
     CaseListResponse,
+    CaseStatusPollResponse,
     CaseStatusResponse,
     CaseSummaryResponse,
     CreateCaseRequest,
@@ -558,6 +559,19 @@ async def get_case(
             else None
         ),
     )
+
+
+@router.get("/{case_id}/status", response_model=CaseStatusPollResponse)
+async def case_status_poll(
+    case_id: UUID,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> CaseStatusPollResponse:
+    """PHI-free status for the detail page's processing poll — no audit row, so a
+    watched case doesn't write ~1 audit_logs INSERT every 2s. The full (audited)
+    detail is fetched once on load and once more when this flips off 'processing'."""
+    case = await _get_owned_case(session, case_id, current_user)
+    return CaseStatusPollResponse(id=case.id, status=case.status, stalled=_is_stalled(case))
 
 
 @router.post("/{case_id}/mark-submitted", response_model=CaseStatusResponse)

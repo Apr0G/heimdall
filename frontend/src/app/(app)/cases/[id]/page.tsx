@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import {
@@ -33,6 +33,7 @@ import {
   type CaseDetail,
   downloadLetterPdf,
   fetchCase,
+  fetchCaseStatus,
   fetchDocumentDownloadUrl,
   type LetterDetail,
   markSubmitted,
@@ -73,12 +74,26 @@ export default function CaseDetailPage() {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["case", id],
     queryFn: () => fetchCase(id),
-    // Poll while the pipeline is still working.
-    refetchInterval: (query) =>
-      query.state.data?.status === "processing" ? 2000 : false,
+  });
+
+  // While processing, poll a PHI-free status endpoint (no audit row per poll)
+  // instead of re-fetching the full audited detail every 2s.
+  const { data: statusPoll } = useQuery({
+    queryKey: ["case-status", id],
+    queryFn: () => fetchCaseStatus(id),
+    enabled: data?.status === "processing",
+    refetchInterval: (query) => (query.state.data?.status === "processing" ? 2000 : false),
   });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["case", id] });
+
+  // When the poll shows the pipeline finished, refetch the full detail once.
+  useEffect(() => {
+    if (data?.status === "processing" && statusPoll && statusPoll.status !== "processing") {
+      invalidate();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusPoll?.status, data?.status]);
   const retry = useMutation({
     mutationFn: () => retryCase(id),
     onSuccess: invalidate,
@@ -110,7 +125,7 @@ export default function CaseDetailPage() {
 
       {data.status === "processing" ? (
         <ProcessingView
-          stalled={data.stalled ?? false}
+          stalled={statusPoll?.stalled ?? data.stalled ?? false}
           onRetry={() => retry.mutate()}
           retrying={retry.isPending}
         />

@@ -163,6 +163,13 @@ class CaseStatusResponse(BaseModel):
     status: str
 
 
+class CaseStatusPollResponse(BaseModel):
+    # PHI-free shape for the detail page's processing poll (no audit needed).
+    id: UUID
+    status: str
+    stalled: bool = False
+
+
 class ProcessingIdsResponse(BaseModel):
     # PHI-free feed for the background "is anything done yet?" poll.
     ids: list[UUID]

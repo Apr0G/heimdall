@@ -51,6 +51,13 @@ export async function fetchProcessingIds(): Promise<string[]> {
   return res.data.ids;
 }
 
+// PHI-free status for the detail page's processing poll (no audit row per poll).
+export type CaseStatusPoll = { id: string; status: string; stalled: boolean };
+export async function fetchCaseStatus(id: string): Promise<CaseStatusPoll> {
+  const res = await api.get<CaseStatusPoll>(`/api/cases/${id}/status`);
+  return res.data;
+}
+
 // ---- Case detail (Phase 10) ----
 
 export type DocumentDetail = {
