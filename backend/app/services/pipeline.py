@@ -17,69 +17,88 @@ from app.services.letter import run_appeal_letter
 logger = logging.getLogger(__name__)
 
 
-async def _run_phase(case_id: UUID, phase, **kwargs) -> None:
+async def _run_phase(case_id: UUID, run_id: UUID, phase, **kwargs) -> bool:
     """Run one pipeline phase in its own short-lived session, so a pooled DB
     connection is not held across the whole multi-minute pipeline (three Bedrock
     calls + Textract). State persists to the DB between phases, so each phase
-    re-fetches the case fresh."""
+    re-fetches the case fresh.
+
+    Returns False (and does nothing) if a newer run has claimed the case — the
+    caller stops the sequence. This is the anti-duplicate guard: a stall-detection
+    retry stamps a new pipeline_run_id, so the older runner aborts here."""
     async with AsyncSessionLocal() as session:
         case = await session.get(Case, case_id)
         if case is None:
             raise RuntimeError(f"case {case_id} vanished mid-pipeline")
+        if case.pipeline_run_id != run_id:
+            logger.info(
+                "pipeline superseded by a newer run, aborting",
+                extra={"context": {"case_id": str(case_id)}},
+            )
+            return False
         await phase(session, case, **kwargs)
         await session.commit()
+        return True
 
 
-async def _case_status(case_id: UUID) -> str | None:
+async def _owns_case(case_id: UUID, run_id: UUID) -> bool:
     async with AsyncSessionLocal() as session:
         case = await session.get(Case, case_id)
-        return case.status if case else None
+        if case is None:
+            logger.warning("pipeline: case not found", extra={"context": {"case_id": str(case_id)}})
+            return False
+        return case.pipeline_run_id == run_id
 
 
-async def run_full_pipeline(case_id: UUID) -> None:
+async def run_full_pipeline(case_id: UUID, run_id: UUID) -> None:
     """Background orchestrator for a case: document extraction (embedded text via
     pypdf, OCR via Textract for scanned PDFs) -> AI extraction -> analysis ->
     letter draft -> the final transition to `ready`. Each phase runs in its own
-    session (see _run_phase).
+    session (see _run_phase) and aborts if a newer run supersedes this one.
+
+    Extraction uses only_missing_text=True so a retry after a later-phase failure
+    reuses already-extracted text instead of re-paying Textract + the extraction
+    model (on a fresh case nothing is extracted yet, so it still does all three).
 
     No silent failures: any error sets case.status='error' with a PHI-free
     error_message. Never logs document text — only ids, lengths, and statuses.
     """
-    status = await _case_status(case_id)
-    if status is None:
-        logger.warning("pipeline: case not found", extra={"context": {"case_id": str(case_id)}})
-        return
-    if status == "ready":
-        logger.info(
-            "pipeline: case already ready, skipping",
-            extra={"context": {"case_id": str(case_id)}},
-        )
+    if not await _owns_case(case_id, run_id):
         return
 
+    phases = (
+        (_extract_documents, {"only_missing_text": True}),
+        (run_ai_extraction, {}),
+        (run_ai_analysis, {}),
+        (run_appeal_letter, {}),
+    )
     try:
-        await _run_phase(case_id, _extract_documents)
-        await _run_phase(case_id, run_ai_extraction)
-        await _run_phase(case_id, run_ai_analysis)
-        await _run_phase(case_id, run_appeal_letter)
+        for phase, kwargs in phases:
+            if not await _run_phase(case_id, run_id, phase, **kwargs):
+                return
     except Exception as exc:
-        await _mark_error(case_id, exc)
+        await _mark_error(case_id, run_id, exc)
 
 
-async def run_reanalysis(case_id: UUID) -> None:
+async def run_reanalysis(case_id: UUID, run_id: UUID) -> None:
     """Re-run analysis + letter after the doctor adds conditional documents
     (Phase 12). Extracts text from the newly added docs, re-analyzes with the
     fuller picture, and drafts the next letter version, ending at `ready`. Each
-    phase runs in its own session (see _run_phase)."""
-    if await _case_status(case_id) is None:
-        logger.warning("reanalysis: case not found", extra={"context": {"case_id": str(case_id)}})
+    phase runs in its own session and aborts if superseded (see _run_phase)."""
+    if not await _owns_case(case_id, run_id):
         return
 
+    phases = (
+        (_extract_documents, {"only_missing_text": True}),
+        (run_ai_analysis, {}),
+        (run_appeal_letter, {}),
+    )
     try:
-        await _run_phase(case_id, _extract_documents, only_missing_text=True)
-        await _run_phase(case_id, run_ai_analysis)
-        await _run_phase(case_id, run_appeal_letter)
+        for phase, kwargs in phases:
+            if not await _run_phase(case_id, run_id, phase, **kwargs):
+                return
     except Exception as exc:
-        await _mark_error(case_id, exc)
+        await _mark_error(case_id, run_id, exc)
 
 
 async def _extract_one(session: AsyncSession, doc: Document) -> None:
@@ -125,11 +144,12 @@ async def _extract_documents(
         await _extract_one(session, doc)
 
 
-async def _mark_error(case_id: UUID, exc: Exception) -> None:
-    # Own session: the failed phase's session already rolled back on exit.
+async def _mark_error(case_id: UUID, run_id: UUID, exc: Exception) -> None:
+    # Own session: the failed phase's session already rolled back on exit. Only
+    # mark error if this run still owns the case — a superseding run owns the state.
     async with AsyncSessionLocal() as session:
         case = await session.get(Case, case_id)
-        if case is not None:
+        if case is not None and case.pipeline_run_id == run_id:
             case.status = "error"
             # Exception type + AWS error code only (both safe enums like "NoSuchKey")
             # — never the raw message, which could echo a key or path.

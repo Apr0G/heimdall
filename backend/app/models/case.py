@@ -41,6 +41,9 @@ class Case(Base, UUIDPrimaryKey, TimestampMixin):
     # When the doctor marked the appeal submitted; drives the "report your
     # outcome" reminder (Phase 11). Null until the case is submitted.
     submitted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    # Claim token for the background pipeline: each launch stamps a fresh UUID and
+    # every phase aborts if it no longer matches — so only one runner owns the case.
+    pipeline_run_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
 
     __table_args__ = (
         Index("ix_cases_practice_status", "practice_id", "status"),

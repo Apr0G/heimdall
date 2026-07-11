@@ -1,5 +1,5 @@
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import (
     APIRouter,
@@ -366,10 +366,12 @@ async def create_case(
                 status_code=413, detail=f"{doc.doc_type} file is too large (25 MB max)."
             )
 
+    run_id = uuid4()
     case = Case(
         practice_id=current_user.practice_id,
         created_by=current_user.id,
         status="processing",
+        pipeline_run_id=run_id,
     )
     session.add(case)
     await session.flush()
@@ -417,8 +419,8 @@ async def create_case(
     )
     await session.commit()
 
-    # Kick off the (stubbed) pipeline after the response is sent.
-    background_tasks.add_task(run_full_pipeline, case.id)
+    # Kick off the pipeline after the response is sent (claimed by run_id).
+    background_tasks.add_task(run_full_pipeline, case.id, run_id)
 
     return CreateCaseResponse(id=case.id, status=case.status)
 
@@ -639,8 +641,12 @@ async def retry_case(
     case = await _get_owned_case(session, case_id, current_user)
     if case.status != "error" and not _is_stalled(case):
         raise HTTPException(status_code=409, detail="Only a failed or stalled case can be retried")
+    # Stamp a fresh claim token: any still-running (stalled) pipeline aborts when it
+    # sees the token changed, so only this retry proceeds — no duplicate pipeline.
+    run_id = uuid4()
     case.status = "processing"
     case.error_message = None
+    case.pipeline_run_id = run_id
     await log_audit(
         session,
         action="case_retry",
@@ -652,7 +658,7 @@ async def retry_case(
         user_agent=request.headers.get("user-agent"),
     )
     await session.commit()
-    background_tasks.add_task(run_full_pipeline, case.id)
+    background_tasks.add_task(run_full_pipeline, case.id, run_id)
     return CaseStatusResponse(id=case.id, status=case.status)
 
 
@@ -767,7 +773,9 @@ async def reanalyze_case(
             metadata={"doc_type": doc.doc_type, "reanalyze": True},
         )
 
+    run_id = uuid4()
     case.status = "processing"
+    case.pipeline_run_id = run_id
     await log_audit(
         session,
         action="case_reanalyze",
@@ -781,5 +789,5 @@ async def reanalyze_case(
     )
     await session.commit()
 
-    background_tasks.add_task(run_reanalysis, case.id)
+    background_tasks.add_task(run_reanalysis, case.id, run_id)
     return CaseStatusResponse(id=case.id, status=case.status)
