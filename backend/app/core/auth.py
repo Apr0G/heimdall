@@ -33,11 +33,23 @@ def _unauthorized(detail: str = "Invalid or expired token") -> HTTPException:
 
 async def _get_jwks(force_refresh: bool = False) -> dict[str, dict]:
     global _jwks_by_kid
-    if _jwks_by_kid is None or force_refresh:
+    if _jwks_by_kid is not None and not force_refresh:
+        return _jwks_by_kid
+    try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(_JWKS_URL)
             resp.raise_for_status()
             _jwks_by_kid = {key["kid"]: key for key in resp.json()["keys"]}
+    except (httpx.HTTPError, KeyError, ValueError) as exc:
+        # A transient Cognito/network blip shouldn't 500. Serve the stale cache if
+        # we have one; otherwise ask the client to retry rather than fail hard.
+        if _jwks_by_kid is not None:
+            return _jwks_by_kid
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication key service temporarily unavailable",
+            headers={"Retry-After": "5"},
+        ) from exc
     return _jwks_by_kid
 
 

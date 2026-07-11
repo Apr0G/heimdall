@@ -6,7 +6,9 @@ const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"
 // with an httpOnly cookie set via a Next route handler before production.
 export const TOKEN_KEY = "heimdall_access_token";
 
-export const api = axios.create({ baseURL: API_BASE });
+// 30s timeout so a hung backend surfaces an error instead of a mutation that
+// spins forever. (Long work — the pipeline — runs server-side, not in a request.)
+export const api = axios.create({ baseURL: API_BASE, timeout: 30_000 });
 
 api.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {

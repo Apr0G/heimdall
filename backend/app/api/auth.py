@@ -100,7 +100,6 @@ async def login(
 
     return LoginResponse(
         access_token=auth["AccessToken"],
-        id_token=auth["IdToken"],
         token_type=auth.get("TokenType", "Bearer"),
         expires_in=auth.get("ExpiresIn", 3600),
     )

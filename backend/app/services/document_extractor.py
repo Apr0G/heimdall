@@ -72,13 +72,14 @@ def run_textract(s3_key: str, poll_seconds: float = 2.0, timeout_seconds: int = 
     )["JobId"]
 
     waited = 0.0
-    result = client.get_document_text_detection(JobId=job_id)
+    # Wrap each poll: a single transient ClientError shouldn't fail the whole job.
+    result = _with_retries(client.get_document_text_detection, JobId=job_id)
     while result["JobStatus"] == "IN_PROGRESS":
         if waited >= timeout_seconds:
             raise TimeoutError("Textract job timed out")
         time.sleep(poll_seconds)
         waited += poll_seconds
-        result = client.get_document_text_detection(JobId=job_id)
+        result = _with_retries(client.get_document_text_detection, JobId=job_id)
 
     if result["JobStatus"] != "SUCCEEDED":
         raise RuntimeError(f"Textract job status {result['JobStatus']}")
@@ -92,7 +93,7 @@ def run_textract(s3_key: str, poll_seconds: float = 2.0, timeout_seconds: int = 
         token = page.get("NextToken")
         if not token:
             break
-        page = client.get_document_text_detection(JobId=job_id, NextToken=token)
+        page = _with_retries(client.get_document_text_detection, JobId=job_id, NextToken=token)
 
     return "\n".join(lines)
 

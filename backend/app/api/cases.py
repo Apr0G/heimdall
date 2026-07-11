@@ -245,7 +245,8 @@ async def case_summary(
             select(func.coalesce(func.sum(Outcome.amount_recovered_cents), 0))
             .select_from(Outcome)
             .join(Case, Case.id == Outcome.case_id)
-            .where(Case.practice_id == pid)
+            # Only count dollars from actual wins, not every outcome row.
+            .where(Case.practice_id == pid, Outcome.result.in_(_WIN_RESULTS))
         )
         or 0
     )
@@ -259,7 +260,11 @@ async def case_summary(
                 Case.status == "submitted",
                 Case.submitted_at.is_not(None),
                 Case.submitted_at <= cutoff,
-                Case.id.not_in(select(Outcome.case_id)),
+                # Keep nagging until a TERMINAL outcome is logged — a 'pending'
+                # outcome row must not silence the reminder forever.
+                Case.id.not_in(
+                    select(Outcome.case_id).where(Outcome.result.in_(_TERMINAL_RESULTS))
+                ),
             )
             .order_by(Case.submitted_at.asc())
             # Bound the payload — oldest overdue cases first; the tail keeps nagging.
@@ -318,6 +323,15 @@ async def processing_case_ids(
     return ProcessingIdsResponse(ids=list(ids))
 
 
+def _reject_duplicate_keys(documents: list) -> None:
+    """Reject the same upload key submitted for more than one slot — the first
+    move_object deletes the source, so a later slot 500s mid-loop and strands the
+    moved object under practices/ with no DB row."""
+    keys = [d.s3_key for d in documents]
+    if len(keys) != len(set(keys)):
+        raise HTTPException(status_code=400, detail="Duplicate upload key in request")
+
+
 def _require_three_docs(doc_types: list[str]) -> None:
     if sorted(doc_types) != sorted(REQUIRED_DOC_TYPES):
         raise HTTPException(
@@ -353,6 +367,7 @@ async def create_case(
     session: AsyncSession = Depends(get_db),
 ) -> CreateCaseResponse:
     _require_three_docs([d.doc_type for d in body.documents])
+    _reject_duplicate_keys(body.documents)
 
     # Only accept uploads this practice just presigned, and confirm they landed.
     tmp_prefix = f"tmp-uploads/{current_user.practice_id}/"
@@ -707,6 +722,12 @@ def _require_supplemental_types(doc_types: list[str]) -> None:
             status_code=400,
             detail=f"Additional documents must be one of: {', '.join(SUPPLEMENTAL_DOC_TYPES)}",
         )
+    # Bound the per-request fan-out: each supplemental type at most once (else one
+    # request could spawn 100 duplicate S3 moves + Document rows + Textract jobs).
+    if len(doc_types) != len(set(doc_types)):
+        raise HTTPException(
+            status_code=400, detail="Each additional document type may be provided at most once."
+        )
 
 
 @router.post("/{case_id}/additional-upload-urls", response_model=UploadUrlsResponse)
@@ -745,6 +766,7 @@ async def reanalyze_case(
     if case.status != "ready":
         raise HTTPException(status_code=409, detail="Only a ready case can be reanalyzed")
     _require_supplemental_types([d.doc_type for d in body.documents])
+    _reject_duplicate_keys(body.documents)
 
     tmp_prefix = f"tmp-uploads/{current_user.practice_id}/"
     for doc in body.documents:

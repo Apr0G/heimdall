@@ -24,8 +24,7 @@ async def get_download_url(
     """Hand back a short-lived presigned GET URL for a document the caller's
     practice owns. The backend never streams the file body itself."""
     doc = await session.get(Document, document_id)
-    if doc is not None:
-        case = await session.get(Case, doc.case_id)
+    case = await session.get(Case, doc.case_id) if doc is not None else None
     # 404 (not 403) on cross-practice access so ids don't leak.
     if doc is None or case is None or case.practice_id != current_user.practice_id:
         raise HTTPException(status_code=404, detail="Document not found")

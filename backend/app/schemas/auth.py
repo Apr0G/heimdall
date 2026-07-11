@@ -10,8 +10,9 @@ class LoginRequest(BaseModel):
 
 
 class LoginResponse(BaseModel):
+    # id_token is intentionally omitted — the frontend never uses it, and shipping
+    # it only widens what an XSS could steal (minimum-necessary).
     access_token: str
-    id_token: str
     token_type: str = "Bearer"
     expires_in: int
 
