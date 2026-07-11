@@ -141,6 +141,40 @@ async def _record_model_run(
     return request_key, response_key
 
 
+async def _record_invoke_error(
+    run_id: uuid.UUID,
+    *,
+    case_id: uuid.UUID | None,
+    purpose: str,
+    prompt_version: str,
+    error_message: str,
+) -> None:
+    """Record a model_runs row for a Bedrock call that failed at the transport
+    layer (throttle exhausted, timeout) before any response — hard rule 6 requires
+    a row for *every* call, and this is exactly when cost/failure telemetry matters.
+    No S3 archives: there is no response, and the prompt is re-derivable."""
+    async with AsyncSessionLocal() as session:
+        session.add(
+            ModelRun(
+                id=run_id,
+                case_id=case_id,
+                purpose=purpose,
+                provider="bedrock",
+                model_id=settings.bedrock_model_id,
+                prompt_version=prompt_version,
+                status="error",
+                error_message=error_message,
+            )
+        )
+        await session.commit()
+
+
+def _invoke_error_message(exc: Exception) -> str:
+    response = getattr(exc, "response", None)
+    code = response.get("Error", {}).get("Code") if isinstance(response, dict) else None
+    return f"invoke failed: {type(exc).__name__}" + (f" ({code})" if code else "")
+
+
 async def complete_json(
     *,
     case_id: uuid.UUID | None,
@@ -158,8 +192,20 @@ async def complete_json(
     messages: list[dict] = [{"role": "user", "content": user_prompt}]
 
     for _ in range(2):
-        call = await run_in_threadpool(_invoke, system, messages, max_tokens, temperature)
         run_id = uuid.uuid4()
+        try:
+            call = await run_in_threadpool(_invoke, system, messages, max_tokens, temperature)
+        except Exception as exc:
+            # Transport-layer failure (throttle/timeout): record an error row so the
+            # call is still accounted for (rule 6), then propagate.
+            await _record_invoke_error(
+                run_id,
+                case_id=case_id,
+                purpose=purpose,
+                prompt_version=prompt_version,
+                error_message=_invoke_error_message(exc),
+            )
+            raise
 
         validated: ModelT | None = None
         error_message: str | None = None
