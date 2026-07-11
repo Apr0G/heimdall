@@ -16,7 +16,26 @@ permissions:
   contents: read
 
 jobs:
+  # Gate: a broken image must never reach production. Deploy needs this to pass.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install (with dev tools)
+        working-directory: backend
+        run: pip install '.[dev]'
+      - name: Lint, format check, tests
+        working-directory: backend
+        run: |
+          ruff check .
+          black --check .
+          pytest -q
+
   deploy:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
