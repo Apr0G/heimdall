@@ -21,6 +21,10 @@ _HEADERS = {
     "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
     "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
     "Strict-Transport-Security": "max-age=63072000; includeSubDomains",
+    # API responses (incl. the letter PDF) carry PHI — keep them out of browser
+    # disk caches on shared machines (§164.312 minimum-necessary / transmission).
+    "Cache-Control": "no-store",
+    "Pragma": "no-cache",
 }
 
 

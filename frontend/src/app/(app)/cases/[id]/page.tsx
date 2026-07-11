@@ -574,7 +574,9 @@ function LetterCard({ c, onChanged }: { c: CaseDetail; onChanged: () => void }) 
           <Button
             variant="outline"
             size="sm"
-            onClick={() => downloadLetterPdf(c.id, `appeal-${c.claim_number ?? c.id}.pdf`)}
+            onClick={() =>
+              downloadLetterPdf(c.id, `appeal-${c.patient_initials ?? "case"}-${c.id.slice(0, 8)}.pdf`)
+            }
           >
             Download PDF
           </Button>
