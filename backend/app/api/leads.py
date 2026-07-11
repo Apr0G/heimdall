@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
-from app.core.rate_limit import limiter
+from app.core.rate_limit import ip_key, limiter
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +28,9 @@ class LeadRequest(BaseModel):
     practice: str = Field(min_length=1, max_length=2000)
 
 
+# Public endpoint: IP-keyed so a forged JWT sub can't mint a fresh bucket per request.
 @router.post("", status_code=202)
-@limiter.limit(settings.rate_limit_public)
+@limiter.limit(settings.rate_limit_public, key_func=ip_key)
 async def submit_lead(request: Request, response: Response, lead: LeadRequest) -> dict[str, str]:
     """Public 'get started' intake. Publishes the lead to SNS (email to the
     founder). No PHI here — this is prospect contact info, not patient data."""

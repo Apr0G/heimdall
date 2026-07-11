@@ -1,7 +1,7 @@
 from starlette.requests import Request
 
 from app.core.net import client_ip
-from app.core.rate_limit import rate_key
+from app.core.rate_limit import ip_key, login_allowed, rate_key, register_login_failure
 
 
 def _request(headers: dict | None = None, client=("10.0.0.9", 5555)) -> Request:
@@ -35,3 +35,22 @@ def test_rate_key_ip_uses_real_client_not_alb():
     assert a == "ip:203.0.113.7"
     assert b == "ip:203.0.113.8"
     assert a != b
+
+
+def test_ip_key_ignores_forged_bearer_token():
+    # A public endpoint must NOT let a forged JWT sub mint a fresh bucket.
+    forged = _request({"x-forwarded-for": "203.0.113.7", "authorization": "Bearer x.y.z"})
+    assert ip_key(forged) == "ip:203.0.113.7"
+
+
+def test_login_peek_does_not_consume_but_failures_do():
+    key = "ip:test-login-unique-1"
+    # Peeking many times never locks out (only failed attempts count).
+    for _ in range(50):
+        assert login_allowed(key) is True
+    # 10/15min limit — after 10 recorded failures the IP is locked.
+    for _ in range(10):
+        register_login_failure(key)
+    assert login_allowed(key) is False
+    # A different IP is unaffected.
+    assert login_allowed("ip:test-login-unique-2") is True

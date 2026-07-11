@@ -20,7 +20,19 @@ from app.core.config import settings
 from app.core.net import client_ip
 
 
+def ip_key(request: Request) -> str:
+    """IP-only key for PUBLIC endpoints (login, leads). Never trusts a bearer token:
+    an unauthenticated caller can forge a JWT `sub` to mint a fresh bucket per
+    request and bypass the limit entirely. The real client IP comes from
+    X-Forwarded-For behind the ALB (not the ALB's own IP)."""
+    return f"ip:{client_ip(request) or 'unknown'}"
+
+
 def rate_key(request: Request) -> str:
+    """Key for AUTHENTICATED routes: the JWT `sub` (per-user buckets). Safe to read
+    unverified here because these routes are behind get_current_user — a forged
+    token gets its own bucket but still 401s, so it can't do damage. PUBLIC routes
+    must use ip_key instead (see above)."""
     auth = request.headers.get("authorization", "")
     if auth.lower().startswith("bearer "):
         try:
@@ -32,9 +44,7 @@ def rate_key(request: Request) -> str:
         except Exception:
             # Malformed token — fall through to IP keying.
             pass
-    # Real client IP (from X-Forwarded-For behind the ALB), not the ALB's own IP —
-    # otherwise every caller shares one bucket (a global login lockout).
-    return f"ip:{client_ip(request) or 'unknown'}"
+    return ip_key(request)
 
 
 limiter = Limiter(
@@ -46,18 +56,28 @@ limiter = Limiter(
     swallow_errors=True,  # fail-open on storage errors
 )
 
-# Login is fail-CLOSED: a store (Redis) outage must NOT reopen the brute-force
-# window, unlike the general limiter above which favors availability. Uses the
-# same limits backend directly so we control the error path.
+# Login throttle: fail-CLOSED (a Redis outage must NOT reopen the brute-force
+# window) and keyed on IP only via ip_key. We PEEK before the attempt and consume
+# a token only on FAILURE, so a burst of *successful* logins from one office NAT IP
+# can't lock out staff, while repeated failures from an IP are throttled.
 _login_storage = storage_from_string(settings.redis_url or "memory://")
 _login_strategy = MovingWindowRateLimiter(_login_storage)
 _login_limit = parse(settings.rate_limit_auth)
 
 
-def login_rate_ok(key: str) -> bool:
-    """Whether this key may attempt a login. Fail-closed: on a storage error we
-    deny (return False) rather than let unlimited attempts through."""
+def login_allowed(key: str) -> bool:
+    """Whether this IP may attempt a login now — peek WITHOUT consuming. Fail-closed:
+    a storage error denies rather than letting unlimited attempts through."""
     try:
-        return _login_strategy.hit(_login_limit, key)
+        return _login_strategy.test(_login_limit, key)
     except Exception:
         return False
+
+
+def register_login_failure(key: str) -> None:
+    """Consume one token after a FAILED login. Best-effort — a storage error just
+    means this failure isn't counted (the next peek still fails closed on outage)."""
+    try:
+        _login_strategy.hit(_login_limit, key)
+    except Exception:
+        pass

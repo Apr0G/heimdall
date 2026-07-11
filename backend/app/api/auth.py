@@ -5,7 +5,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.core.auth import get_current_user, security, verify_access_token
 from app.core.net import client_ip
-from app.core.rate_limit import login_rate_ok, rate_key
+from app.core.rate_limit import ip_key, login_allowed, register_login_failure
 from app.db.session import get_db
 from app.models import User
 from app.schemas.auth import LoginRequest, LoginResponse, UserOut
@@ -27,8 +27,9 @@ async def login(
     request: Request,
     session: AsyncSession = Depends(get_db),
 ) -> LoginResponse:
-    # Fail-closed login throttle — a Redis outage must not reopen brute-force.
-    if not await run_in_threadpool(login_rate_ok, rate_key(request)):
+    # Fail-closed, IP-keyed login throttle (peek only — failures are counted below).
+    throttle_key = ip_key(request)
+    if not await run_in_threadpool(login_allowed, throttle_key):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many login attempts. Please try again later.",
@@ -39,6 +40,8 @@ async def login(
     try:
         auth = await run_in_threadpool(initiate_auth, body.email, body.password)
     except InvalidCredentialsError:
+        # Count the failed attempt against the IP (successful logins don't consume).
+        await run_in_threadpool(register_login_failure, throttle_key)
         # No email in metadata: on a failed login it's attacker-supplied and would
         # let anyone flood the append-only audit table with arbitrary PII.
         await log_audit(
