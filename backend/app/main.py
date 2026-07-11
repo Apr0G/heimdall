@@ -15,7 +15,7 @@ from app.api.leads import router as leads_router
 from app.core.config import settings
 from app.core.logging import setup_logging
 from app.core.rate_limit import limiter
-from app.core.security_headers import SecurityHeadersMiddleware
+from app.core.security_headers import BodySizeLimitMiddleware, SecurityHeadersMiddleware
 
 setup_logging(settings.log_level)
 logger = logging.getLogger(__name__)
@@ -28,8 +28,10 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
-# Security response headers + body-size guard (outermost so it wraps everything).
+# Security response headers, then the streamed-body-size guard (counts chunked
+# bodies too, so a public endpoint can't be memory-exhausted).
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(BodySizeLimitMiddleware)
 
 # Exact frontend origin only; explicit methods/headers (no wildcards). Presigned
 # S3 uploads go browser->S3 directly, so the API only needs GET/POST/OPTIONS.
