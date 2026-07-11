@@ -49,17 +49,11 @@ def _assert_pdf(data: bytes) -> None:
 
 def digital_text_from_bytes(data: bytes) -> str | None:
     """Return embedded PDF text from raw bytes, or None if the PDF looks scanned
-    (and so needs OCR). Lets the caller hash the same bytes without a second read."""
+    (and so needs OCR). The caller downloads once and hashes the same bytes."""
     _assert_pdf(data)
     reader = PdfReader(io.BytesIO(data))
     text = "\n".join((page.extract_text() or "") for page in reader.pages).strip()
     return text if len(text) >= MIN_DIGITAL_CHARS else None
-
-
-def extract_digital_text(s3_key: str) -> str | None:
-    """Download a PDF and return its embedded text (None if it looks scanned).
-    Internal processing only."""
-    return digital_text_from_bytes(s3.get_bytes(s3_key))  # get_bytes retries reads
 
 
 def run_textract(s3_key: str, poll_seconds: float = 2.0, timeout_seconds: int = 180) -> str:
