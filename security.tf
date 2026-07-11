@@ -160,6 +160,35 @@ resource "aws_cloudtrail" "main" {
   cloud_watch_logs_group_arn = "${aws_cloudwatch_log_group.cloudtrail.arn}:*"
   cloud_watch_logs_role_arn  = aws_iam_role.cloudtrail_cw.arn
   depends_on                 = [aws_s3_bucket_policy.trail]
+
+  # Preserve management-event logging (advanced selectors replace the default).
+  advanced_event_selector {
+    name = "Management events"
+    field_selector {
+      field  = "eventCategory"
+      equals = ["Management"]
+    }
+  }
+
+  # S3 object-level (data) events on the PHI documents bucket, so presigned-URL
+  # GET/PUT — which happen OUTSIDE the app — are logged. If a presigned URL leaks
+  # inside its 15-min window, its use is now recorded. Adds S3 data-event charges
+  # (~$0.10 per 100k events); scoped to the one bucket to keep cost/volume down.
+  advanced_event_selector {
+    name = "S3 data events (documents bucket)"
+    field_selector {
+      field  = "eventCategory"
+      equals = ["Data"]
+    }
+    field_selector {
+      field  = "resources.type"
+      equals = ["AWS::S3::Object"]
+    }
+    field_selector {
+      field       = "resources.ARN"
+      starts_with = ["${aws_s3_bucket.documents.arn}/"]
+    }
+  }
 }
 
 # --- VPC Flow Logs on the default VPC ----------------------------------------

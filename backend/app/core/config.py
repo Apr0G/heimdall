@@ -33,6 +33,11 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str = ""
+    # Path to the AWS RDS CA bundle to enable verify-full DB TLS (cert + hostname
+    # verification). Empty = require TLS but skip verification (current default;
+    # RDS is private + force_ssl, so traffic is still encrypted). Set to
+    # /app/rds-ca.pem — which the image ships — once a deploy is verified to connect.
+    db_ssl_ca_bundle: str = ""
 
     # Auth (Cognito)
     cognito_user_pool_id: str = ""

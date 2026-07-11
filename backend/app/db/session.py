@@ -5,12 +5,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.core.config import settings
 
-# RDS enforces TLS (rds.force_ssl). For dev we require TLS but skip certificate
-# verification; Part 12 hardening should pin the RDS CA bundle instead of
-# disabling verification.
-_ssl_context = ssl.create_default_context()
-_ssl_context.check_hostname = False
-_ssl_context.verify_mode = ssl.CERT_NONE
+# DB TLS. When DB_SSL_CA_BUNDLE points at the RDS CA bundle (shipped at
+# /app/rds-ca.pem), verify the server cert AND hostname (verify-full). Otherwise
+# require TLS but skip verification — RDS is private + force_ssl, so traffic is
+# still encrypted; this is the safe default until a deploy is verified with the CA
+# (the /healthz probe does not touch the DB, so a bad cert config fails silently).
+if settings.db_ssl_ca_bundle:
+    _ssl_context = ssl.create_default_context(cafile=settings.db_ssl_ca_bundle)
+    # check_hostname=True and verify_mode=CERT_REQUIRED are the defaults here.
+else:
+    _ssl_context = ssl.create_default_context()
+    _ssl_context.check_hostname = False
+    _ssl_context.verify_mode = ssl.CERT_NONE
 
 engine = create_async_engine(
     settings.database_url,

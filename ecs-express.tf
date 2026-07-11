@@ -80,8 +80,13 @@ resource "aws_iam_role" "gha_deploy" {
       Principal = { Federated = aws_iam_openid_connect_provider.github.arn }
       Action    = "sts:AssumeRoleWithWebIdentity"
       Condition = {
-        StringEquals = { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com" }
-        StringLike   = { "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:*" }
+        StringEquals = {
+          "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+          # Only workflows running on the main branch may assume the deploy role —
+          # not every branch/PR ref. All privileged workflows (deploy, migrate,
+          # export, wipe) run from main.
+          "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:ref:refs/heads/main"
+        }
       }
     }]
   })

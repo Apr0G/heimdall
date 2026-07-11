@@ -15,6 +15,9 @@ COPY alembic ./alembic
 COPY alembic.ini ./
 RUN pip install .
 
+# AWS RDS CA bundle for optional verify-full DB TLS (enable via DB_SSL_CA_BUNDLE).
+ADD https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /app/rds-ca.pem
+
 EXPOSE 8080
 # --no-server-header: don't advertise the uvicorn version (matches the header
 # posture in app/core/security_headers.py).
