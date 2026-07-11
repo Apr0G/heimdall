@@ -18,8 +18,13 @@ else:
     _ssl_context.check_hostname = False
     _ssl_context.verify_mode = ssl.CERT_NONE
 
+# Fall back to a non-connecting placeholder when DATABASE_URL is unset, so the
+# module imports (and /healthz + the test suite run) without a database — the
+# engine only connects on first real use. Real deployments always set the URL.
+_database_url = settings.database_url or "postgresql+asyncpg://placeholder/placeholder"
+
 engine = create_async_engine(
-    settings.database_url,
+    _database_url,
     echo=False,
     pool_pre_ping=True,  # drop dead connections instead of erroring a request
     pool_size=10,

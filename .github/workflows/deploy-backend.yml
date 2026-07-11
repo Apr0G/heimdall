@@ -24,9 +24,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install (with dev tools)
+      - name: Install (editable, with dev tools)
         working-directory: backend
-        run: pip install '.[dev]'
+        # Editable so the installed `app` points at the source tree — otherwise a
+        # second copy lands in site-packages and pytest hits an import-file mismatch.
+        run: pip install -e '.[dev]'
       - name: Lint, format check, tests
         working-directory: backend
         run: |
