@@ -12,9 +12,7 @@ from app.models.enums import plan_type
 
 
 def _str_array() -> Mapped[list[str]]:
-    return mapped_column(
-        ARRAY(Text), nullable=False, server_default=text("'{}'::text[]")
-    )
+    return mapped_column(ARRAY(Text), nullable=False, server_default=text("'{}'::text[]"))
 
 
 class Extraction(Base, UUIDPrimaryKey, CreatedAtMixin):

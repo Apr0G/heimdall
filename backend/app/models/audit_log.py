@@ -24,15 +24,11 @@ class AuditLog(Base, UUIDPrimaryKey):
     )
     action: Mapped[str | None] = mapped_column(Text, nullable=True)
     resource_type: Mapped[str | None] = mapped_column(Text, nullable=True)
-    resource_id: Mapped[uuid.UUID | None] = mapped_column(
-        PGUUID(as_uuid=True), nullable=True
-    )
+    resource_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     ip_address: Mapped[str | None] = mapped_column(INET, nullable=True)
     user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
     # "metadata" is reserved on the declarative Base, so the attribute is renamed.
-    event_metadata: Mapped[dict | None] = mapped_column(
-        "metadata", JSONB, nullable=True
-    )
+    event_metadata: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
     timestamp: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
     )

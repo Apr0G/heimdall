@@ -27,9 +27,7 @@ def _appeal_deadline(denial_date: date | None, plan_type: str) -> date | None:
 
 async def _read_extracted_text(session: AsyncSession, case: Case) -> dict[str, str]:
     """Map doc_type -> extracted text (from the .extracted.txt sibling in S3)."""
-    documents = (
-        await session.scalars(select(Document).where(Document.case_id == case.id))
-    ).all()
+    documents = (await session.scalars(select(Document).where(Document.case_id == case.id))).all()
     texts: dict[str, str] = {}
     for doc in documents:
         key = s3.extracted_text_key(doc.s3_key)
@@ -58,14 +56,10 @@ async def run_ai_extraction(session: AsyncSession, case: Case) -> Extraction:
 
     # PHI minimization: hash the member id, and never persist the raw value.
     member_id_hash = (
-        hashlib.sha256(result.member_id.encode("utf-8")).hexdigest()
-        if result.member_id
-        else None
+        hashlib.sha256(result.member_id.encode("utf-8")).hexdigest() if result.member_id else None
     )
     confidence = (
-        Decimal(str(round(result.confidence, 2)))
-        if result.confidence is not None
-        else None
+        Decimal(str(round(result.confidence, 2))) if result.confidence is not None else None
     )
 
     extraction = Extraction(

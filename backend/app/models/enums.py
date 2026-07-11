@@ -61,9 +61,7 @@ appeal_level = _pg_enum(
     name="appeal_level",
 )
 
-letter_status = _pg_enum(
-    "draft", "finalized", "downloaded", "archived", name="letter_status"
-)
+letter_status = _pg_enum("draft", "finalized", "downloaded", "archived", name="letter_status")
 
 model_run_purpose = _pg_enum(
     "extraction", "analysis", "letter_draft", "classification", name="model_run_purpose"

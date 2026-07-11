@@ -15,9 +15,7 @@ class ModelRun(Base, UUIDPrimaryKey, CreatedAtMixin):
         PGUUID(as_uuid=True), ForeignKey("cases.id", ondelete="RESTRICT"), nullable=True
     )
     purpose: Mapped[str] = mapped_column(model_run_purpose, nullable=False)
-    provider: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=text("'bedrock'")
-    )
+    provider: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'bedrock'"))
     model_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     prompt_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)

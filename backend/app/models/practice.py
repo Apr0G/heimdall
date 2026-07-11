@@ -17,7 +17,5 @@ class Practice(Base, UUIDPrimaryKey, TimestampMixin):
     city: Mapped[str | None] = mapped_column(Text, nullable=True)
     state: Mapped[str | None] = mapped_column(Text, nullable=True)
     zip: Mapped[str | None] = mapped_column(Text, nullable=True)
-    baa_signed_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
+    baa_signed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     baa_version: Mapped[str | None] = mapped_column(Text, nullable=True)

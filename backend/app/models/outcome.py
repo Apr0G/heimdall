@@ -20,9 +20,7 @@ class Outcome(Base, UUIDPrimaryKey):
     )
     action_taken: Mapped[str | None] = mapped_column(outcome_action, nullable=True)
     result: Mapped[str | None] = mapped_column(outcome_result, nullable=True)
-    amount_recovered_cents: Mapped[int | None] = mapped_column(
-        BigInteger, nullable=True
-    )
+    amount_recovered_cents: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     resolution_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     reported_by: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=True

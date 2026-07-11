@@ -20,9 +20,5 @@ class User(Base, UUIDPrimaryKey, TimestampMixin):
     cognito_sub: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     email: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     full_name: Mapped[str | None] = mapped_column(Text, nullable=True)
-    role: Mapped[str] = mapped_column(
-        user_role, nullable=False, server_default=text("'doctor'")
-    )
-    last_login_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
+    role: Mapped[str] = mapped_column(user_role, nullable=False, server_default=text("'doctor'"))
+    last_login_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)

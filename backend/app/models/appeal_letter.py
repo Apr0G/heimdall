@@ -28,12 +28,8 @@ class AppealLetter(Base, UUIDPrimaryKey, CreatedAtMixin):
         ForeignKey("model_runs.id", ondelete="RESTRICT"),
         nullable=True,
     )
-    finalized_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
-    downloaded_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
+    finalized_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    downloaded_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("case_id", "version", name="uq_appeal_letters_case_version"),

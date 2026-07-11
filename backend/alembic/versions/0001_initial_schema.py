@@ -79,9 +79,7 @@ def _enum(name: str) -> postgresql.ENUM:
 
 
 def _id() -> sa.Column:
-    return sa.Column(
-        "id", UUID, primary_key=True, server_default=sa.text("uuid_generate_v4()")
-    )
+    return sa.Column("id", UUID, primary_key=True, server_default=sa.text("uuid_generate_v4()"))
 
 
 def _created_at() -> sa.Column:
@@ -200,9 +198,7 @@ def upgrade() -> None:
         sa.Column("appeal_deadline", sa.Date()),
         sa.Column("billed_amount_cents", sa.BigInteger()),
         sa.Column("denied_amount_cents", sa.BigInteger()),
-        sa.Column(
-            "currency", sa.Text(), nullable=False, server_default=sa.text("'USD'")
-        ),
+        sa.Column("currency", sa.Text(), nullable=False, server_default=sa.text("'USD'")),
         _created_at(),
         _updated_at(),
     )
@@ -215,9 +211,7 @@ def upgrade() -> None:
         _id(),
         sa.Column("case_id", UUID, sa.ForeignKey("cases.id", ondelete="RESTRICT")),
         sa.Column("purpose", _enum("model_run_purpose"), nullable=False),
-        sa.Column(
-            "provider", sa.Text(), nullable=False, server_default=sa.text("'bedrock'")
-        ),
+        sa.Column("provider", sa.Text(), nullable=False, server_default=sa.text("'bedrock'")),
         sa.Column("model_id", sa.Text()),
         sa.Column("prompt_version", sa.Text()),
         sa.Column("input_tokens", sa.Integer()),
@@ -335,9 +329,7 @@ def upgrade() -> None:
         sa.Column("denied_amount_cents", sa.BigInteger()),
         sa.Column("extracted_json", postgresql.JSONB()),
         sa.Column("confidence", sa.Numeric(3, 2)),
-        sa.Column(
-            "model_run_id", UUID, sa.ForeignKey("model_runs.id", ondelete="RESTRICT")
-        ),
+        sa.Column("model_run_id", UUID, sa.ForeignKey("model_runs.id", ondelete="RESTRICT")),
         _created_at(),
     )
 
@@ -358,9 +350,7 @@ def upgrade() -> None:
         sa.Column("probability_band", _enum("probability_band")),
         sa.Column("reasoning_text", sa.Text()),
         sa.Column("recommended_appeal_level", _enum("appeal_level")),
-        sa.Column(
-            "model_run_id", UUID, sa.ForeignKey("model_runs.id", ondelete="RESTRICT")
-        ),
+        sa.Column("model_run_id", UUID, sa.ForeignKey("model_runs.id", ondelete="RESTRICT")),
         _created_at(),
     )
 
@@ -383,15 +373,11 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("'draft'"),
         ),
-        sa.Column(
-            "model_run_id", UUID, sa.ForeignKey("model_runs.id", ondelete="RESTRICT")
-        ),
+        sa.Column("model_run_id", UUID, sa.ForeignKey("model_runs.id", ondelete="RESTRICT")),
         sa.Column("finalized_at", sa.TIMESTAMP(timezone=True)),
         sa.Column("downloaded_at", sa.TIMESTAMP(timezone=True)),
         _created_at(),
-        sa.UniqueConstraint(
-            "case_id", "version", name="uq_appeal_letters_case_version"
-        ),
+        sa.UniqueConstraint("case_id", "version", name="uq_appeal_letters_case_version"),
     )
 
     # --- outcomes ---
@@ -425,9 +411,7 @@ def upgrade() -> None:
         "audit_logs",
         _id(),
         sa.Column("user_id", UUID, sa.ForeignKey("users.id", ondelete="RESTRICT")),
-        sa.Column(
-            "practice_id", UUID, sa.ForeignKey("practices.id", ondelete="RESTRICT")
-        ),
+        sa.Column("practice_id", UUID, sa.ForeignKey("practices.id", ondelete="RESTRICT")),
         sa.Column("action", sa.Text()),
         sa.Column("resource_type", sa.Text()),
         sa.Column("resource_id", UUID),
@@ -441,12 +425,8 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
         ),
     )
-    op.execute(
-        "CREATE INDEX ix_audit_logs_practice_ts ON audit_logs (practice_id, timestamp DESC)"
-    )
-    op.execute(
-        "CREATE INDEX ix_audit_logs_user_ts ON audit_logs (user_id, timestamp DESC)"
-    )
+    op.execute("CREATE INDEX ix_audit_logs_practice_ts ON audit_logs (practice_id, timestamp DESC)")
+    op.execute("CREATE INDEX ix_audit_logs_user_ts ON audit_logs (user_id, timestamp DESC)")
 
     # updated_at triggers on the mutable tables
     for table in ("practices", "users", "cases"):
