@@ -1,9 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
-from app.core.auth import get_current_user, security, verify_access_token
+from app.core.auth import (
+    AUTH_COOKIE,
+    clear_auth_cookie,
+    get_current_user,
+    security,
+    set_auth_cookie,
+    verify_access_token,
+)
 from app.core.net import client_ip
 from app.core.rate_limit import ip_key, login_allowed, register_login_failure
 from app.db.session import get_db
@@ -69,10 +76,10 @@ async def _record_auth_error(session: AsyncSession, request: Request) -> None:
 
 
 async def _finalize_login(
-    session: AsyncSession, request: Request, tokens: dict, email: str
+    session: AsyncSession, request: Request, response: Response, tokens: dict, email: str
 ) -> LoginResponse:
     """Shared tail for a completed auth (direct or post-MFA): trust-but-verify the
-    token, link or deny the app account, audit, and return tokens."""
+    token, link or deny the app account, audit, and set the httpOnly session cookie."""
     ip = safe_ip(client_ip(request))
     user_agent = request.headers.get("user-agent")
     claims = await verify_access_token(tokens["AccessToken"])
@@ -104,17 +111,18 @@ async def _finalize_login(
         metadata={"email": email},
     )
     await session.commit()
-    return LoginResponse(
-        access_token=tokens["AccessToken"],
-        token_type=tokens.get("TokenType", "Bearer"),
-        expires_in=tokens.get("ExpiresIn", 3600),
-    )
+    # The access token goes in an httpOnly cookie, NOT the JSON body — so it's never
+    # readable by JavaScript (XSS-safe). The client just relies on the cookie.
+    expires_in = tokens.get("ExpiresIn", 3600)
+    set_auth_cookie(response, tokens["AccessToken"], max_age=expires_in)
+    return LoginResponse(token_type=tokens.get("TokenType", "Bearer"), expires_in=expires_in)
 
 
 @router.post("/login", response_model=LoginResponse)
 async def login(
     body: LoginRequest,
     request: Request,
+    response: Response,
     session: AsyncSession = Depends(get_db),
 ) -> LoginResponse:
     throttle_key = await _throttle(request)
@@ -135,13 +143,14 @@ async def login(
     # Password accepted but a TOTP challenge remains — return it (no tokens yet).
     if auth.challenge:
         return LoginResponse(mfa=MfaChallenge(challenge=auth.challenge, session=auth.session))
-    return await _finalize_login(session, request, auth.tokens, body.email)
+    return await _finalize_login(session, request, response, auth.tokens, body.email)
 
 
 @router.post("/mfa/verify", response_model=LoginResponse)
 async def mfa_verify(
     body: MfaVerifyRequest,
     request: Request,
+    response: Response,
     session: AsyncSession = Depends(get_db),
 ) -> LoginResponse:
     """Answer the SOFTWARE_TOKEN_MFA challenge (already-enrolled user)."""
@@ -161,7 +170,7 @@ async def mfa_verify(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Authentication service is unavailable",
         ) from exc
-    return await _finalize_login(session, request, tokens, body.email)
+    return await _finalize_login(session, request, response, tokens, body.email)
 
 
 @router.post("/mfa/setup/start", response_model=MfaSetupStartResponse)
@@ -183,6 +192,7 @@ async def mfa_setup_start(body: MfaSetupStartRequest, request: Request) -> MfaSe
 async def mfa_setup_complete(
     body: MfaSetupCompleteRequest,
     request: Request,
+    response: Response,
     session: AsyncSession = Depends(get_db),
 ) -> LoginResponse:
     """Verify the first TOTP code and finish enrollment (MFA_SETUP challenge)."""
@@ -200,23 +210,26 @@ async def mfa_setup_complete(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Authentication service is unavailable",
         ) from exc
-    return await _finalize_login(session, request, tokens, body.email)
+    return await _finalize_login(session, request, response, tokens, body.email)
 
 
 @router.post("/logout")
 async def logout(
     request: Request,
+    response: Response,
     current_user: User = Depends(get_current_user),
-    creds: HTTPAuthorizationCredentials = Depends(security),
+    creds: HTTPAuthorizationCredentials | None = Depends(security),
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    """Sign out server-side: best-effort Cognito global sign-out (revokes refresh
-    tokens so the session can't be renewed) plus an audit row. The client clears
-    its own token regardless of the Cognito result."""
-    try:
-        await run_in_threadpool(global_sign_out, creds.credentials)
-    except CognitoError:
-        pass  # never block the user's sign-out on a Cognito hiccup
+    """Sign out: clear the session cookie + best-effort Cognito global sign-out
+    (revokes refresh tokens so the session can't be renewed) + an audit row."""
+    token = request.cookies.get(AUTH_COOKIE) or (creds.credentials if creds else None)
+    clear_auth_cookie(response)
+    if token:
+        try:
+            await run_in_threadpool(global_sign_out, token)
+        except CognitoError:
+            pass  # never block the user's sign-out on a Cognito hiccup
     await log_audit(
         session,
         action="logout",

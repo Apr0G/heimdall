@@ -1,5 +1,5 @@
 import httpx
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from sqlalchemy import select
@@ -8,6 +8,34 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.db.session import get_db
 from app.models import User
+
+# Auth token lives in an httpOnly cookie (XSS-safe): JS can't read it, the browser
+# sends it automatically. Same-site (api.heimdallclaims.com <-> heimdallclaims.com)
+# so SameSite=Lax works and PHI never transits the frontend host.
+AUTH_COOKIE = "hd_session"
+
+
+def set_auth_cookie(response: Response, token: str, max_age: int) -> None:
+    response.set_cookie(
+        key=AUTH_COOKIE,
+        value=token,
+        max_age=max_age,
+        httponly=True,
+        secure=settings.app_env == "production",  # ALB serves HTTPS to the browser
+        samesite="lax",
+        path="/",
+    )
+
+
+def clear_auth_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=AUTH_COOKIE,
+        path="/",
+        httponly=True,
+        secure=settings.app_env == "production",
+        samesite="lax",
+    )
+
 
 _ISSUER = (
     f"https://cognito-idp.{settings.cognito_region}.amazonaws.com/"
@@ -92,12 +120,15 @@ async def verify_access_token(token: str) -> dict:
 
 
 async def get_current_user(
+    request: Request,
     creds: HTTPAuthorizationCredentials | None = Depends(security),
     session: AsyncSession = Depends(get_db),
 ) -> User:
-    if creds is None:
+    # Cookie first (browser sessions), then Authorization header (API clients).
+    token = request.cookies.get(AUTH_COOKIE) or (creds.credentials if creds else None)
+    if not token:
         raise _unauthorized("Missing bearer token")
-    claims = await verify_access_token(creds.credentials)
+    claims = await verify_access_token(token)
     user = await session.scalar(select(User).where(User.cognito_sub == claims["sub"]))
     if user is None:
         raise _unauthorized("User is not provisioned")

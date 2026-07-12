@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 
-import { api, TOKEN_KEY } from "@/lib/api";
+import { api } from "@/lib/api";
 
 export type User = {
   id: string;
@@ -49,13 +49,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const queryClient = useQueryClient();
 
-  // On mount, hydrate the user from a stored token (and validate it via /me).
-  // All state updates happen in promise callbacks — never synchronously in the
-  // effect body — to satisfy react-hooks/set-state-in-effect.
+  // On mount, if the presence flag says we're logged in, validate via /me (the
+  // httpOnly session cookie is sent automatically). No JS-readable token exists.
+  // State updates happen in promise callbacks, not synchronously — to satisfy
+  // react-hooks/set-state-in-effect.
   useEffect(() => {
     let active = true;
-    const token = window.localStorage.getItem(TOKEN_KEY);
-    const request: Promise<User | null> = token
+    const authed = document.cookie.split("; ").some((c) => c.startsWith(`${AUTH_COOKIE}=1`));
+    const request: Promise<User | null> = authed
       ? api.get<User>("/api/auth/me").then((res) => res.data)
       : Promise.resolve(null);
     request
@@ -63,7 +64,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (active) setUser(data);
       })
       .catch(() => {
-        window.localStorage.removeItem(TOKEN_KEY);
         clearAuthedCookie();
         if (active) setUser(null);
       })
@@ -75,19 +75,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Shared tail once tokens are obtained (direct login or after MFA): store the
-  // token, wipe any previous session's cache, load the user, and go to the app.
-  const completeAuth = useCallback(
-    async (token: string) => {
-      window.localStorage.setItem(TOKEN_KEY, token);
-      setAuthedCookie();
-      queryClient.clear();
-      const me = await api.get<User>("/api/auth/me");
-      setUser(me.data);
-      router.replace("/dashboard");
-    },
-    [router, queryClient],
-  );
+  // Shared tail once a session is established (direct login or after MFA): the
+  // server has already set the httpOnly cookie, so just set the presence flag,
+  // wipe any previous session's cache, load the user, and go to the app.
+  const completeAuth = useCallback(async () => {
+    setAuthedCookie();
+    queryClient.clear();
+    const me = await api.get<User>("/api/auth/me");
+    setUser(me.data);
+    router.replace("/dashboard");
+  }, [router, queryClient]);
 
   const login = useCallback(
     async (email: string, password: string): Promise<LoginResult> => {
@@ -95,7 +92,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (res.data.mfa) {
         return { status: "mfa", challenge: res.data.mfa.challenge, session: res.data.mfa.session };
       }
-      await completeAuth(res.data.access_token);
+      await completeAuth();
       return { status: "ok" };
     },
     [completeAuth],
@@ -103,8 +100,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const verifyMfa = useCallback(
     async (email: string, session: string, code: string) => {
-      const res = await api.post("/api/auth/mfa/verify", { email, session, code });
-      await completeAuth(res.data.access_token);
+      await api.post("/api/auth/mfa/verify", { email, session, code });
+      await completeAuth();
     },
     [completeAuth],
   );
@@ -116,21 +113,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const completeMfaSetup = useCallback(
     async (email: string, session: string, code: string) => {
-      const res = await api.post("/api/auth/mfa/setup/complete", { email, session, code });
-      await completeAuth(res.data.access_token);
+      await api.post("/api/auth/mfa/setup/complete", { email, session, code });
+      await completeAuth();
     },
     [completeAuth],
   );
 
   const logout = useCallback(async () => {
-    // Best-effort server sign-out (Cognito global sign-out + audit); clear locally
-    // regardless so the user is always signed out client-side.
+    // Server clears the httpOnly cookie + Cognito global sign-out; best-effort so we
+    // always sign out client-side even if it fails.
     try {
       await api.post("/api/auth/logout");
     } catch {
       // ignore — proceed with local sign-out
     }
-    window.localStorage.removeItem(TOKEN_KEY);
     clearAuthedCookie();
     setUser(null);
     // Drop all cached queries so the next user never sees this session's PHI.
