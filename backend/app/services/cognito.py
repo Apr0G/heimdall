@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 import boto3
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError, ParamValidationError
 
 from app.core.config import settings
 
@@ -34,11 +34,17 @@ class AuthResult:
     session: str | None = None  # opaque Cognito session carried to the next step
 
 
-def _client_error(exc: ClientError) -> Exception:
-    code = exc.response.get("Error", {}).get("Code", "")
-    if code in _BAD_CREDENTIAL_CODES:
-        return InvalidCredentialsError(code)
-    return CognitoError(code)
+def _client_error(exc: Exception) -> Exception:
+    # Malformed params (e.g. a too-short or stale session) — surface as a bad
+    # credential so the client is told to retry/re-auth, never as a 500.
+    if isinstance(exc, ParamValidationError):
+        return InvalidCredentialsError("bad_request")
+    if isinstance(exc, ClientError):
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in _BAD_CREDENTIAL_CODES:
+            return InvalidCredentialsError(code)
+        return CognitoError(code)
+    return CognitoError(type(exc).__name__)  # other BotoCoreError (e.g. connection)
 
 
 _client = None
@@ -61,7 +67,7 @@ def initiate_auth(email: str, password: str) -> AuthResult:
             AuthFlow="USER_PASSWORD_AUTH",
             AuthParameters={"USERNAME": email, "PASSWORD": password},
         )
-    except ClientError as exc:
+    except (ClientError, BotoCoreError) as exc:
         raise _client_error(exc) from exc
 
     result = resp.get("AuthenticationResult")
@@ -83,7 +89,7 @@ def respond_software_token_mfa(email: str, session: str, code: str) -> dict:
             Session=session,
             ChallengeResponses={"USERNAME": email, "SOFTWARE_TOKEN_MFA_CODE": code},
         )
-    except ClientError as exc:
+    except (ClientError, BotoCoreError) as exc:
         raise _client_error(exc) from exc
     result = resp.get("AuthenticationResult")
     if result is None:
@@ -96,7 +102,7 @@ def start_mfa_setup(session: str) -> dict:
     authenticator QR and a fresh session to carry into verification."""
     try:
         resp = _get_client().associate_software_token(Session=session)
-    except ClientError as exc:
+    except (ClientError, BotoCoreError) as exc:
         raise _client_error(exc) from exc
     return {"secret": resp["SecretCode"], "session": resp["Session"]}
 
@@ -113,7 +119,7 @@ def complete_mfa_setup(email: str, session: str, code: str) -> dict:
             Session=verified["Session"],
             ChallengeResponses={"USERNAME": email},
         )
-    except ClientError as exc:
+    except (ClientError, BotoCoreError) as exc:
         raise _client_error(exc) from exc
     result = resp.get("AuthenticationResult")
     if result is None:
@@ -130,5 +136,8 @@ def global_sign_out(access_token: str) -> None:
     """
     try:
         _get_client().global_sign_out(AccessToken=access_token)
-    except ClientError as exc:
-        raise CognitoError(exc.response.get("Error", {}).get("Code", "")) from exc
+    except (ClientError, BotoCoreError) as exc:
+        # Always CognitoError so the caller (logout) swallows it; guard .response
+        # since a BotoCoreError has none.
+        code = exc.response.get("Error", {}).get("Code", "") if isinstance(exc, ClientError) else ""
+        raise CognitoError(code) from exc
