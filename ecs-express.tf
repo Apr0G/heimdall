@@ -123,10 +123,13 @@ resource "aws_iam_role_policy" "gha_deploy" {
         Resource = "arn:aws:ecs:us-east-1:${data.aws_caller_identity.current.account_id}:service/default/heimdall-api"
       },
       {
-        # Run one-off DB migration tasks (alembic upgrade head) inside the VPC.
-        Effect   = "Allow"
-        Action   = "ecs:RunTask"
-        Resource = "arn:aws:ecs:us-east-1:${data.aws_caller_identity.current.account_id}:task-definition/default-heimdall-api:*"
+        # Run one-off tasks (migrations, export, wipe, verify) inside the VPC.
+        Effect = "Allow"
+        Action = "ecs:RunTask"
+        Resource = [
+          "arn:aws:ecs:us-east-1:${data.aws_caller_identity.current.account_id}:task-definition/default-heimdall-api:*",
+          "arn:aws:ecs:us-east-1:${data.aws_caller_identity.current.account_id}:task-definition/heimdall-migrate:*",
+        ]
       },
       {
         Effect = "Allow"
@@ -140,10 +143,10 @@ resource "aws_iam_role_policy" "gha_deploy" {
         Resource = "*"
       },
       {
-        # PassRole is needed so run-task can hand the migration task its roles.
+        # PassRole is needed so run-task can hand each task its roles.
         Effect   = "Allow"
         Action   = "iam:PassRole"
-        Resource = [aws_iam_role.ecs_execution.arn, aws_iam_role.app.arn]
+        Resource = [aws_iam_role.ecs_execution.arn, aws_iam_role.app.arn, aws_iam_role.migrate_exec.arn]
       },
     ]
   })
@@ -173,9 +176,14 @@ resource "aws_iam_role_policy" "ecs_execution_secrets" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect   = "Allow"
-      Action   = ["secretsmanager:GetSecretValue", "kms:Decrypt"]
-      Resource = [aws_secretsmanager_secret.database_url.arn, aws_kms_key.heimdall.arn]
+      Effect = "Allow"
+      Action = ["secretsmanager:GetSecretValue", "kms:Decrypt"]
+      # When the least-privilege role is active the app may read ONLY its limited
+      # URL — never the admin URL (which migrations use).
+      Resource = [
+        var.app_db_role_active ? aws_secretsmanager_secret.app_database_url.arn : aws_secretsmanager_secret.database_url.arn,
+        aws_kms_key.heimdall.arn,
+      ]
     }]
   })
 }
@@ -238,7 +246,8 @@ resource "aws_cloudformation_stack" "express" {
               { Name = "DB_SSL_CA_BUNDLE", Value = "/app/rds-ca.pem" },
             ]
             Secrets = [
-              { Name = "DATABASE_URL", ValueFrom = aws_secretsmanager_secret.database_url.arn },
+              # heimdall_app (limited) once cut over; heimdall_admin until then.
+              { Name = "DATABASE_URL", ValueFrom = var.app_db_role_active ? aws_secretsmanager_secret.app_database_url.arn : aws_secretsmanager_secret.database_url.arn },
             ]
           }
         }
