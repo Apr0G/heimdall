@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 # Medicare gets 120 days to appeal; commercial/unknown/Medicaid default to 60.
 _MEDICARE_PLANS = {"medicare", "medicare_advantage"}
+_MEDICAID_PLANS = {"medicaid", "medicaid_mco"}
 
 
 def _appeal_deadline(denial_date: date | None, plan_type: str) -> date | None:
@@ -23,6 +24,26 @@ def _appeal_deadline(denial_date: date | None, plan_type: str) -> date | None:
         return None
     days = 120 if plan_type in _MEDICARE_PLANS else 60
     return denial_date + timedelta(days=days)
+
+
+def deadline_note(plan_type: str | None) -> str:
+    """Human-facing caveat about the ESTIMATED appeal deadline. The deadline is
+    computed conservatively from the denial date; the payer's actual filing
+    deadline governs and is the practice's responsibility to confirm."""
+    base = (
+        "This deadline is an estimate from the denial date — confirm the exact "
+        "filing deadline in the payer's policy before relying on it."
+    )
+    if plan_type in _MEDICAID_PLANS:
+        return (
+            "Medicaid appeal deadlines are state-specific and are often shorter than "
+            "the 60-day default shown here. " + base
+        )
+    if plan_type in ("unknown", "other") or plan_type is None:
+        return (
+            "The payer type wasn't confirmed, so the conservative 60-day default is used. " + base
+        )
+    return base
 
 
 async def _read_extracted_text(session: AsyncSession, case: Case) -> dict[str, str]:

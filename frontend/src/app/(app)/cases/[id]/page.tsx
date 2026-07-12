@@ -317,6 +317,14 @@ function HeaderCard({ c, now }: { c: CaseDetail; now: number }) {
           </span>
         </Field>
       </div>
+      {c.deadline_note && c.appeal_deadline && (
+        <p className="mt-3 flex items-start gap-1.5 border-t border-border pt-3 text-[12.5px] text-muted-foreground">
+          <span aria-hidden style={{ color: "var(--warn)" }}>
+            ⚠
+          </span>
+          <span>{c.deadline_note}</span>
+        </p>
+      )}
     </div>
   );
 }
@@ -582,6 +590,14 @@ function LetterCard({ c, onChanged }: { c: CaseDetail; onChanged: () => void }) 
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
+        <p
+          className="rounded-md bg-muted p-2.5 text-xs leading-relaxed text-muted-foreground"
+          style={{ borderLeft: "2px solid var(--warn)" }}
+        >
+          AI-drafted. Review the whole letter — codes, dates, amounts, and every policy
+          citation — and edit as needed before submitting. The practice is responsible for
+          the final letter, its accuracy, and meeting the filing deadline.
+        </p>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" size="sm" onClick={copy}>
             {copied ? "Copied!" : "Copy to clipboard"}

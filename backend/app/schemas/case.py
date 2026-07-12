@@ -149,6 +149,8 @@ class CaseDetailResponse(BaseModel):
     billed_amount_cents: int | None
     denied_amount_cents: int | None
     currency: str
+    # Caveat that the appeal_deadline is an estimate (stronger for Medicaid/unknown).
+    deadline_note: str | None = None
 
     documents: list[DocumentDetail]
     extraction: ExtractionDetail | None

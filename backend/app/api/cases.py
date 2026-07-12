@@ -54,6 +54,7 @@ from app.schemas.case import (
 from app.services import pdf_gen
 from app.services.analysis import SUPPLEMENTAL_DOC_TYPES
 from app.services.audit import log_audit, log_read, safe_ip
+from app.services.extraction import deadline_note
 from app.services.pipeline import run_full_pipeline, run_reanalysis
 from app.services.s3 import (
     REQUIRED_DOC_TYPES,
@@ -510,6 +511,7 @@ async def get_case(
         billed_amount_cents=case.billed_amount_cents,
         denied_amount_cents=case.denied_amount_cents,
         currency=case.currency,
+        deadline_note=deadline_note(case.plan_type) if case.appeal_deadline else None,
         documents=[
             DocumentDetail(
                 id=d.id,
