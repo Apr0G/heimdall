@@ -102,9 +102,19 @@ resource "aws_db_instance" "heimdall" {
 }
 
 # --- Cognito: user login for your app ---
+variable "cognito_mfa" {
+  description = "Cognito MFA mode. Keep OPTIONAL until the login+enrollment flow is verified, then set ON to require TOTP for everyone (users enroll on next login)."
+  type        = string
+  default     = "OPTIONAL"
+  validation {
+    condition     = contains(["ON", "OPTIONAL", "OFF"], var.cognito_mfa)
+    error_message = "cognito_mfa must be ON, OPTIONAL, or OFF."
+  }
+}
+
 resource "aws_cognito_user_pool" "heimdall" {
   name                     = "heimdall-users"
-  mfa_configuration        = "OPTIONAL"
+  mfa_configuration        = var.cognito_mfa
   auto_verified_attributes = ["email"]
 
   password_policy {
