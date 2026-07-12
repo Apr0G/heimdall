@@ -18,6 +18,13 @@ RUN pip install .
 # AWS RDS CA bundle for optional verify-full DB TLS (enable via DB_SSL_CA_BUNDLE).
 ADD https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /app/rds-ca.pem
 
+# Run as a non-root user (least privilege). The app writes nothing to disk (S3 +
+# DB only) and listens on 8080 (>1024), so no root is needed. The one-off export
+# NER task installs presidio + a spaCy model at RUNTIME with PIP_USER=1, so those
+# land in this user's site (~/.local) rather than the root-owned system path.
+RUN useradd --create-home --uid 10001 appuser
+USER appuser
+
 EXPOSE 8080
 # --no-server-header: don't advertise the uvicorn version (matches the header
 # posture in app/core/security_headers.py).

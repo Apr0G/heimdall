@@ -68,7 +68,8 @@ jobs:
             "command":$CMD,
             "environment":[
               {"name":"INCLUDE_DOC_TEXT","value":"$INC"},
-              {"name":"USE_NER","value":"$USE_NER"}
+              {"name":"USE_NER","value":"$USE_NER"},
+              {"name":"PIP_USER","value":"1"}
             ]}]}
           JSON
           )
