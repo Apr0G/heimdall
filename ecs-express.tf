@@ -232,6 +232,10 @@ resource "aws_cloudformation_stack" "express" {
               { Name = "LEADS_TOPIC_ARN", Value = aws_sns_topic.leads.arn },
               { Name = "REDIS_URL", Value = "redis://${aws_elasticache_cluster.redis.cache_nodes[0].address}:6379" },
               { Name = "LOG_LEVEL", Value = "INFO" },
+              # verify-full DB TLS: verify the RDS server cert + hostname against the
+              # global CA bundle baked into the image. Verified to connect via a
+              # one-off in-VPC task (2026-07-11) before enabling. §164.312(e)(1).
+              { Name = "DB_SSL_CA_BUNDLE", Value = "/app/rds-ca.pem" },
             ]
             Secrets = [
               { Name = "DATABASE_URL", ValueFrom = aws_secretsmanager_secret.database_url.arn },
