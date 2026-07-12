@@ -46,6 +46,45 @@ def _latest(rows, key="created_at"):
     return max(rows, key=lambda r: getattr(r, key)) if rows else None
 
 
+def _reidentification_risk(records: list[dict]) -> dict:
+    """k-anonymity-style re-identification signal over the quasi-identifiers a
+    statistician would weigh for an Expert Determination (§164.514(b)(1)). Reports
+    the smallest equivalence-class size (k) and how many records are UNIQUE on the
+    quasi-identifier combination — the highest re-id-risk rows. A tiny corpus will
+    show mostly-unique (k=1); that's accurate signal that it isn't yet safe to treat
+    as de-identified by statistical standards."""
+
+    def qi(rec: dict) -> tuple:
+        inp = rec.get("input", {})
+        ana = rec.get("analysis") or {}
+        return (
+            inp.get("payer_name"),
+            inp.get("plan_type"),
+            inp.get("denial_date_year"),
+            inp.get("date_of_service_year"),
+            ana.get("denial_category"),
+            inp.get("denied_amount_cents"),
+        )
+
+    groups = Counter(qi(r) for r in records)
+    sizes = list(groups.values())
+    unique = sum(1 for s in sizes if s == 1)
+    return {
+        "quasi_identifiers": [
+            "payer_name",
+            "plan_type",
+            "denial_date_year",
+            "date_of_service_year",
+            "denial_category",
+            "denied_amount_cents",
+        ],
+        "distinct_combinations": len(groups),
+        "k_anonymity_min": min(sizes) if sizes else 0,
+        "records_unique_on_qi": unique,
+        "pct_unique": round(100 * unique / len(records), 1) if records else 0.0,
+    }
+
+
 async def main() -> None:
     include_text = os.environ.get("INCLUDE_DOC_TEXT") == "1"
     use_ner = os.environ.get("USE_NER") == "1"
@@ -181,6 +220,8 @@ async def main() -> None:
             "candidate_name_count": len(names),
             "candidate_names": sorted(names)[:500],  # review these for missed names
         },
+        # Statistical re-id signal for an Expert Determination (§164.514(b)(1)).
+        "reidentification_risk": _reidentification_risk(records),
     }
 
     jsonl = "\n".join(json.dumps(r, ensure_ascii=False) for r in records)
