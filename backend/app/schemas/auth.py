@@ -9,12 +9,42 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class MfaChallenge(BaseModel):
+    # "SOFTWARE_TOKEN_MFA" (enter a code) | "MFA_SETUP" (enroll a TOTP device first).
+    challenge: str
+    session: str  # opaque Cognito session to carry into the /mfa/* call
+
+
 class LoginResponse(BaseModel):
-    # id_token is intentionally omitted — the frontend never uses it, and shipping
-    # it only widens what an XSS could steal (minimum-necessary).
-    access_token: str
+    # Exactly one of these is populated: tokens when login is complete, or `mfa`
+    # when a TOTP challenge must be answered next. id_token is intentionally omitted
+    # (the frontend never uses it — minimum-necessary).
+    access_token: str | None = None
     token_type: str = "Bearer"
-    expires_in: int
+    expires_in: int | None = None
+    mfa: MfaChallenge | None = None
+
+
+class MfaVerifyRequest(BaseModel):
+    email: str
+    session: str
+    code: str
+
+
+class MfaSetupStartRequest(BaseModel):
+    email: str
+    session: str
+
+
+class MfaSetupStartResponse(BaseModel):
+    secret: str  # base32 TOTP secret; the client renders the enrollment QR from it
+    session: str
+
+
+class MfaSetupCompleteRequest(BaseModel):
+    email: str
+    session: str
+    code: str
 
 
 class UserOut(BaseModel):
