@@ -14,10 +14,16 @@ export type User = {
   practice_id: string;
 };
 
+// login resolves to "ok" (session started) or an MFA challenge to answer next.
+export type LoginResult = { status: "ok" } | { status: "mfa"; challenge: string; session: string };
+
 type AuthContextValue = {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<LoginResult>;
+  verifyMfa: (email: string, session: string, code: string) => Promise<void>;
+  startMfaSetup: (email: string, session: string) => Promise<{ secret: string; session: string }>;
+  completeMfaSetup: (email: string, session: string, code: string) => Promise<void>;
   logout: () => void;
 };
 
@@ -69,18 +75,51 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const login = useCallback(
-    async (email: string, password: string) => {
-      const res = await api.post("/api/auth/login", { email, password });
-      window.localStorage.setItem(TOKEN_KEY, res.data.access_token);
+  // Shared tail once tokens are obtained (direct login or after MFA): store the
+  // token, wipe any previous session's cache, load the user, and go to the app.
+  const completeAuth = useCallback(
+    async (token: string) => {
+      window.localStorage.setItem(TOKEN_KEY, token);
       setAuthedCookie();
-      // Wipe any cached data from a previous session before loading this user's.
       queryClient.clear();
       const me = await api.get<User>("/api/auth/me");
       setUser(me.data);
       router.replace("/dashboard");
     },
     [router, queryClient],
+  );
+
+  const login = useCallback(
+    async (email: string, password: string): Promise<LoginResult> => {
+      const res = await api.post("/api/auth/login", { email, password });
+      if (res.data.mfa) {
+        return { status: "mfa", challenge: res.data.mfa.challenge, session: res.data.mfa.session };
+      }
+      await completeAuth(res.data.access_token);
+      return { status: "ok" };
+    },
+    [completeAuth],
+  );
+
+  const verifyMfa = useCallback(
+    async (email: string, session: string, code: string) => {
+      const res = await api.post("/api/auth/mfa/verify", { email, session, code });
+      await completeAuth(res.data.access_token);
+    },
+    [completeAuth],
+  );
+
+  const startMfaSetup = useCallback(async (email: string, session: string) => {
+    const res = await api.post("/api/auth/mfa/setup/start", { email, session });
+    return res.data as { secret: string; session: string };
+  }, []);
+
+  const completeMfaSetup = useCallback(
+    async (email: string, session: string, code: string) => {
+      const res = await api.post("/api/auth/mfa/setup/complete", { email, session, code });
+      await completeAuth(res.data.access_token);
+    },
+    [completeAuth],
   );
 
   const logout = useCallback(async () => {
@@ -100,7 +139,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [router, queryClient]);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider
+      value={{ user, loading, login, verifyMfa, startMfaSetup, completeMfaSetup, logout }}
+    >
       {children}
     </AuthContext.Provider>
   );
