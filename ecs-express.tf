@@ -129,6 +129,7 @@ resource "aws_iam_role_policy" "gha_deploy" {
         Resource = [
           "arn:aws:ecs:us-east-1:${data.aws_caller_identity.current.account_id}:task-definition/default-heimdall-api:*",
           "arn:aws:ecs:us-east-1:${data.aws_caller_identity.current.account_id}:task-definition/heimdall-migrate:*",
+          "arn:aws:ecs:us-east-1:${data.aws_caller_identity.current.account_id}:task-definition/heimdall-dispose:*",
         ]
       },
       {
@@ -144,9 +145,15 @@ resource "aws_iam_role_policy" "gha_deploy" {
       },
       {
         # PassRole is needed so run-task can hand each task its roles.
-        Effect   = "Allow"
-        Action   = "iam:PassRole"
-        Resource = [aws_iam_role.ecs_execution.arn, aws_iam_role.app.arn, aws_iam_role.migrate_exec.arn]
+        Effect = "Allow"
+        Action = "iam:PassRole"
+        Resource = [
+          aws_iam_role.ecs_execution.arn,
+          aws_iam_role.app.arn,
+          aws_iam_role.migrate_exec.arn,
+          aws_iam_role.dispose_exec.arn,
+          aws_iam_role.dispose_task.arn,
+        ]
       },
     ]
   })
