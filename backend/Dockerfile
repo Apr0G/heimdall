@@ -16,7 +16,11 @@ COPY alembic.ini ./
 RUN pip install .
 
 # AWS RDS CA bundle for optional verify-full DB TLS (enable via DB_SSL_CA_BUNDLE).
+# `ADD` fetches remote files as mode 0600 owned by root; the non-root appuser (set
+# below) loads this at import time in db/session.py, so make the (public) CA bundle
+# world-readable — otherwise startup dies with PermissionError and ECS rolls back.
 ADD https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /app/rds-ca.pem
+RUN chmod 0644 /app/rds-ca.pem
 
 # Run as a non-root user (least privilege). The app writes nothing to disk (S3 +
 # DB only) and listens on 8080 (>1024), so no root is needed. The one-off export
