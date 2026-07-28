@@ -1,9 +1,17 @@
 # Pre-commit hooks for Heimdall.
+#   Secrets:           gitleaks, unscoped — a leaked credential in ANY file type
+#                      (tf, md, json, env) is the one mistake that can't be undone
+#                      by a follow-up commit, so this runs before the linters.
 #   Backend (Python): ruff (lint, autofix) + black (format), scoped to backend/.
 #   Frontend (TS):     eslint via the Next.js project's own flat config.
 # Enable once with `pre-commit install`; run on demand with
 # `pre-commit run --all-files`. Revs are pinned via `pre-commit autoupdate`.
 repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.17
     hooks:

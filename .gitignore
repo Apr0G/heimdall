@@ -58,5 +58,6 @@ yarn-error.log*
 *.swp
 Thumbs.db
 
-# ===== Markdown docs — kept on disk, never pushed to GitHub =====
-*.md
+# Markdown docs (compliance policies, security assessments, runbooks) are tracked
+# deliberately — HIPAA 164.316(b)(2)(i) requires six-year retention, and an
+# untracked doc has no history and no backup. Secrets stay out via the rules above.
