@@ -11,7 +11,7 @@ from fastapi import (
     Response,
     status,
 )
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
@@ -93,6 +93,17 @@ def _is_stalled(case: Case) -> bool:
         case.status == "processing"
         and case.updated_at is not None
         and datetime.now(UTC) - case.updated_at > STALE_PROCESSING
+    )
+
+
+def stalled_sql():
+    """SQL twin of `_is_stalled`, so staleness can be evaluated by the database
+    inside the claim statement instead of in Python beforehand. Uses `now()` from
+    the DB, which is also the clock that writes `updated_at`."""
+    return and_(
+        Case.status == "processing",
+        Case.updated_at.is_not(None),
+        Case.updated_at < func.now() - STALE_PROCESSING,
     )
 
 
@@ -451,6 +462,34 @@ async def _get_owned_case(session: AsyncSession, case_id: UUID, user: User) -> C
     return case
 
 
+async def claim_for_pipeline(
+    session: AsyncSession, case_id: UUID, user: User, *, when, conflict: str
+) -> UUID:
+    """Atomically claim a case for a background pipeline run; returns the run token.
+
+    The eligibility check and the claim are ONE conditional UPDATE. Read-then-write
+    let two concurrent callers both observe an eligible status and both stamp a
+    token, so two pipelines ran on the same case — duplicate Bedrock spend, and
+    racing writes that surfaced as a unique violation flipping the case to `error`.
+    Here the second caller blocks on the row lock, re-evaluates its WHERE against
+    the committed row, matches nothing, and gets a 409.
+
+    Runs inside the caller's transaction, so if the request fails afterwards the
+    claim rolls back with it and the case is not stranded in `processing`.
+    """
+    run_id = uuid4()
+    claimed = await session.scalar(
+        update(Case)
+        .where(Case.id == case_id, Case.practice_id == user.practice_id, when)
+        .values(status="processing", error_message=None, pipeline_run_id=run_id)
+        .returning(Case.id)
+        .execution_options(synchronize_session=False)
+    )
+    if claimed is None:
+        raise HTTPException(status_code=409, detail=conflict)
+    return run_id
+
+
 async def _latest(session: AsyncSession, model, case_id: UUID, order):
     return await session.scalar(
         select(model).where(model.case_id == case_id).order_by(order).limit(1)
@@ -669,28 +708,33 @@ async def retry_case(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> CaseStatusResponse:
-    case = await _get_owned_case(session, case_id, current_user)
-    if case.status != "error" and not _is_stalled(case):
-        raise HTTPException(status_code=409, detail="Only a failed or stalled case can be retried")
-    # Stamp a fresh claim token: any still-running (stalled) pipeline aborts when it
-    # sees the token changed, so only this retry proceeds — no duplicate pipeline.
-    run_id = uuid4()
-    case.status = "processing"
-    case.error_message = None
-    case.pipeline_run_id = run_id
+    # 404 (not 409) for a case outside the caller's practice — see _get_owned_case.
+    await _get_owned_case(session, case_id, current_user)
+    # Claim atomically: the eligibility test lives in the UPDATE's WHERE, so two
+    # concurrent retries cannot both pass it. The fresh token also makes any
+    # still-running stalled pipeline abort at its next ownership check.
+    run_id = await claim_for_pipeline(
+        session,
+        case_id,
+        current_user,
+        when=or_(Case.status == "error", stalled_sql()),
+        conflict="Only a failed or stalled case can be retried",
+    )
     await log_audit(
         session,
         action="case_retry",
         resource_type="case",
-        resource_id=case.id,
+        resource_id=case_id,
         user_id=current_user.id,
         practice_id=current_user.practice_id,
         ip=safe_ip(client_ip(request)),
         user_agent=request.headers.get("user-agent"),
     )
     await session.commit()
-    background_tasks.add_task(run_full_pipeline, case.id, run_id)
-    return CaseStatusResponse(id=case.id, status=case.status)
+    background_tasks.add_task(run_full_pipeline, case_id, run_id)
+    # The claim wrote status via Core UPDATE (synchronize_session=False), so the
+    # ORM copy is stale — report the value the claim just committed.
+    return CaseStatusResponse(id=case_id, status="processing")
 
 
 @router.get("/{case_id}/letter.pdf")
@@ -782,6 +826,18 @@ async def reanalyze_case(
                 status_code=413, detail=f"{doc.doc_type} file is too large (25 MB max)."
             )
 
+    # Claim BEFORE moving any object or inserting any Document: two concurrent
+    # reanalyze calls would otherwise both pass the `ready` check above and both
+    # attach their uploads to the same case. Validation above is read-only, so
+    # nothing is left behind when the loser 409s here.
+    run_id = await claim_for_pipeline(
+        session,
+        case_id,
+        current_user,
+        when=Case.status == "ready",
+        conflict="Only a ready case can be reanalyzed",
+    )
+
     ip = safe_ip(client_ip(request))
     user_agent = request.headers.get("user-agent")
     for doc in body.documents:
@@ -811,9 +867,6 @@ async def reanalyze_case(
             metadata={"doc_type": doc.doc_type, "reanalyze": True},
         )
 
-    run_id = uuid4()
-    case.status = "processing"
-    case.pipeline_run_id = run_id
     await log_audit(
         session,
         action="case_reanalyze",
@@ -827,5 +880,6 @@ async def reanalyze_case(
     )
     await session.commit()
 
-    background_tasks.add_task(run_reanalysis, case.id, run_id)
-    return CaseStatusResponse(id=case.id, status=case.status)
+    background_tasks.add_task(run_reanalysis, case_id, run_id)
+    # ORM copy is stale after the Core claim UPDATE — report the committed value.
+    return CaseStatusResponse(id=case_id, status="processing")

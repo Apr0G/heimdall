@@ -3,7 +3,7 @@ import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
@@ -25,7 +25,14 @@ async def _run_phase(case_id: UUID, run_id: UUID, phase, **kwargs) -> bool:
 
     Returns False (and does nothing) if a newer run has claimed the case — the
     caller stops the sequence. This is the anti-duplicate guard: a stall-detection
-    retry stamps a new pipeline_run_id, so the older runner aborts here."""
+    retry stamps a new pipeline_run_id, so the older runner aborts here.
+
+    Ownership is checked twice, and the second check is the one that matters. A
+    phase runs for minutes (Textract + Bedrock), and a retry can land in that
+    window; committing then would write this run's stale results over the newer
+    run's. The re-check takes the case row FOR UPDATE, so re-reading the token and
+    committing are one critical section — the lock is held for that instant only,
+    never across the phase itself."""
     async with AsyncSessionLocal() as session:
         case = await session.get(Case, case_id)
         if case is None:
@@ -37,6 +44,16 @@ async def _run_phase(case_id: UUID, run_id: UUID, phase, **kwargs) -> bool:
             )
             return False
         await phase(session, case, **kwargs)
+        current = await session.scalar(
+            select(Case.pipeline_run_id).where(Case.id == case_id).with_for_update()
+        )
+        if current != run_id:
+            await session.rollback()
+            logger.info(
+                "pipeline superseded mid-phase, discarding this run's results",
+                extra={"context": {"case_id": str(case_id)}},
+            )
+            return False
         await session.commit()
         return True
 
@@ -145,17 +162,21 @@ async def _extract_documents(
 
 
 async def _mark_error(case_id: UUID, run_id: UUID, exc: Exception) -> None:
-    # Own session: the failed phase's session already rolled back on exit. Only
-    # mark error if this run still owns the case — a superseding run owns the state.
+    # Own session: the failed phase's session already rolled back on exit. The
+    # ownership test is the UPDATE's WHERE rather than a read-then-write, so a
+    # retry landing in between cannot have its fresh `processing` overwritten with
+    # this dead run's `error`.
+    # Exception type + AWS error code only (both safe enums like "NoSuchKey")
+    # — never the raw message, which could echo a key or path.
+    detail = type(exc).__name__
+    response = getattr(exc, "response", None)
+    code = response.get("Error", {}).get("Code") if isinstance(response, dict) else None
+    message = f"Processing failed ({detail}{f': {code}' if code else ''})."
     async with AsyncSessionLocal() as session:
-        case = await session.get(Case, case_id)
-        if case is not None and case.pipeline_run_id == run_id:
-            case.status = "error"
-            # Exception type + AWS error code only (both safe enums like "NoSuchKey")
-            # — never the raw message, which could echo a key or path.
-            detail = type(exc).__name__
-            response = getattr(exc, "response", None)
-            code = response.get("Error", {}).get("Code") if isinstance(response, dict) else None
-            case.error_message = f"Processing failed ({detail}{f': {code}' if code else ''})."
-            await session.commit()
+        await session.execute(
+            update(Case)
+            .where(Case.id == case_id, Case.pipeline_run_id == run_id)
+            .values(status="error", error_message=message)
+        )
+        await session.commit()
     logger.exception("pipeline failed", extra={"context": {"case_id": str(case_id)}})
