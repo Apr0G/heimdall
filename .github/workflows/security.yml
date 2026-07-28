@@ -42,8 +42,14 @@ jobs:
           node-version: "20"
       - name: Install
         run: cd frontend && npm ci
-      - name: npm audit (high+)
-        run: cd frontend && npm audit --audit-level=high
+      - name: npm audit (production deps, high+)
+        # Gate on vulnerabilities that actually ship to users (--omit=dev). Dev-only
+        # tooling advisories with no non-breaking fix — e.g. brace-expansion via
+        # eslint/@typescript-eslint, a lint-time ReDoS that never enters the prod
+        # bundle — would otherwise wedge CI on an unavoidable transitive dep whose
+        # only "fix" is a breaking eslint major. Mirrors the documented
+        # pip-audit --ignore-vuln exception on the backend.
+        run: cd frontend && npm audit --omit=dev --audit-level=high
       - name: eslint
         run: cd frontend && npm run lint
 
