@@ -96,7 +96,7 @@ def _is_stalled(case: Case) -> bool:
     )
 
 
-def stalled_sql():
+def _stalled_sql():
     """SQL twin of `_is_stalled`, so staleness can be evaluated by the database
     inside the claim statement instead of in Python beforehand. Uses `now()` from
     the DB, which is also the clock that writes `updated_at`."""
@@ -462,7 +462,7 @@ async def _get_owned_case(session: AsyncSession, case_id: UUID, user: User) -> C
     return case
 
 
-async def claim_for_pipeline(
+async def _claim_for_pipeline(
     session: AsyncSession, case_id: UUID, user: User, *, when, conflict: str
 ) -> UUID:
     """Atomically claim a case for a background pipeline run; returns the run token.
@@ -713,11 +713,11 @@ async def retry_case(
     # Claim atomically: the eligibility test lives in the UPDATE's WHERE, so two
     # concurrent retries cannot both pass it. The fresh token also makes any
     # still-running stalled pipeline abort at its next ownership check.
-    run_id = await claim_for_pipeline(
+    run_id = await _claim_for_pipeline(
         session,
         case_id,
         current_user,
-        when=or_(Case.status == "error", stalled_sql()),
+        when=or_(Case.status == "error", _stalled_sql()),
         conflict="Only a failed or stalled case can be retried",
     )
     await log_audit(
@@ -830,7 +830,7 @@ async def reanalyze_case(
     # reanalyze calls would otherwise both pass the `ready` check above and both
     # attach their uploads to the same case. Validation above is read-only, so
     # nothing is left behind when the loser 409s here.
-    run_id = await claim_for_pipeline(
+    run_id = await _claim_for_pipeline(
         session,
         case_id,
         current_user,
