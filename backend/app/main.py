@@ -20,7 +20,17 @@ from app.core.security_headers import BodySizeLimitMiddleware, SecurityHeadersMi
 setup_logging(settings.log_level)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Heimdall API", version="0.1.0")
+# Swagger UI, ReDoc, and the OpenAPI schema expose the full API surface (every
+# route, param, and shape) — useful in dev, but free reconnaissance for an
+# attacker in prod. Serve them only outside production; in prod all three 404.
+_docs_enabled = settings.app_env != "production"
+app = FastAPI(
+    title="Heimdall API",
+    version="0.1.0",
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
+)
 
 # Rate limiting (default limits applied to every route; stricter per-route limits
 # are declared on the auth + AI endpoints). 429 responses carry Retry-After.
