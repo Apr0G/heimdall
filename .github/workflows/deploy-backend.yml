@@ -19,6 +19,22 @@ jobs:
   # Gate: a broken image must never reach production. Deploy needs this to pass.
   test:
     runs-on: ubuntu-latest
+    # A throwaway Postgres for the integration tests. Without TEST_DATABASE_URL
+    # they skip, so the concurrency guarantees would go unverified — the claim
+    # race and the updated_at trigger cannot be tested any other way.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: heimdall_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -31,6 +47,13 @@ jobs:
         run: pip install -e '.[dev]'
       - name: Lint, format check, tests
         working-directory: backend
+        env:
+          # Integration tests run migrations against this and speak no TLS (the
+          # service container has no certificate); the app engine is untouched.
+          TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/heimdall_test
+          # Synthetic, for migration 0007's role creation. Alphanumeric — the
+          # migration rejects anything else. Never a real credential.
+          APP_DB_PASSWORD: citestonlynotarealsecret
         run: |
           ruff check .
           black --check .

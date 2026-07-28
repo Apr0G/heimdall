@@ -46,6 +46,13 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
+    # Tests inject an already-open connection (a throwaway local Postgres that
+    # speaks no TLS) via config.attributes. Production and the CLI never set it
+    # and fall through to the app engine above, TLS context and all.
+    injected = config.attributes.get("connection")
+    if injected is not None:
+        do_run_migrations(injected)
+        return
     asyncio.run(run_async_migrations())
 
 
