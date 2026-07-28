@@ -1,63 +1,54 @@
 name: deploy-backend
 
-# Builds the backend image, pushes it to ECR, and redeploys the ECS Express
-# service so it pulls the new image. Runs automatically on backend changes to
-# main, or manually. Uses GitHub OIDC — no AWS keys stored in GitHub.
+# Ships the backend to production. MANUAL ONLY — pushing to main no longer
+# deploys. Tests still run automatically on every push (test-backend.yml); this
+# workflow re-runs them and then requires a human to decide the moment.
+#
+# Why manual: a commit is cheap and revertible, a deploy touching PHI is neither,
+# and HIPAA change control expects a record of who released what and when. This
+# run's actor and timestamp are that record.
+#
+# Uses GitHub OIDC — no AWS keys stored in GitHub. NOTE: the IAM trust policy
+# pins sub = repo:<repo>:ref:refs/heads/main (ecs-express.tf), so this must be
+# dispatched from main. Adding a GitHub `environment:` here would change the sub
+# claim to ...:environment:<name> and break the role assumption until the
+# terraform trust policy is updated to match.
 on:
-  push:
-    branches: [main]
-    paths:
-      - "backend/**"
-      - ".github/workflows/deploy-backend.yml"
   workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "deploy" to confirm shipping to production'
+        required: true
+        default: ""
+      reason:
+        description: "Why are you deploying? (recorded in the run log)"
+        required: false
+        default: ""
 
 permissions:
   id-token: write
   contents: read
 
 jobs:
-  # Gate: a broken image must never reach production. Deploy needs this to pass.
-  test:
+  confirm:
     runs-on: ubuntu-latest
-    # A throwaway Postgres for the integration tests. Without TEST_DATABASE_URL
-    # they skip, so the concurrency guarantees would go unverified — the claim
-    # race and the updated_at trigger cannot be tested any other way.
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: heimdall_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Install (editable, with dev tools)
-        working-directory: backend
-        # Editable so the installed `app` points at the source tree — otherwise a
-        # second copy lands in site-packages and pytest hits an import-file mismatch.
-        run: pip install -e '.[dev]'
-      - name: Lint, format check, tests
-        working-directory: backend
+      - name: Require an explicit confirmation
         env:
-          # Integration tests run migrations against this and speak no TLS (the
-          # service container has no certificate); the app engine is untouched.
-          TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/heimdall_test
-          # Synthetic, for migration 0007's role creation. Alphanumeric — the
-          # migration rejects anything else. Never a real credential.
-          APP_DB_PASSWORD: citestonlynotarealsecret
+          CONFIRM: ${{ inputs.confirm }}
+          REASON: ${{ inputs.reason }}
         run: |
-          ruff check .
-          black --check .
-          pytest -q
+          if [ "$CONFIRM" != "deploy" ]; then
+            echo "::error::Type 'deploy' in the confirm box to ship to production. Got: '$CONFIRM'"
+            exit 1
+          fi
+          echo "Deploy authorised by ${{ github.actor }} at $(date -u +%FT%TZ)"
+          echo "Reason: ${REASON:-(none given)}"
+
+  # Never ship untested code, even manually.
+  test:
+    needs: confirm
+    uses: ./.github/workflows/test-backend.yml
 
   deploy:
     needs: test
@@ -90,3 +81,42 @@ jobs:
             --service heimdall-api \
             --force-new-deployment \
             --query 'service.serviceName' --output text
+
+      # update-service returns the moment ECS accepts the request, which is why a
+      # crashed task used to roll back while this workflow still went green (it
+      # hid the RDS CA bundle crash for a day on 2026-07-13). Everything below
+      # exists so a green check means "it is actually running".
+      - name: Wait for the service to stabilise
+        run: |
+          aws ecs wait services-stable --cluster default --services heimdall-api
+
+      - name: Verify the rollout completed and did not roll back
+        run: |
+          STATE=$(aws ecs describe-services --cluster default --services heimdall-api \
+            --query 'services[0].deployments[?status==`PRIMARY`].rolloutState' --output text)
+          RUNNING=$(aws ecs describe-services --cluster default --services heimdall-api \
+            --query 'services[0].deployments[?status==`PRIMARY`].runningCount' --output text)
+          echo "rolloutState=$STATE runningCount=$RUNNING"
+          if [ "$STATE" != "COMPLETED" ] || [ "$RUNNING" -lt 1 ]; then
+            echo "::error::Deployment did not complete (state=$STATE running=$RUNNING). Recent events:"
+            aws ecs describe-services --cluster default --services heimdall-api \
+              --query 'services[0].events[0:10].message' --output text
+            exit 1
+          fi
+
+      - name: Probe the live API
+        run: |
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 \
+            https://api.heimdallclaims.com/healthz)
+          echo "healthz=$CODE"
+          [ "$CODE" = "200" ] || { echo "::error::Health probe returned $CODE"; exit 1; }
+
+      - name: Summary
+        run: |
+          {
+            echo "### Deployed to production"
+            echo ""
+            echo "- commit: \`${{ github.sha }}\`"
+            echo "- actor: @${{ github.actor }}"
+            echo "- verified: ECS rollout COMPLETED, task running, /healthz 200"
+          } >> "$GITHUB_STEP_SUMMARY"
