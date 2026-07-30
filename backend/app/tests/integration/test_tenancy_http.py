@@ -26,6 +26,8 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
+from starlette.datastructures import Headers
+from starlette.requests import Request
 
 import app.core.auth as auth_module
 from app.core.auth import get_current_user
@@ -556,3 +558,56 @@ async def test_heartbeat_cannot_revive_an_already_expired_session(sessions, owne
         assert resp.status_code == 401
     finally:
         auth_module.verify_access_token = original
+
+
+# --- login must reset the idle clock -----------------------------------------
+
+
+async def test_login_resets_the_idle_clock(sessions, owner):
+    """A brand-new session must NOT inherit the previous session's staleness.
+
+    This shipped broken on 2026-07-30 and locked everyone out of production:
+    /api/auth/login and /api/auth/mfa/verify both returned 200, then the very
+    next request 401'd — because `_finalize_login` never touched `last_seen_at`.
+    By the time someone comes back to log in they have almost always been idle
+    longer than the timeout, so the fresh session was expired before its first
+    request. The failure is invisible in the login response itself, which is why
+    the logs showed "200, 200, 401".
+    """
+    import app.api.auth as auth_api
+    from app.api.auth import _finalize_login
+
+    ancient = datetime.now(UTC) - timedelta(days=2)
+    await _set_last_seen(sessions, owner.id, ancient)
+
+    class _Resp:
+        def set_cookie(self, **kw):
+            pass
+
+    async def _fake_verify(token: str) -> dict:
+        return {"sub": owner.cognito_sub, "token_use": "access"}
+
+    original = auth_api.verify_access_token
+    auth_api.verify_access_token = _fake_verify
+    try:
+        req = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/api/auth/login",
+                "headers": Headers({}).raw,
+                "client": ("203.0.113.9", 1234),
+                "query_string": b"",
+            }
+        )
+        async with sessions() as s:
+            await _finalize_login(
+                s, req, _Resp(), {"AccessToken": "t", "ExpiresIn": 3600}, owner.email
+            )
+
+        async with sessions() as s:
+            u = await s.get(User, owner.id)
+        assert u.last_seen_at > ancient, "login did not reset the idle clock"
+        assert (datetime.now(UTC) - u.last_seen_at) < timedelta(minutes=1)
+    finally:
+        auth_api.verify_access_token = original

@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -99,6 +101,15 @@ async def _finalize_login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Your account is not provisioned. Contact your administrator.",
         )
+    # Start the idle clock NOW. Without this the brand-new session inherits
+    # whatever `last_seen_at` the PREVIOUS session left behind — so if the user
+    # was last active more than IDLE_TIMEOUT_MINUTES ago (i.e. essentially always,
+    # by the time someone comes back to log in), `get_current_user` expires the
+    # session on the very first request after a successful login. Symptom:
+    # /api/auth/login and /api/auth/mfa/verify both return 200, then /api/auth/me
+    # immediately 401s and the user is bounced back to the login screen forever.
+    user.last_seen_at = datetime.now(UTC)
+
     await log_audit(
         session,
         action="login_success",
