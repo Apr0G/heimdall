@@ -152,17 +152,34 @@ jobs:
       - name: Verify the rollout completed and did not roll back
         if: inputs.mode != 'build-only'
         run: |
-          STATE=$(aws ecs describe-services --cluster default --services heimdall-api \
-            --query 'services[0].deployments[?status==`PRIMARY`].rolloutState' --output text)
-          RUNNING=$(aws ecs describe-services --cluster default --services heimdall-api \
-            --query 'services[0].deployments[?status==`PRIMARY`].runningCount' --output text)
-          echo "rolloutState=$STATE runningCount=$RUNNING"
-          if [ "$STATE" != "COMPLETED" ] || [ "$RUNNING" -lt 1 ]; then
-            echo "::error::Deployment did not complete (state=$STATE running=$RUNNING). Recent events:"
-            aws ecs describe-services --cluster default --services heimdall-api \
-              --query 'services[0].events[0:10].message' --output text
-            exit 1
-          fi
+          # POLL, don't snapshot. `aws ecs wait services-stable` returns once its
+          # own condition is met, but ECS keeps rolloutState=IN_PROGRESS while the
+          # superseded task set drains connections (the target group's
+          # deregistration delay, 300s by default). Reading the state once lands in
+          # that gap and fails a completely healthy deploy — which is what happened
+          # on 2026-07-30: rollout COMPLETED moments later, new code already
+          # serving, workflow red.
+          #
+          # A verification step that cries wolf is worse than no step at all: it
+          # trains you to wave through the red X that means a genuine rollback.
+          for i in $(seq 1 40); do
+            STATE=$(aws ecs describe-services --cluster default --services heimdall-api \
+              --query 'services[0].deployments[?status==`PRIMARY`].rolloutState' --output text)
+            RUNNING=$(aws ecs describe-services --cluster default --services heimdall-api \
+              --query 'services[0].deployments[?status==`PRIMARY`].runningCount' --output text)
+            echo "attempt $i: rolloutState=$STATE runningCount=$RUNNING"
+            # FAILED is terminal (ECS rolled back) — fail fast, don't wait it out.
+            [ "$STATE" = "FAILED" ] && break
+            if [ "$STATE" = "COMPLETED" ] && [ "$RUNNING" -ge 1 ]; then
+              echo "rollout verified"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::Deployment did not complete (state=$STATE running=$RUNNING). Recent events:"
+          aws ecs describe-services --cluster default --services heimdall-api \
+            --query 'services[0].events[0:10].message' --output text
+          exit 1
 
       - name: Probe the live API
         if: inputs.mode != 'build-only'
