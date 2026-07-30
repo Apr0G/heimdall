@@ -61,3 +61,8 @@ Thumbs.db
 # Markdown docs (compliance policies, security assessments, runbooks) are tracked
 # deliberately — HIPAA 164.316(b)(2)(i) requires six-year retention, and an
 # untracked doc has no history and no backup. Secrets stay out via the rules above.
+
+# Terraform plan files. They embed resolved values — including ones Terraform
+# only redacts at DISPLAY time — so a committed plan can leak a generated
+# password. Regenerate with `terraform plan -out=...` instead of sharing one.
+*.tfplan

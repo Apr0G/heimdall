@@ -255,6 +255,19 @@ resource "aws_iam_role_policy_attachment" "ecs_infra_managed" {
 # exception text, i.e. the most PHI-adjacent log stream we have.
 # HIPAA-SERVICE-INVENTORY.md asserted "90-day retention" for it, unhedged, which
 # was not true of anything in the repo.
+#
+# CORRECTION to the audit's premise: the auto-created group is
+# `/aws/ecs/default/heimdall-api-<random>` and it already carries 90-day
+# retention — so the finding's "likely retained indefinitely" was wrong, and the
+# service inventory's "90-day retention" was right by luck rather than by
+# declaration. What is genuinely missing is KMS encryption, and the fact that
+# nothing in the repo *guaranteed* either.
+#
+# Declaring our own group and pointing the container at it fixes both, and moves
+# the group name out of ECS's random-suffix naming so it is predictable.
+# The old auto-created group keeps its existing logs; it is not adopted here
+# because its name is unpredictable, and it can be deleted by hand once the new
+# group is receiving traffic.
 resource "aws_cloudwatch_log_group" "api" {
   name              = "/aws/ecs/heimdall-api"
   retention_in_days = 90
@@ -282,15 +295,18 @@ resource "aws_cloudformation_stack" "express" {
           PrimaryContainer = {
             Image         = "${aws_ecr_repository.backend.repository_url}:latest"
             ContainerPort = 8080
-            # Point at the Terraform-managed group above rather than letting AWS
-            # auto-create one with never-expire retention.
-            LogConfiguration = {
-              LogDriver = "awslogs"
-              Options = {
-                "awslogs-group"         = aws_cloudwatch_log_group.api.name
-                "awslogs-region"        = "us-east-1"
-                "awslogs-stream-prefix" = "api"
-              }
+            # Point at the Terraform-managed group above, so retention and KMS are
+            # declared rather than inherited from whatever ECS auto-creates.
+            #
+            # NOTE the property name. ExpressGatewayService does NOT accept the
+            # task-definition-style `LogConfiguration` block used elsewhere in this
+            # repo — its schema (verified via `aws cloudformation describe-type
+            # --type-name AWS::ECS::ExpressGatewayService`) allows only
+            # AwsLogsConfiguration, with exactly these two required fields. Passing
+            # LogConfiguration fails the stack update on the LIVE service.
+            AwsLogsConfiguration = {
+              LogGroup        = aws_cloudwatch_log_group.api.name
+              LogStreamPrefix = "api"
             }
             Environment = [
               { Name = "APP_ENV", Value = "production" },

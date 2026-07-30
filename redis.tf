@@ -64,8 +64,14 @@ resource "aws_secretsmanager_secret_version" "redis_auth" {
 # change, and the rate-limit store is throwaway state — losing it resets counters,
 # it does not lose data. Apply during a quiet window.
 resource "aws_elasticache_replication_group" "redis" {
-  replication_group_id = "heimdall-redis"
-  description          = "Heimdall rate-limit store"
+  # Deliberately NOT "heimdall-redis": the old standalone cluster still holds that
+  # identifier, and ElastiCache cannot have both at once. Sharing the name would
+  # force destroy-before-create, which means a window with no rate-limit store at
+  # all — and `login_allowed` fails CLOSED, so that window blocks every new login.
+  # A distinct name lets the new group exist alongside the old one, so the cutover
+  # can be done without denying logins (see the two-step note in DEPLOY.md).
+  replication_group_id = "heimdall-redis-tls"
+  description          = "Heimdall rate-limit store (encrypted in transit + at rest)"
   engine               = "redis"
   engine_version       = "7.1"
   node_type            = "cache.t4g.micro" # smallest; ~$12/mo
