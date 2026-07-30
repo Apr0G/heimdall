@@ -20,12 +20,14 @@ Needs a real PostgreSQL (TEST_DATABASE_URL); CI runs it against postgres:17.
 """
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
+import app.core.auth as auth_module
 from app.core.auth import get_current_user
 from app.db.session import get_db
 from app.main import app
@@ -302,8 +304,6 @@ async def test_deactivated_user_is_rejected(sessions, owner, owned_case):
     async def _fake_verify(token: str) -> dict:
         return {"sub": owner.cognito_sub, "token_use": "access"}
 
-    import app.core.auth as auth_module
-
     original = auth_module.verify_access_token
     auth_module.verify_access_token = _fake_verify
     try:
@@ -444,3 +444,115 @@ async def test_invalid_status_filter_is_422_not_500(sessions, owner):
     async with _client(sessions, owner) as client:
         assert (await client.get("/api/cases?status=Ready")).status_code == 422
         assert (await client.get("/api/cases?status=ready")).status_code == 200
+
+
+# --- MED-11 second pass: an OPEN tab must still time out ----------------------
+#
+# The frontend polls processing-ids every 12s in the background. Before this,
+# those polls stamped last_seen_at, so leaving the app open on screen held the
+# session alive forever — the product's own traffic defeating the control.
+
+
+def _auth_client(sessions, user):
+    """A client that exercises the REAL get_current_user, so the idle check runs."""
+
+    async def _override_db():
+        async with sessions() as s:
+            yield s
+
+    app.dependency_overrides.clear()
+    app.dependency_overrides[get_db] = _override_db
+
+    async def _fake_verify(token: str) -> dict:
+        return {"sub": user.cognito_sub, "token_use": "access"}
+
+    auth_module.verify_access_token = _fake_verify
+    c = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+    c.cookies.set("hd_session", "any-token")
+    return c
+
+
+async def _set_last_seen(sessions, user_id, when):
+    async with sessions() as s:
+        u = await s.get(User, user_id)
+        u.last_seen_at = when
+        await s.commit()
+
+
+async def test_polling_does_not_advance_the_idle_clock(sessions, owner, owned_case):
+    """THE test. A session that is idle but not yet expired, polled by a tab
+    sitting open on someone's desk, must NOT have its clock refreshed.
+
+    Note what this deliberately does NOT assert: that an already-expired session
+    gets 401. That is true whether or not polls count as activity — the timeout
+    is evaluated before the stamp — so asserting it proves nothing about the bug.
+    The regression is silent, and only visible in `last_seen_at` afterwards.
+    """
+    original = auth_module.verify_access_token
+    try:
+        stale = datetime.now(UTC) - timedelta(minutes=10)  # idle, still valid
+        await _set_last_seen(sessions, owner.id, stale)
+
+        async with _auth_client(sessions, owner) as client:
+            for _ in range(3):  # as the tab would, every 12s
+                resp = await client.get("/api/cases/processing-ids")
+                assert resp.status_code == 200
+
+        async with sessions() as s:
+            u = await s.get(User, owner.id)
+        drift = abs((u.last_seen_at - stale).total_seconds())
+        assert drift < 1, (
+            "polling refreshed last_seen_at — an open tab would keep the session "
+            f"alive indefinitely (clock moved {drift:.0f}s)"
+        )
+    finally:
+        auth_module.verify_access_token = original
+
+
+async def test_real_requests_do_advance_the_idle_clock(sessions, owner, owned_case):
+    """Positive control. Without it, a change that stopped stamping on EVERY
+    path would pass the test above while logging active users out."""
+    original = auth_module.verify_access_token
+    try:
+        stale = datetime.now(UTC) - timedelta(minutes=10)
+        await _set_last_seen(sessions, owner.id, stale)
+
+        async with _auth_client(sessions, owner) as client:
+            resp = await client.get(f"/api/cases/{owned_case['case_id']}")
+            assert resp.status_code == 200
+
+        async with sessions() as s:
+            u = await s.get(User, owner.id)
+        assert u.last_seen_at > stale, "opening a case should count as activity"
+    finally:
+        auth_module.verify_access_token = original
+
+
+async def test_heartbeat_keeps_a_live_session_alive(sessions, owner):
+    """Someone reading without clicking stays signed in."""
+    original = auth_module.verify_access_token
+    try:
+        stale = datetime.now(UTC) - timedelta(minutes=10)  # idle, but not expired
+        await _set_last_seen(sessions, owner.id, stale)
+        async with _auth_client(sessions, owner) as client:
+            resp = await client.post("/api/auth/heartbeat")
+        assert resp.status_code == 204
+
+        async with sessions() as s:
+            u = await s.get(User, owner.id)
+        assert u.last_seen_at > stale  # clock refreshed
+    finally:
+        auth_module.verify_access_token = original
+
+
+async def test_heartbeat_cannot_revive_an_already_expired_session(sessions, owner):
+    """The timeout is evaluated BEFORE the stamp, so a stale session cannot
+    heartbeat its way back to life."""
+    original = auth_module.verify_access_token
+    try:
+        await _set_last_seen(sessions, owner.id, datetime.now(UTC) - timedelta(minutes=45))
+        async with _auth_client(sessions, owner) as client:
+            resp = await client.post("/api/auth/heartbeat")
+        assert resp.status_code == 401
+    finally:
+        auth_module.verify_access_token = original

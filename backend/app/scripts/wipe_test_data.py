@@ -10,8 +10,20 @@ The name understates the reach: nothing here is scoped to synthetic data or to o
 tenant. If this is ever pointed at a database that has held real PHI, it destroys
 every practice's documents.
 
-Guarded: refuses to run unless ``WIPE_CONFIRM=WIPE``. Meant to run as a one-off
-ECS task inside the VPC (the DB is private):  ``python -m app.scripts.wipe_test_data``
+Guarded: refuses to run unless ``WIPE_CONFIRM=WIPE`` **and** ``WIPE_EXPECT_CASES``
+equals the live case count. The second guard is the one that matters — the first
+is a constant hardcoded into the workflow's container override, so it proves
+intent about the workflow rather than about the target.
+
+**Requires the ``heimdall-dispose`` task role**, not the app role. Deleting from a
+versioned bucket needs ``s3:DeleteObjectVersion`` + ``s3:ListBucketVersions``; the
+app role holds only ``s3:DeleteObject``, which writes a delete marker and destroys
+nothing. Running this under the app role fails at the S3 purge — by design, since
+`assert_prefix_empty` then stops it before the TRUNCATE rather than emptying the
+database while the documents survive.
+
+Runs as a one-off ECS task inside the VPC (the DB is private):
+``python -m app.scripts.wipe_test_data``
 """
 
 import asyncio

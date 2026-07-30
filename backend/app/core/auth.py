@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -142,6 +143,26 @@ def _idle_deadline_exceeded(last_seen: datetime | None) -> bool:
     return idle_for > timedelta(minutes=settings.idle_timeout_minutes)
 
 
+# Requests the app makes on a timer, with nobody necessarily at the keyboard.
+# These must NOT refresh the idle clock, or the timeout is defeated by the
+# product's own background traffic: ReadyNotifier polls processing-ids every 12s
+# with refetchIntervalInBackground, and the case page polls status every 2s while
+# a pipeline runs. An open tab would then hold a session alive indefinitely — the
+# exact failure §164.312(a)(2)(iii) exists to prevent.
+#
+# Genuine interaction reaches the server either as a real API call or, when the
+# user is only reading, as the explicit heartbeat from `use-idle-logout.ts`.
+_POLL_PATHS = re.compile(
+    r"^/api/cases/processing-ids/?$" r"|^/api/cases/[0-9a-fA-F-]{36}/status/?$"
+)
+
+
+def is_user_activity(path: str) -> bool:
+    """Whether a request path should count as the user being present. Pure, so
+    the classification is unit-testable without a request or a database."""
+    return not _POLL_PATHS.match(path)
+
+
 async def get_current_user(
     request: Request,
     creds: HTTPAuthorizationCredentials | None = Depends(security),
@@ -167,12 +188,18 @@ async def get_current_user(
     if _idle_deadline_exceeded(user.last_seen_at):
         raise _unauthorized("Session expired due to inactivity")
 
-    # Sliding activity stamp. Written on every authenticated request; the coarse
-    # granularity below keeps this from being a write on literally every poll.
-    now = datetime.now(UTC)
-    if user.last_seen_at is None or (now - user.last_seen_at) > _LAST_SEEN_WRITE_INTERVAL:
-        user.last_seen_at = now
-        await session.commit()
+    # Sliding activity stamp — but ONLY for requests that imply a human. Polling
+    # endpoints are excluded (see _POLL_PATHS), so leaving the app open on screen
+    # no longer keeps the session alive; walking away expires it on schedule even
+    # with the tab in front of you.
+    #
+    # The write is throttled so an active user costs at most one UPDATE a minute,
+    # which is far finer than the 15-minute window it feeds.
+    if is_user_activity(request.url.path):
+        now = datetime.now(UTC)
+        if user.last_seen_at is None or (now - user.last_seen_at) > _LAST_SEEN_WRITE_INTERVAL:
+            user.last_seen_at = now
+            await session.commit()
     return user
 
 

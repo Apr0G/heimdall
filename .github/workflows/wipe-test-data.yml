@@ -5,7 +5,13 @@ name: wipe-test-data
 # practices — i.e. the entire training corpus — plus their S3 objects. Keeps
 # only users, practices, and the append-only audit_logs. Not scoped to "test".
 # Export the corpus first (export-corpus workflow) if you might want the data.
-# Two-key guard: type the full phrase below AND the short WIPE token.
+#
+# Two-key guard: the typed phrase below, AND `expected_cases` must equal the live
+# case count or the script aborts before deleting anything. The second key is the
+# one that carries weight — WIPE_CONFIRM is a constant hardcoded into the
+# container override, so it proves intent about the workflow, not about the
+# target. Having to state the row count means having to go and look at the
+# database you are about to empty.
 on:
   workflow_dispatch:
     inputs:
@@ -25,15 +31,23 @@ permissions:
 jobs:
   wipe:
     runs-on: ubuntu-latest
-    # Required-reviewer gate. Previously one person with repo write could
-    # irreversibly destroy every practice's data with no second pair of eyes.
-    # This was not an oversight but a forced tradeoff: a GitHub environment
-    # changes the OIDC `sub` claim from `ref:refs/heads/main` to
-    # `environment:<name>`, which broke role assumption. The trust policy in
-    # ecs-express.tf now accepts both, so the gate costs nothing.
+    # NOT an approval gate — read this before relying on it.
     #
-    # SETUP: create this environment in repo Settings -> Environments with at
-    # least one required reviewer, and apply the terraform change first.
+    # Deployment protection rules (required reviewers, wait timer) are NOT
+    # available on GitHub Pro for a private repository; they need Team or
+    # Enterprise, which needs an organisation. Verified 2026-07-30: both the UI
+    # section and the REST API refuse, with Pro confirmed active.
+    #
+    # What this line DOES give: a deployment record in the Environments tab, so
+    # every dispatch is attributable — useful for HIPAA change control — and the
+    # gate becomes one checkbox if this repo ever moves to an org. The OIDC trust
+    # policy in ecs-express.tf accepts this environment's `sub` claim alongside
+    # `ref:refs/heads/main`, so it costs nothing to keep.
+    #
+    # The binding controls today are the typed phrase and the live row-count
+    # match. Note that neither stops someone with repo write, who can simply edit
+    # the guards away — they protect against MISTAKES, not against an attacker.
+    # Account 2FA is what protects against the attacker.
     environment: production-destructive
     steps:
       - name: Check confirmation
@@ -69,7 +83,22 @@ jobs:
         run: |
           set -euo pipefail
           CLUSTER=default
-          TASKDEF=default-heimdall-api
+          # Runs on the DISPOSE task definition, not the API one.
+          #
+          # The bucket is versioned, so genuinely destroying an object needs
+          # s3:DeleteObjectVersion + s3:ListBucketVersions. The app task role has
+          # neither — only s3:DeleteObject, which on a versioned bucket just writes
+          # a delete marker. That is why this workflow used to report destroying
+          # objects that remained fully retrievable, and why it started failing
+          # outright once the script was corrected to delete by VersionId.
+          #
+          # heimdall-dispose already carries exactly those permissions (it is the
+          # BAA-offboarding role) plus the limited heimdall_app DB URL, which can
+          # delete case rows but cannot touch audit_logs. Reusing it keeps the
+          # destroy capability in the ONE role scoped for it, instead of granting
+          # version-deletion to the app role — where an RCE in the running API
+          # would inherit it. The container command is overridden below.
+          TASKDEF=heimdall-dispose
 
           CONTAINER=$(aws ecs describe-task-definition --task-definition "$TASKDEF" \
             --query 'taskDefinition.containerDefinitions[0].name' --output text)

@@ -247,3 +247,20 @@ async def logout(
 @router.get("/me", response_model=UserOut)
 async def me(current_user: User = Depends(get_current_user)) -> User:
     return current_user
+
+
+@router.post("/heartbeat", status_code=status.HTTP_204_NO_CONTENT)
+async def heartbeat(current_user: User = Depends(get_current_user)) -> Response:
+    """Report that a human is still here.
+
+    Deliberately does nothing: the whole effect is the `last_seen_at` stamp that
+    `get_current_user` writes for any non-polling path, which refreshes the idle
+    clock. The frontend calls this only on real interaction (mouse, key, scroll,
+    touch), throttled to once a minute — so reading a long letter keeps you
+    signed in, while an unattended tab does not.
+
+    It cannot be used to extend a session that has ALREADY gone idle: the
+    dependency evaluates the timeout before the stamp, so a stale session gets
+    401 here exactly as it would anywhere else.
+    """
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

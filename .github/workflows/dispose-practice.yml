@@ -25,9 +25,9 @@ permissions:
 jobs:
   dispose:
     runs-on: ubuntu-latest
-    # Required-reviewer gate — see the note in wipe-test-data.yml. The OIDC trust
-    # policy (ecs-express.tf) accepts this environment's `sub` claim alongside
-    # `ref:refs/heads/main`, so the gate no longer breaks role assumption.
+    # NOT an approval gate — see the full note in wipe-test-data.yml. Protection
+    # rules need GitHub Team/Enterprise, not Pro. This gives a deployment record
+    # for attribution, and the OIDC trust policy accepts its `sub` claim.
     environment: production-destructive
     steps:
       - name: Check confirmation
