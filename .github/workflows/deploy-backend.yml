@@ -112,16 +112,24 @@ jobs:
           docker push "$REGISTRY/$REPO:latest"
           docker push "$REGISTRY/$REPO:$SHA"
 
-      # deploy-only ships whatever is already tagged :latest. Record which commit
-      # that actually is, so the run log is not silently ambiguous about what
-      # went live — the workflow's own SHA is NOT necessarily the image's.
+      # deploy-only ships whatever is already tagged :latest. Record which image
+      # that actually is, so the run log is not silently ambiguous about what went
+      # live — the workflow's own SHA is NOT necessarily the image's.
+      #
+      # Uses BatchGetImage, which the deploy role already holds for pulling.
+      # DescribeImages would also give the push timestamp, but it is not granted,
+      # and a *reporting* step must not be the thing that requires a new IAM
+      # permission before a deploy can proceed.
+      #
+      # continue-on-error for the same reason: this step exists to annotate the
+      # log. If it ever fails it must not block the rollout.
       - name: Report the image about to be deployed
         if: inputs.mode == 'deploy-only'
+        continue-on-error: true
         run: |
-          aws ecr describe-images --repository-name heimdall-backend \
+          aws ecr batch-get-image --repository-name heimdall-backend \
             --image-ids imageTag=latest \
-            --query 'imageDetails[0].{Pushed:imagePushedAt,Digest:imageDigest,Tags:imageTags}' \
-            --output table
+            --query 'images[0].imageId' --output table
 
       - name: Redeploy the ECS Express service
         if: inputs.mode != 'build-only'
