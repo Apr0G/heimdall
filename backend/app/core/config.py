@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import quote
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -59,10 +60,47 @@ class Settings(BaseSettings):
     # Rate limiting (tunable without redeploy). redis_url empty -> in-memory
     # storage (single-process dev/test only); set a redis:// URL in production.
     redis_url: str = ""
+    # ElastiCache AUTH token, injected from Secrets Manager. Kept separate from
+    # REDIS_URL so the credential never sits in the task definition's plaintext
+    # environment; `redis_dsn` splices it in at connect time.
+    redis_auth_token: str = ""
     rate_limit_general: str = "150/minute"  # authed general API, per user
     rate_limit_auth: str = "10/15minutes"  # login, per IP
     rate_limit_public: str = "15/minute"  # unauthenticated public endpoints, per IP
     rate_limit_ai: str = "15/minute;50/day"  # Bedrock/Textract endpoints, per user
+
+    # Secret pepper for keyed hashes of identifiers (member_id_hash, corpus
+    # claim_ref). A bare SHA-256 of a structured, payer-prefixed identifier is
+    # exhaustible offline, so it is not a de-identification control under
+    # §164.514 — and §164.514(c) additionally requires a re-identification code
+    # NOT derived from information about the individual. Empty is allowed so the
+    # process still boots; the hashing helpers fail loudly rather than silently
+    # falling back to an unkeyed digest.
+    phi_hash_pepper: str = ""
+
+    # Hard ceiling on pages sent to pypdf/Textract. A highly compressed 25 MB PDF
+    # can hold tens of thousands of pages; extract_text() over all of them pins a
+    # threadpool worker with no timeout, and Textract bills per page.
+    max_document_pages: int = 150
+
+    # Server-side idle timeout. The 15-minute browser timer is a UX affordance, not
+    # a control — a closed tab leaves the session valid for the token's full life.
+    # 0 disables the server-side check.
+    idle_timeout_minutes: int = 15
+
+    def redis_dsn(self) -> str:
+        """`redis_url` with the AUTH token spliced in, or "" when unset.
+
+        The token arrives as its own secret rather than baked into the URL, so it
+        stays out of the task definition's plaintext environment (and therefore out
+        of `aws ecs describe-task-definition` output and anything that logs it).
+        """
+        if not self.redis_url or not self.redis_auth_token:
+            return self.redis_url
+        scheme, _, remainder = self.redis_url.partition("://")
+        if not remainder or "@" in remainder:
+            return self.redis_url  # already carries credentials; leave it alone
+        return f"{scheme}://:{quote(self.redis_auth_token, safe='')}@{remainder}"
 
 
 @lru_cache

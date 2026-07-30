@@ -1,4 +1,4 @@
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 DENIAL_CATEGORIES = {
     "medical_necessity",
@@ -9,6 +9,8 @@ DENIAL_CATEGORIES = {
     "non_covered",
     "missing_info",
     "wrong_payer",
+    "contractual_adjustment",
+    "patient_responsibility",
     "other",
 }
 
@@ -19,7 +21,11 @@ APPEAL_LEVELS = {
     "external_review",
 }
 
-DOC_NEEDS = {"prior_auth", "prior_treatment", "imaging", "none"}
+# Must stay a subset of the doc_type enum AND of what the upload endpoint accepts:
+# a request for a document type the doctor cannot upload is silently discarded,
+# which loses a clinically meaningful ask. "imaging" was previously listed here and
+# was exactly that dead end.
+DOC_NEEDS = {"prior_auth", "prior_treatment", "none"}
 
 
 class AnalysisResult(BaseModel):
@@ -30,7 +36,10 @@ class AnalysisResult(BaseModel):
     denial_category: str = "other"
     is_appealable: bool = False
     appealability_reason: str | None = None
-    success_probability: float | None = None
+    # Bounded because the DB column is Numeric(4,3) — max 9.999. An unbounded value
+    # (the model returning 95 instead of 0.95) overflows on flush, and the failing
+    # INSERT's bound parameters carry PHI into the traceback.
+    success_probability: float | None = Field(default=None, ge=0.0, le=1.0)
     probability_band: str | None = None
     reasoning_text: str | None = None
     recommended_appeal_level: str = "level_1_internal"

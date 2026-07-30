@@ -1,12 +1,28 @@
 import json
 
+from app.prompts.text import CLINICAL_MAX_CHARS, prepare
+
 # Bump VERSION on ANY change to the prompt text or schema. model_runs records it.
-VERSION = "letter_v3"
+VERSION = "letter_v4"
+
+# How each appeal level should be named in the letter body. The body used to be
+# hardcoded as a "first-level internal appeal" regardless of what the analysis
+# recommended, so an escalated case was drafted as the wrong kind of appeal.
+APPEAL_LEVEL_LABELS = {
+    "level_1_internal": "first-level internal appeal",
+    "peer_to_peer": "request for a peer-to-peer review",
+    "level_2_internal": "second-level internal appeal",
+    "external_review": "request for external / independent review",
+}
 
 SYSTEM = """You are a senior medical claims appeals writer for a US healthcare \
 practice. Using the structured claim data, the denial analysis, and the clinical \
-notes, you draft a formal first-level internal appeal letter that the practice \
-will print on letterhead, sign, and submit to the payer.
+notes, you draft a formal appeal letter that the practice will print on \
+letterhead, sign, and submit to the payer.
+
+The APPEAL TYPE section of the user message names which kind of appeal this is. \
+Write that kind of letter — its salutation, framing, and ask must match. Do not \
+default to a first-level internal appeal when a different level is specified.
 
 Return ONLY the JSON object. No markdown fences, no preamble.
 
@@ -53,6 +69,9 @@ Rules:
 (use the initials given), member IDs, dates, amounts, or chart findings.
 - The denied amount is provided pre-formatted as a dollar string; use it verbatim.
 - If a field is missing, write the section without it rather than inventing a value.
+- body must be the complete letter. Never return an empty or placeholder body — \
+if you cannot write the letter from the data provided, say so in the body itself \
+rather than returning nothing.
 """
 
 
@@ -62,8 +81,11 @@ def build_user_prompt(
     analysis_json: dict,
     clinical_text: str,
     supplemental_text: str = "",
+    appeal_level: str = "level_1_internal",
 ) -> str:
+    label = APPEAL_LEVEL_LABELS.get(appeal_level, APPEAL_LEVEL_LABELS["level_1_internal"])
     prompt = (
+        f"=== APPEAL TYPE ===\nWrite this letter as a {label}.\n\n"
         "=== PRACTICE & CLAIM HEADER (use for the header block) ===\n"
         f"{json.dumps(letterhead, indent=2, default=str)}\n\n"
         "=== EXTRACTED CLAIM DATA (JSON) ===\n"
@@ -71,9 +93,10 @@ def build_user_prompt(
         "=== DENIAL ANALYSIS (JSON) ===\n"
         f"{json.dumps(analysis_json, indent=2, default=str)}\n\n"
         "=== CLINICAL NOTES ===\n"
-        f"{clinical_text.strip()}\n"
+        f"{prepare(clinical_text, max_chars=CLINICAL_MAX_CHARS)}\n"
     )
-    if supplemental_text.strip():
+    supplemental = prepare(supplemental_text)
+    if supplemental:
         prompt += "\n=== SUPPLEMENTAL DOCUMENTS ===\n"
-        prompt += f"{supplemental_text.strip()}\n"
+        prompt += f"{supplemental}\n"
     return prompt

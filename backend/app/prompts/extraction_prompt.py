@@ -1,6 +1,8 @@
+from app.prompts.text import CLINICAL_MAX_CHARS, prepare
+
 # Bump VERSION on ANY change to the prompt text or schema — model_runs records it,
 # and the future training corpus depends on knowing which prompt produced an output.
-VERSION = "extract_v2"
+VERSION = "extract_v3"
 
 SYSTEM = """You are a medical claims extraction specialist. You read three U.S. \
 healthcare documents — (1) the denial (EOB / ERA / denial letter), (2) the \
@@ -38,12 +40,16 @@ prefix, e.g. ["CO-50","PR-1"].
 - provider_npi: string|null.
 - prior_auth_number: string|null.
 - clinical_summary: string — 2-3 sentences on the clinical justification for the service.
-- confidence: number — your own 0-1 confidence in this extraction.
+- confidence: number — your own confidence in this extraction, as a DECIMAL \
+FRACTION between 0 and 1 (0.95, never 95). Values outside 0-1 are rejected.
 
 Rules:
 - A CARC like "CO-50" means group "CO" + reason 50 — put "CO-50" in carc_codes \
 AND "CO" in group_codes.
-- Amounts are ALWAYS integer cents. Never return dollars or decimals.
+- Amounts are ALWAYS integer cents, as a JSON integer. $450.00 -> 45000. Never \
+return dollars, never a decimal point, never a currency symbol. A decimal here is \
+rejected outright rather than rounded, because "450.0" meaning $450 would be \
+stored as $4.50.
 - If a value is genuinely absent from all three documents, use null (or []).
 """
 
@@ -51,9 +57,9 @@ AND "CO" in group_codes.
 def build_user_prompt(denial_text: str, claim_text: str, clinical_text: str) -> str:
     return (
         "=== DENIAL DOCUMENT ===\n"
-        f"{denial_text.strip()}\n\n"
+        f"{prepare(denial_text)}\n\n"
         "=== ORIGINAL CLAIM ===\n"
-        f"{claim_text.strip()}\n\n"
+        f"{prepare(claim_text)}\n\n"
         "=== CLINICAL NOTES ===\n"
-        f"{clinical_text.strip()}\n"
+        f"{prepare(clinical_text, max_chars=CLINICAL_MAX_CHARS)}\n"
     )

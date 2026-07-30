@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import TIMESTAMP, BigInteger, Date, ForeignKey, Text, text
+from sqlalchemy import TIMESTAMP, BigInteger, Date, ForeignKey, Index, Text, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -30,3 +30,5 @@ class Outcome(Base, UUIDPrimaryKey):
     )
     source: Mapped[str | None] = mapped_column(outcome_source, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (Index("ix_outcomes_reported_by", "reported_by"),)

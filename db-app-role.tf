@@ -33,6 +33,32 @@ resource "aws_secretsmanager_secret_version" "app_db_password" {
   secret_string = random_password.app_db.result
 }
 
+# Secret pepper for HMAC-keyed identifier hashes: cases.member_id_hash and the
+# corpus export's claim_ref. A bare SHA-256 of a short, structured, payer-prefixed
+# identifier is exhaustible offline, so it is not a de-identification control under
+# §164.514 — and §164.514(c) separately requires a re-identification code that is
+# not derived from information about the individual. Keeping the key OUT of the
+# database is the whole point: a DB dump alone then reveals nothing.
+#
+# ROTATION breaks linkage by design. member_id_hash currently has no readers, so
+# rotating it costs nothing today; an already-exported corpus keeps the claim_ref
+# values it was written with, and a re-export produces different ones.
+resource "random_password" "phi_hash_pepper" {
+  length  = 64
+  special = false
+}
+
+resource "aws_secretsmanager_secret" "phi_hash_pepper" {
+  name        = "heimdall/phi-hash-pepper"
+  description = "HMAC pepper for member_id_hash and corpus claim_ref (see core/hashing.py)."
+  kms_key_id  = aws_kms_key.heimdall.arn
+}
+
+resource "aws_secretsmanager_secret_version" "phi_hash_pepper" {
+  secret_id     = aws_secretsmanager_secret.phi_hash_pepper.id
+  secret_string = random_password.phi_hash_pepper.result
+}
+
 resource "aws_secretsmanager_secret" "app_database_url" {
   name        = "heimdall/app-database-url"
   description = "SQLAlchemy asyncpg connection string for the app (heimdall_app, limited)."
@@ -53,6 +79,7 @@ resource "aws_secretsmanager_secret_version" "app_database_url" {
 resource "aws_cloudwatch_log_group" "migrate" {
   name              = "/aws/ecs/heimdall-migrate"
   retention_in_days = 30
+  kms_key_id        = aws_kms_key.heimdall.arn
 }
 
 resource "aws_iam_role" "migrate_exec" {

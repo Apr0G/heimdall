@@ -37,7 +37,8 @@ Full design and the phased build plan live in `docs/`.
 
 ## Prerequisites
 
-- **Python 3.12** and **Node 20**
+- **Python 3.11** and **Node 20**
+  (3.11 is what the Dockerfile builds and what CI runs.)
 - An **AWS account** with these already provisioned (see `docs/` for details):
   RDS PostgreSQL, an S3 bucket, a Cognito user pool + app client, Bedrock model
   access (an inference profile), Textract, and a KMS key.
@@ -51,11 +52,12 @@ Full design and the phased build plan live in `docs/`.
 
 ```bash
 cd backend
-python3.12 -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 
-cp .env.example .env.local      # then fill in the values (see below)
+cp ../.env.example ../.env.local   # REPO ROOT, not backend/ — core/config.py
+                                   # only ever reads the root .env / .env.local
 
 alembic upgrade head            # apply migrations
 python ../scripts/seed_dev.py   # create a practice + user row

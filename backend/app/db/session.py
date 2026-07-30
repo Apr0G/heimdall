@@ -26,6 +26,15 @@ _database_url = settings.database_url or "postgresql+asyncpg://placeholder/place
 engine = create_async_engine(
     _database_url,
     echo=False,
+    # PHI CONTROL (hard rule 2), not a tuning knob. SQLAlchemy's StatementError
+    # appends "[SQL: ...] [parameters: {...}]" to its str() by default, so any
+    # failing INSERT/UPDATE renders its bound values — claim numbers, payer names,
+    # patient initials, extracted clinical JSON — into the traceback. Both the
+    # pipeline's logger.exception and main.py's global handler write that traceback
+    # to CloudWatch, and core/logging._redact only masks SSN shapes and long digit
+    # runs, so none of that would be caught. This suppresses the parameter echo at
+    # the source, independently of whichever schema bound happens to be violated.
+    hide_parameters=True,
     pool_pre_ping=True,  # drop dead connections instead of erroring a request
     pool_size=10,
     max_overflow=10,  # up to 20 connections per task; RDS t4g.micro allows ~112

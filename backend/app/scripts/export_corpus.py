@@ -23,8 +23,17 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.core import hashing
 from app.core.config import settings
-from app.models import Analysis, AppealLetter, Case, Document, Extraction, Outcome
+from app.models import (
+    Analysis,
+    AppealLetter,
+    Case,
+    Document,
+    Extraction,
+    ModelRun,
+    Outcome,
+)
 from app.scripts.deidentify import (
     SAFE_EXTRACTION_FIELDS,
     deid_year,
@@ -33,6 +42,46 @@ from app.scripts.deidentify import (
     scan_residual,
 )
 from app.services import s3
+
+
+async def _member_id_from_archive(model_run: ModelRun | None) -> str | None:
+    """Recover the raw member_id for exact-match redaction, from the ONE place that
+    still holds it: the extraction call's archived Bedrock response in
+    `model_runs/<id>/response.json`.
+
+    Why this is needed at all: the export used to build its redaction key-set from
+    `extracted_json["member_id"]`, but `services/extraction.py` writes that JSON
+    with `exclude={"member_id"}` — deliberately, per hard rule 5. So the lookup
+    returned None unconditionally and the member ID was silently never added to the
+    redaction set. The exclusion meant to protect the identifier is what disabled
+    its redaction.
+
+    Reading it here introduces no new PHI storage: `security.tf` documents this
+    archive as containing the raw value by design, under a 30-day lifecycle, inside
+    the same BAA boundary. The value is used in memory to build the redaction set
+    and is never written to the corpus.
+
+    Returns None past the 30-day lifecycle window — which is exactly why the
+    structural `_MBI` / `_MEMBER_ALNUM` patterns in deidentify.py exist as the
+    layer that does not depend on having captured the value.
+    """
+    if model_run is None or not model_run.raw_response_s3_key:
+        return None
+    try:
+        raw = await asyncio.to_thread(s3.get_bytes, model_run.raw_response_s3_key)
+        payload = json.loads(raw.decode("utf-8", "replace"))
+        text = "".join(
+            block.get("text", "")
+            for block in payload.get("content", [])
+            if block.get("type") == "text"
+        )
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end <= start:
+            return None
+        value = json.loads(text[start : end + 1]).get("member_id")
+        return str(value) if value else None
+    except Exception:  # noqa: BLE001 — an expired archive must not abort the export
+        return None
 
 
 def _group(rows):
@@ -88,6 +137,19 @@ def _reidentification_risk(records: list[dict]) -> dict:
 async def main() -> None:
     include_text = os.environ.get("INCLUDE_DOC_TEXT") == "1"
     use_ner = os.environ.get("USE_NER") == "1"
+
+    # Preflight. hash_ref fails closed without a pepper, and it is called per
+    # record — so without this the export would read the whole database, redact
+    # every field, and only then die on the first claim_ref. Fail in the first
+    # second instead, with an actionable message.
+    if not hashing.is_configured():
+        raise SystemExit(
+            "PHI_HASH_PEPPER is not set. The corpus's claim_ref is an HMAC "
+            "re-identification code (§164.514(c)); without the pepper it would be "
+            "an offline-brute-forceable digest of the claim number, so the export "
+            "refuses to run rather than emit one. Inject the secret "
+            "(heimdall/phi-hash-pepper) into this task and re-run."
+        )
     engine = create_async_engine(settings.database_url)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -98,22 +160,47 @@ async def main() -> None:
         letters = _group((await session.scalars(select(AppealLetter))).all())
         outcomes = _group((await session.scalars(select(Outcome))).all())
         documents = _group((await session.scalars(select(Document))).all())
+        model_runs = {
+            run.id: run
+            for run in (
+                await session.scalars(select(ModelRun).where(ModelRun.purpose == "extraction"))
+            ).all()
+        }
 
     records = []
+    recovered_member_ids = 0
     for case in cases:
         extraction = _latest(extractions.get(case.id, []))
         analysis = _latest(analyses.get(case.id, []))
+        # Prefer a finalized letter, else the newest non-archived draft, else the
+        # newest of anything. Archived letters are superseded advice (a re-analysis
+        # flipped the case to not-appealable, or a newer draft replaced this one),
+        # so they must not be the corpus's "output" label when a live one exists.
         case_letters = letters.get(case.id, [])
-        letter = next((al for al in case_letters if al.finalized_at), None) or _latest(case_letters)
+        letter = (
+            next((al for al in case_letters if al.finalized_at), None)
+            or _latest([al for al in case_letters if al.status != "archived"])
+            or _latest(case_letters)
+        )
         case_outcomes = outcomes.get(case.id, [])
         outcome = _latest(case_outcomes, key="reported_at") if case_outcomes else None
 
         raw = extraction.extracted_json if (extraction and extraction.extracted_json) else {}
         # Exact identifiers we captured for this case — redacted from all free text.
+        # NOTE: `raw` never contains "member_id" (excluded at write time per hard
+        # rule 5), so it is recovered from the model_run archive instead. Reading it
+        # from `raw` here is a silent no-op and must not be reintroduced.
+        member_id = (
+            await _member_id_from_archive(model_runs.get(extraction.model_run_id))
+            if extraction is not None
+            else None
+        )
+        if member_id:
+            recovered_member_ids += 1
         known = [
             case.patient_initials,
             case.claim_number,
-            raw.get("member_id"),
+            member_id,
             raw.get("patient_initials"),
             raw.get("claim_number"),
             raw.get("provider_name"),
@@ -196,7 +283,10 @@ async def main() -> None:
     for rec in records:
         texts = [rec["input"].get("clinical_summary"), rec["output"]["appeal_letter"]]
         if rec["analysis"]:
-            texts += [rec["analysis"]["appealability_reason"], rec["analysis"]["reasoning_text"]]
+            texts += [
+                rec["analysis"]["appealability_reason"],
+                rec["analysis"]["reasoning_text"],
+            ]
         texts += [d.get("text") for d in rec["input"]["documents"]]
         for value in texts:
             for kind, count in scan_residual(value).items():
@@ -204,6 +294,20 @@ async def main() -> None:
                     names.update(count)
                 else:
                     leaks[kind] += count
+
+    # FAIL CLOSED on a formatted leak. These patterns are precise — an email, SSN,
+    # phone, MBI or member-ID shape surviving redaction is a bug in the redactor,
+    # not a false positive. The corpus lands in `exports/`, the one S3 prefix with
+    # NO lifecycle expiry, so a leaked identifier there is retained indefinitely.
+    # Writing it and mentioning the problem in a report nobody reads is not an
+    # option (hard rule 9).
+    if leaks and os.environ.get("ALLOW_RESIDUAL_LEAKS") != "1":
+        raise SystemExit(
+            "ABORTED: redaction left formatted identifiers in the corpus — "
+            f"{dict(leaks)}. Nothing was written. Fix the patterns in "
+            "deidentify.py and re-run; set ALLOW_RESIDUAL_LEAKS=1 only to "
+            "deliberately export a corpus you have reviewed by hand."
+        )
 
     labeled = sum(1 for r in records if r["label"] is not None)
     stamp = datetime.now(UTC)
@@ -219,6 +323,15 @@ async def main() -> None:
             "formatted_leaks": dict(leaks),  # expected empty — anything here is a bug
             "candidate_name_count": len(names),
             "candidate_names": sorted(names)[:500],  # review these for missed names
+        },
+        # How many cases got EXACT-MATCH member-ID redaction (vs pattern-only). A
+        # zero here across a non-empty corpus is the signature of the bug this
+        # replaced: the key-set silently containing None for every case. Cases past
+        # the model_runs 30-day lifecycle legitimately fall back to pattern-only.
+        "member_id_redaction": {
+            "exact_match_cases": recovered_member_ids,
+            "total_cases": len(records),
+            "pattern_only_cases": len(records) - recovered_member_ids,
         },
         # Statistical re-id signal for an Expert Determination (§164.514(b)(1)).
         "reidentification_risk": _reidentification_risk(records),

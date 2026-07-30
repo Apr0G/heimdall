@@ -22,6 +22,11 @@ def do_run_migrations(connection: Connection) -> None:
         connection=connection,
         target_metadata=target_metadata,
         compare_type=True,
+        # This schema leans heavily on server defaults (now(), 'draft',
+        # '{}'::text[], uuid_generate_v4()). Without this, autogenerate silently
+        # misses default drift, so a model whose default no longer matches the
+        # column produces an empty migration and a wrong value at runtime.
+        compare_server_default=True,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -40,6 +45,8 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        compare_type=True,
+        compare_server_default=True,
     )
     with context.begin_transaction():
         context.run_migrations()

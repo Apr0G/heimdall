@@ -26,6 +26,46 @@ resource "aws_kms_key" "heimdall" {
   description             = "Heimdall master encryption key"
   enable_key_rotation     = true
   deletion_window_in_days = 7
+
+  # An explicit policy is REQUIRED for the CloudWatch Logs statement below: with
+  # the default key policy, attaching `kms_key_id` to a log group fails outright
+  # because the logs service principal cannot use the key. The log groups carry
+  # request paths, case UUIDs and exception text, so encrypting them at rest is
+  # the point of the exercise.
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        # Root retains full control. Without this the key becomes unmanageable —
+        # KMS does not fall back to IAM when an explicit policy is present.
+        Sid       = "EnableIAMUserPermissions"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid       = "AllowCloudWatchLogs"
+        Effect    = "Allow"
+        Principal = { Service = "logs.us-east-1.amazonaws.com" }
+        Action = [
+          "kms:Encrypt*",
+          "kms:Decrypt*",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:Describe*",
+        ]
+        Resource = "*"
+        # Scope to this account's log groups so the key cannot be used by another
+        # account's logs even if the service principal is shared.
+        Condition = {
+          ArnLike = {
+            "kms:EncryptionContext:aws:logs:arn" = "arn:aws:logs:us-east-1:${data.aws_caller_identity.current.account_id}:log-group:*"
+          }
+        }
+      },
+    ]
+  })
 }
 
 resource "aws_kms_alias" "heimdall" {

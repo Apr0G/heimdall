@@ -2,6 +2,7 @@ import json
 import logging
 import re
 import sys
+import traceback
 
 # Structured JSON logging.
 #
@@ -28,6 +29,38 @@ def _redact(value: object) -> object:
     return value
 
 
+# How much of an exception's own message we are willing to emit. Exception
+# messages are the one part of a traceback that can carry arbitrary payload data.
+_MAX_EXC_MESSAGE = 200
+
+
+def _safe_exception(exc_info) -> dict[str, object]:
+    """Render an exception as structured, PHI-bounded fields.
+
+    NOT `formatException`. The default rendering calls `str(exc)`, and SQLAlchemy's
+    StatementError appends "[SQL: ...] [parameters: {...}]" there — so a failing
+    INSERT would print its bound values (claim number, payer name, patient
+    initials, extracted clinical JSON) straight into CloudWatch. `hide_parameters`
+    on the engine closes that at the source; this closes it at the sink too, for
+    every other exception type that might embed data in its message.
+
+    The frame list is what actually makes an error debuggable, and file/line/
+    function names are code identity — never patient data.
+    """
+    exc_type, exc_value, exc_tb = exc_info
+    frames = [
+        f"{frame.filename}:{frame.lineno} in {frame.name}" for frame in traceback.extract_tb(exc_tb)
+    ]
+    message = str(exc_value) if exc_value is not None else ""
+    if len(message) > _MAX_EXC_MESSAGE:
+        message = message[:_MAX_EXC_MESSAGE] + "...[truncated]"
+    return {
+        "type": getattr(exc_type, "__name__", str(exc_type)),
+        "message": _redact(message),
+        "frames": frames[-12:],  # deepest frames are the useful ones
+    }
+
+
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, object] = {
@@ -41,7 +74,7 @@ class JsonFormatter(logging.Formatter):
         if isinstance(context, dict):
             payload["context"] = _redact(context)
         if record.exc_info:
-            payload["exc"] = _redact(self.formatException(record.exc_info))
+            payload["exc"] = _safe_exception(record.exc_info)
         return json.dumps(payload)
 
 

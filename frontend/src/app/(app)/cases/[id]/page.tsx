@@ -78,11 +78,18 @@ export default function CaseDetailPage() {
 
   // While processing, poll a PHI-free status endpoint (no audit row per poll)
   // instead of re-fetching the full audited detail every 2s.
-  const { data: statusPoll } = useQuery({
+  const { data: statusPoll, isError: statusPollFailed } = useQuery({
     queryKey: ["case-status", id],
     queryFn: () => fetchCaseStatus(id),
     enabled: data?.status === "processing",
-    refetchInterval: (query) => (query.state.data?.status === "processing" ? 2000 : false),
+    // Driven by the PARENT query's status, not by the poll's own last result.
+    // Keying off `query.state.data` meant two consecutive failures left
+    // `data` undefined, the interval became false, and polling stopped
+    // permanently — stranding the case on a spinner with no error and no retry.
+    // The poll is only enabled while the parent says "processing" anyway, so the
+    // parent is the correct authority for when to stop.
+    refetchInterval: data?.status === "processing" ? 2000 : false,
+    retry: 3,
   });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["case", id] });
@@ -126,6 +133,10 @@ export default function CaseDetailPage() {
       {data.status === "processing" ? (
         <ProcessingView
           stalled={statusPoll?.stalled ?? data.stalled ?? false}
+          // A poll that has exhausted its retries shows the same way out as a
+          // stall. Otherwise the user sits on a spinner forever with no signal
+          // that we stopped listening.
+          pollFailed={statusPollFailed}
           onRetry={() => retry.mutate()}
           retrying={retry.isPending}
         />
@@ -170,16 +181,19 @@ function CaseDetailSkeleton() {
 
 function ProcessingView({
   stalled,
+  pollFailed = false,
   onRetry,
   retrying,
 }: {
   stalled: boolean;
+  pollFailed?: boolean;
   onRetry: () => void;
   retrying: boolean;
 }) {
   // The pipeline runs in-process, so a deploy/crash can strand a case in
-  // `processing`. Once the server flags it stalled, offer a way out.
-  if (stalled) {
+  // `processing`. Once the server flags it stalled — or once we can no longer
+  // reach the status endpoint at all — offer a way out rather than spinning.
+  if (stalled || pollFailed) {
     return (
       <div className="flex flex-col items-center rounded-lg border border-border bg-card px-6 py-24 text-center shadow-sm">
         <span
@@ -551,7 +565,12 @@ function LetterCard({ c, onChanged }: { c: CaseDetail; onChanged: () => void }) 
     onError: (e) => toastError(e),
   });
 
-  if (!c.letter) {
+  // Gate on the BODY, not on the letter object. A letter row with body: "" is
+  // truthy, so this used to render the full card — version chips, status chips,
+  // an empty body block and an ACTIVE Download button that 404s. The backend now
+  // refuses to persist an empty body at all, but the UI must not depend on that
+  // to avoid showing a download that cannot work.
+  if (!c.letter?.body?.trim()) {
     return (
       <Card>
         <CardHeader>

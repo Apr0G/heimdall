@@ -1,7 +1,15 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import TIMESTAMP, ForeignKey, Integer, Text, UniqueConstraint, text
+from sqlalchemy import (
+    TIMESTAMP,
+    ForeignKey,
+    Index,
+    Integer,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -33,4 +41,5 @@ class AppealLetter(Base, UUIDPrimaryKey, CreatedAtMixin):
 
     __table_args__ = (
         UniqueConstraint("case_id", "version", name="uq_appeal_letters_case_version"),
+        Index("ix_appeal_letters_model_run_id", "model_run_id"),
     )

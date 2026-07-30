@@ -46,6 +46,10 @@ denial_category = _pg_enum(
     "non_covered",
     "missing_info",
     "wrong_payer",
+    # The two never-appeal classes. Added in 0008 so CO-45 and PR-* stop
+    # collapsing into "other" and become visible in the corpus labels.
+    "contractual_adjustment",
+    "patient_responsibility",
     "other",
     name="denial_category",
 )
@@ -77,20 +81,9 @@ outcome_result = _pg_enum(
 
 outcome_source = _pg_enum("user_reported", "imported", name="outcome_source")
 
-# Enum names in creation order, for the migration to CREATE/DROP TYPE.
-ALL_ENUM_NAMES = [
-    "user_role",
-    "case_status",
-    "plan_type",
-    "doc_type",
-    "ocr_status",
-    "denial_category",
-    "probability_band",
-    "appeal_level",
-    "letter_status",
-    "model_run_purpose",
-    "model_run_status",
-    "outcome_action",
-    "outcome_result",
-    "outcome_source",
-]
+# NOTE: there is deliberately no ALL_ENUM_NAMES list here. 0001_initial_schema.py
+# carries its own frozen dict of enum names *and members*, which is correct — a
+# migration must describe the schema at its own point in time, not follow the ORM.
+# The old list claimed the migration consumed it, which was false and would have led
+# anyone appending an enum here to ship a type that was never CREATEd.
+# test_enum_parity.py asserts these definitions match the live database instead.

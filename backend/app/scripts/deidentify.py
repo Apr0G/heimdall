@@ -20,10 +20,11 @@ validation report is built to support. Treat the output as PHI until that review
 is signed off.
 """
 
-import hashlib
 import os
 import re
 from datetime import date
+
+from app.core import hashing
 
 # Extraction fields that carry no patient identifier — safe to export verbatim.
 SAFE_EXTRACTION_FIELDS = {
@@ -68,6 +69,20 @@ _DATE = re.compile(
     re.IGNORECASE,
 )
 _LONGNUM = re.compile(r"(?<!\d)\d{6,}(?!\d)")  # member ids / MRNs / claim / account
+# Medicare Beneficiary Identifier (MBI): 11 chars, position-constrained, optionally
+# dash-separated as 4-3-4 — e.g. 1EG4-TE5-MK73. Never all-numeric, so it slips past
+# _LONGNUM entirely.
+_MBI = re.compile(
+    r"\b[1-9][A-Z][A-Y0-9]\d-?[A-Z][A-Y0-9]\d-?[A-Z]{2}\d{2}\b",
+    re.IGNORECASE,
+)
+# Commercial payer member IDs: a mixed alphanumeric run of 8+ characters containing
+# at least one letter AND at least one digit (W1A2B3C4D, ABC123456789). Deliberately
+# 8+ and mixed so CPT (5 digits), ICD-10 (A00.0), HCPCS (J1234), CARC (CO-197) and
+# NPIs (caught by _LONGNUM) all survive as training signal.
+_MEMBER_ALNUM = re.compile(
+    r"\b(?=[A-Z0-9]{8,20}\b)(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{8,20}\b"
+)
 # Authorization / reference numbers (AUTH-555, CASE-1234). 4+ letter prefix so
 # 2-3 letter form/adjustment codes survive (CO-197, UB-04, CMS-1500).
 _AUTH = re.compile(r"\b[A-Z]{4,}-\d{2,}[A-Z0-9-]*\b")
@@ -101,8 +116,19 @@ _CODE = re.compile(
 
 
 def hash_ref(value: str) -> str:
-    """Stable, non-reversible reference so records stay linkable without the id."""
-    return "ref_" + hashlib.sha256(value.strip().lower().encode()).hexdigest()[:12]
+    """Stable, non-reversible reference so records stay linkable without the id.
+
+    HMAC-keyed, not a bare digest. §164.514(c) requires a re-identification code
+    that is NOT derived from information about the individual; an unsalted
+    sha256(claim_number) is derived from precisely that, so anyone holding an EOB
+    could compute the digest and confirm the case is in the corpus, or enumerate a
+    payer's claim-number format offline.
+
+    Fails closed when no pepper is configured. The export is an operator-run job,
+    so a loud failure is correct — silently emitting a brute-forceable reference
+    into a corpus with no lifecycle expiry is not.
+    """
+    return "ref_" + hashing.keyed_hash(value, purpose=hashing.CLAIM_REF)[:24]
 
 
 def deid_year(value: date | None) -> int | None:
@@ -202,6 +228,13 @@ def redact_text(text: str | None, known: list, use_ner: bool = False) -> str | N
     out = _DATE.sub("[DATE]", out)
     out = _AGE.sub(_age_sub, out)
     out = _AUTH.sub("[ID]", out)
+    # Member-ID shapes BEFORE the plain long-number pass. These are the identifiers
+    # the exact-match key-set used to miss entirely: `extracted_json` is written
+    # with exclude={"member_id"} per hard rule 5, so raw.get("member_id") was always
+    # None and the member ID was never in the redaction set at all. Structural
+    # coverage does not depend on having captured the value.
+    out = _MBI.sub("[MEMBER_ID]", out)
+    out = _MEMBER_ALNUM.sub("[MEMBER_ID]", out)
     out = _LONGNUM.sub("[ID]", out)
     # Names in standard letter slots (belt-and-suspenders over NER).
     out = _NAME_SLOT.sub(lambda m: m.group("cue") + "[NAME]", out)
@@ -223,6 +256,8 @@ def scan_residual(text: str | None) -> dict:
         ("ip", _IPV4),
         ("long_number", _LONGNUM),
         ("auth_ref", _AUTH),
+        ("mbi", _MBI),
+        ("member_alnum", _MEMBER_ALNUM),
     ):
         count = len(pat.findall(text))
         if count:

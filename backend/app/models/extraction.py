@@ -2,7 +2,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, Date, ForeignKey, Numeric, Text, text
+from sqlalchemy import BigInteger, Date, ForeignKey, Index, Numeric, Text, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -48,4 +48,10 @@ class Extraction(Base, UUIDPrimaryKey, CreatedAtMixin):
         PGUUID(as_uuid=True),
         ForeignKey("model_runs.id", ondelete="RESTRICT"),
         nullable=True,
+    )
+
+    __table_args__ = (
+        Index("ix_extractions_case_created", "case_id", text("created_at DESC")),
+        Index("ix_extractions_source_document_id", "source_document_id"),
+        Index("ix_extractions_model_run_id", "model_run_id"),
     )

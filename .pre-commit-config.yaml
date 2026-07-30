@@ -24,6 +24,16 @@ repos:
     hooks:
       - id: black
         files: ^(backend|scripts)/
+        # MUST match [tool.black] in backend/pyproject.toml, which CI enforces
+        # via `cd backend && black --check .`.
+        #
+        # Without this the two disagree and actively fight: black resolves config
+        # from the common parent of the files it is given, and because this hook
+        # spans BOTH backend/ and scripts/ that parent is the repo root — which has
+        # no [tool.black]. So the hook silently formatted at black's default 88
+        # columns while CI demanded 100, meaning every commit reformatted the tree
+        # one way and every CI run failed asking for the other.
+        args: ["--line-length=100"]
 
   - repo: local
     hooks:

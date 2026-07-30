@@ -33,10 +33,20 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 // server-side, where it cannot read localStorage.
 const AUTH_COOKIE = "hd_authed";
 
-function setAuthedCookie() {
+// Fallback lifetime when the server didn't tell us (matches Cognito's default
+// access-token validity of one hour).
+const DEFAULT_SESSION_SECONDS = 3600;
+
+function setAuthedCookie(expiresIn: number = DEFAULT_SESSION_SECONDS) {
   // Secure over HTTPS (prod); omitted on http://localhost so dev auth-gating works.
   const secure = window.location.protocol === "https:" ? "; secure" : "";
-  document.cookie = `${AUTH_COOKIE}=1; path=/; max-age=2592000; samesite=lax${secure}`;
+  // Lifetime tracks the SESSION, not a fixed 30 days. When this outlived the
+  // httpOnly session cookie, the presence flag kept claiming "logged in" for 30
+  // days after a 1-hour session expired — so `/` and `/login` redirected to
+  // `/dashboard`, which bounced back, leaving the marketing site unreachable to
+  // a logged-out user until they cleared cookies.
+  const maxAge = Math.max(1, Math.floor(expiresIn));
+  document.cookie = `${AUTH_COOKIE}=1; path=/; max-age=${maxAge}; samesite=lax${secure}`;
 }
 
 function clearAuthedCookie() {
@@ -78,8 +88,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Shared tail once a session is established (direct login or after MFA): the
   // server has already set the httpOnly cookie, so just set the presence flag,
   // wipe any previous session's cache, load the user, and go to the app.
-  const completeAuth = useCallback(async () => {
-    setAuthedCookie();
+  const completeAuth = useCallback(async (expiresIn?: number) => {
+    setAuthedCookie(expiresIn);
     queryClient.clear();
     const me = await api.get<User>("/api/auth/me");
     setUser(me.data);
@@ -92,7 +102,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (res.data.mfa) {
         return { status: "mfa", challenge: res.data.mfa.challenge, session: res.data.mfa.session };
       }
-      await completeAuth();
+      await completeAuth(res.data.expires_in);
       return { status: "ok" };
     },
     [completeAuth],
@@ -100,8 +110,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const verifyMfa = useCallback(
     async (email: string, session: string, code: string) => {
-      await api.post("/api/auth/mfa/verify", { email, session, code });
-      await completeAuth();
+      const res = await api.post("/api/auth/mfa/verify", { email, session, code });
+      await completeAuth(res.data.expires_in);
     },
     [completeAuth],
   );
@@ -113,8 +123,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const completeMfaSetup = useCallback(
     async (email: string, session: string, code: string) => {
-      await api.post("/api/auth/mfa/setup/complete", { email, session, code });
-      await completeAuth();
+      const res = await api.post("/api/auth/mfa/setup/complete", { email, session, code });
+      await completeAuth(res.data.expires_in);
     },
     [completeAuth],
   );

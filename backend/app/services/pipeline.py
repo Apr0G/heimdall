@@ -118,11 +118,25 @@ async def run_reanalysis(case_id: UUID, run_id: UUID) -> None:
         await _mark_error(case_id, run_id, exc)
 
 
+class DocumentTamperedError(RuntimeError):
+    """A document's bytes no longer match the content_hash recorded at first read."""
+
+
 async def _extract_one(session: AsyncSession, doc: Document) -> None:
     # Read the PDF once: hash it for an integrity anchor (§164.312(c)(1)) and reuse
     # the same bytes for digital-text extraction (no second S3 read).
     data = await run_in_threadpool(s3.get_bytes, doc.s3_key)
-    doc.content_hash = hashlib.sha256(data).hexdigest()
+    digest = hashlib.sha256(data).hexdigest()
+    if doc.content_hash is None:
+        # First read establishes the anchor.
+        doc.content_hash = digest
+    elif doc.content_hash != digest:
+        # Do NOT re-bless. Overwriting the hash unconditionally on every run meant
+        # any retry silently re-anchored a tampered object, so the integrity check
+        # would compare it against the tampered bytes and report a match forever.
+        raise DocumentTamperedError(
+            f"document {doc.id} no longer matches its recorded content hash"
+        )
     text = await run_in_threadpool(document_extractor.digital_text_from_bytes, data)
     if text is None:
         # Scanned PDF -> OCR. Mark pending so the state is observable.
@@ -153,12 +167,25 @@ async def _extract_documents(
 ) -> None:
     documents = (await session.scalars(select(Document).where(Document.case_id == case.id))).all()
     for doc in documents:
-        if only_missing_text:
+        if only_missing_text and doc.content_hash is not None:
             # Skip docs already extracted on the first pass; only do the new ones.
+            #
+            # Keyed on content_hash, NOT on S3 presence alone. A superseded run can
+            # write the extracted text to S3 and then have its DB transaction rolled
+            # back, discarding content_hash — after which an S3-presence check would
+            # skip that document forever, leaving it permanently unhashed and so
+            # permanently invisible to the integrity check.
             existing = await run_in_threadpool(s3.head_object, s3.extracted_text_key(doc.s3_key))
             if existing is not None:
                 continue
         await _extract_one(session, doc)
+        # Heartbeat. A case whose row hasn't advanced in STALE_PROCESSING minutes is
+        # treated as stalled and eligible for a concurrent retry — but a healthy
+        # multi-document Textract run can legitimately exceed that window. Touching
+        # the case row between documents keeps a working pipeline from being
+        # declared dead and duplicated.
+        case.updated_at = datetime.now(UTC)
+        await session.flush()
 
 
 async def _mark_error(case_id: UUID, run_id: UUID, exc: Exception) -> None:

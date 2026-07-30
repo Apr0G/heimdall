@@ -13,10 +13,14 @@ from app.services import claude_client, s3
 logger = logging.getLogger(__name__)
 
 
-def probability_band(probability: float | None) -> str:
-    """Spec thresholds: low < 0.35, moderate 0.35-0.65, high > 0.65."""
+def probability_band(probability: float | None) -> str | None:
+    """Spec thresholds: low < 0.35, moderate 0.35-0.65, high > 0.65.
+
+    Returns None when the model gave no estimate — the band is a *derived* fact, so
+    inventing "moderate" from a missing input showed the doctor a confidence level
+    that was never produced."""
     if probability is None:
-        return "moderate"
+        return None
     if probability < 0.35:
         return "low"
     if probability <= 0.65:
@@ -26,6 +30,36 @@ def probability_band(probability: float | None) -> str:
 
 # Conditional documents a doctor can add after the first review (Phase 12).
 SUPPLEMENTAL_DOC_TYPES = ("prior_auth", "prior_treatment")
+
+# Denials that are never appealable, enforced server-side rather than trusted from
+# model output. CO-45 is a contracted write-off and PR-* means the patient owes —
+# in both cases there is no payer obligation to appeal against.
+#
+# CO-97 is deliberately ABSENT: whether an NCCI bundling edit is overridable turns
+# on the PTP modifier indicator, which lives in the CMS edit tables and never
+# appears on an EOB or CMS-1500. Auto-classifying it as never-appeal silently drops
+# winnable indicator-1 appeals, so it stays appealable and flagged for review.
+_NEVER_APPEAL_EXACT = {"CO-45"}
+_NEVER_APPEAL_PREFIXES = ("PR-",)
+
+
+def _normalize_carc(code: str) -> str:
+    return code.strip().upper().replace("_", "-").replace(" ", "")
+
+
+def never_appealable_codes(carc_codes: list[str] | None) -> list[str]:
+    """The subset of `carc_codes` that are categorically not appealable. Pure, so
+    it is unit-testable without a database or a model call."""
+    if not carc_codes:
+        return []
+    hits = []
+    for raw in carc_codes:
+        if not isinstance(raw, str):
+            continue
+        code = _normalize_carc(raw)
+        if code in _NEVER_APPEAL_EXACT or code.startswith(_NEVER_APPEAL_PREFIXES):
+            hits.append(code)
+    return hits
 
 
 async def _read_doc_text(session: AsyncSession, doc: Document) -> str:
@@ -96,11 +130,36 @@ async def run_ai_analysis(session: AsyncSession, case: Case) -> Analysis:
         else None
     )
 
+    # Server-side never-appeal guard. The triage rules live in the prompt, which
+    # makes them a request rather than a control — a model that flips a PR-1 to
+    # appealable would otherwise draft an appeal for a balance the patient owes.
+    # The CARC codes are already on the extraction, so this is checkable without
+    # trusting the model. Same pattern as probability_band: derive, don't accept.
+    blocking_codes = never_appealable_codes(extraction.carc_codes if extraction else [])
+    is_appealable = result.is_appealable and not blocking_codes
+    appealability_reason = result.appealability_reason
+    if blocking_codes and result.is_appealable:
+        logger.warning(
+            "never-appeal guard overrode model output",
+            extra={
+                "context": {
+                    "case_id": str(case.id),
+                    "codes": blocking_codes,
+                    "model_said": result.is_appealable,
+                }
+            },
+        )
+        appealability_reason = (
+            f"{', '.join(blocking_codes)} is a categorically non-appealable adjustment "
+            "(contractual write-off or patient responsibility), so no payer appeal "
+            "applies. The AI assessment disagreed and was overridden."
+        )
+
     analysis = Analysis(
         case_id=case.id,
         denial_category=result.denial_category,
-        is_appealable=result.is_appealable,
-        appealability_reason=result.appealability_reason,
+        is_appealable=is_appealable,
+        appealability_reason=appealability_reason,
         success_probability=success_probability,
         probability_band=probability_band(result.success_probability),
         reasoning_text=result.reasoning_text,
@@ -116,7 +175,7 @@ async def run_ai_analysis(session: AsyncSession, case: Case) -> Analysis:
             "context": {
                 "case_id": str(case.id),
                 "denial_category": result.denial_category,
-                "is_appealable": result.is_appealable,
+                "is_appealable": is_appealable,
                 "band": analysis.probability_band,
                 "input_tokens": outcome.input_tokens,
                 "output_tokens": outcome.output_tokens,

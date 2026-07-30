@@ -26,6 +26,7 @@ resource "aws_sns_topic_subscription" "alerts_email" {
 resource "aws_cloudwatch_log_group" "cloudtrail" {
   name              = "/heimdall/cloudtrail"
   retention_in_days = 365
+  kms_key_id        = aws_kms_key.heimdall.arn
 }
 
 resource "aws_iam_role" "cloudtrail_cw" {

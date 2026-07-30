@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import TIMESTAMP, BigInteger, ForeignKey, Text, text
+from sqlalchemy import TIMESTAMP, BigInteger, ForeignKey, Index, Text, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -36,4 +36,9 @@ class Document(Base, UUIDPrimaryKey):
     )
     uploaded_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    __table_args__ = (
+        Index("ix_documents_case_id", "case_id"),
+        Index("ix_documents_uploaded_by", "uploaded_by"),
     )

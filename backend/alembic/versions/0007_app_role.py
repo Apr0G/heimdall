@@ -19,6 +19,8 @@ Manager) so it never lives in this file or in the app's environment.
 import os
 import re
 
+import sqlalchemy as sa
+
 from alembic import op
 
 revision = "0007_app_role"
@@ -46,13 +48,25 @@ def _app_password() -> str:
 def upgrade() -> None:
     pw = _app_password()
     # Create-or-update the login role (idempotent).
+    #
+    # The password never appears in DDL text. It was never injectable (the regex
+    # above constrains it to alphanumerics), but an inlined literal is logged
+    # verbatim by Postgres if the statement errors.
+    #
+    # set_config() is an ordinary function call, so the value travels as a real
+    # protocol-level bind parameter — unlike anything inside a `DO $$ ... $$`
+    # body, which the server receives as one opaque string with no placeholders.
+    # is_local=true scopes it to this transaction, so it is gone at commit.
+    op.execute(sa.text("SELECT set_config('heimdall.app_pw', :pw, true)").bindparams(pw=pw))
     op.execute(f"""
         DO $$
         BEGIN
           IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{APP_ROLE}') THEN
-            ALTER ROLE {APP_ROLE} WITH LOGIN PASSWORD '{pw}';
+            EXECUTE format('ALTER ROLE %I WITH LOGIN PASSWORD %L',
+                           '{APP_ROLE}', current_setting('heimdall.app_pw'));
           ELSE
-            CREATE ROLE {APP_ROLE} WITH LOGIN PASSWORD '{pw}';
+            EXECUTE format('CREATE ROLE %I WITH LOGIN PASSWORD %L',
+                           '{APP_ROLE}', current_setting('heimdall.app_pw'));
           END IF;
         END $$;
         """)
@@ -67,11 +81,19 @@ def upgrade() -> None:
     op.execute(f"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {APP_ROLE}")
     # ...except audit_logs, which the app may only append to (never mutate). TRUNCATE
     # was never granted, and the role is not the owner, so it cannot drop the trigger.
-    op.execute(f"REVOKE UPDATE, DELETE, TRUNCATE ON audit_logs FROM {APP_ROLE}")
-    # ...and the same DML on tables future migrations create (run as heimdall_admin).
+    # Schema-qualified, matching the grants above — an unqualified name resolves
+    # against search_path, which is not guaranteed to be `public` for every caller.
+    op.execute(f"REVOKE UPDATE, DELETE, TRUNCATE ON public.audit_logs FROM {APP_ROLE}")
+    # ...and on tables future migrations create (run as heimdall_admin).
+    #
+    # SELECT + INSERT only by default. Postgres has no per-table exclusion for
+    # ALTER DEFAULT PRIVILEGES, so a blanket UPDATE/DELETE grant would silently
+    # re-grant them on audit_logs if that table were ever rebuilt — quietly
+    # undoing the revoke above. Defaulting to append-only and granting the extra
+    # DML per table means the failure mode is a permission error on a new table,
+    # not a silent loss of the append-only guarantee on the audit trail.
     op.execute(
-        "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
-        f"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {APP_ROLE}"
+        "ALTER DEFAULT PRIVILEGES IN SCHEMA public " f"GRANT SELECT, INSERT ON TABLES TO {APP_ROLE}"
     )
     op.execute(
         "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
@@ -80,14 +102,22 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Best-effort: only succeeds when nothing is connected as the role.
-    op.execute(
-        "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
-        f"REVOKE SELECT, INSERT, UPDATE, DELETE ON TABLES FROM {APP_ROLE}"
-    )
-    op.execute(
-        "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
-        f"REVOKE USAGE, SELECT ON SEQUENCES FROM {APP_ROLE}"
-    )
-    op.execute(f"DROP OWNED BY {APP_ROLE}")
-    op.execute(f"DROP ROLE IF EXISTS {APP_ROLE}")
+    # Best-effort: only succeeds when nothing is connected as the role. Every
+    # statement is wrapped in an existence check — DROP OWNED BY has no IF EXISTS
+    # and ALTER DEFAULT PRIVILEGES errors on a missing role, so a downgrade on a
+    # database where the role was never created used to abort partway.
+    op.execute(f"""
+        DO $$
+        BEGIN
+          IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{APP_ROLE}') THEN
+            EXECUTE format(
+              'ALTER DEFAULT PRIVILEGES IN SCHEMA public '
+              'REVOKE SELECT, INSERT, UPDATE, DELETE ON TABLES FROM %I', '{APP_ROLE}');
+            EXECUTE format(
+              'ALTER DEFAULT PRIVILEGES IN SCHEMA public '
+              'REVOKE USAGE, SELECT ON SEQUENCES FROM %I', '{APP_ROLE}');
+            EXECUTE format('DROP OWNED BY %I', '{APP_ROLE}');
+            EXECUTE format('DROP ROLE %I', '{APP_ROLE}');
+          END IF;
+        END $$;
+        """)

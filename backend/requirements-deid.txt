@@ -1,0 +1,164 @@
+# Pinned, hash-verified dependency set for the de-identification NER pass
+# (Presidio + spaCy), used ONLY by the one-off corpus-export ECS task.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# export-corpus.yml used to run, inside the production task definition:
+#
+#     pip install presidio-analyzer presidio-anonymizer && python -m spacy download en_core_web_lg
+#
+# with no version pins, no hashes and no index restriction — in a container
+# holding DATABASE_URL and the app task role, with assignPublicIp=ENABLED, and
+# with `ner` defaulting to "true" so it was the NORMAL path. A compromised or
+# typosquatted release of either package, of ANY transitive dependency, or of the
+# spaCy model endpoint would have executed arbitrary code against the full PHI
+# database and the app's S3/Bedrock/KMS permissions before the export even
+# started. It also bypassed the ECR scan_on_push control, which only ever
+# inspected the baked image.
+#
+# `pip install --require-hashes` makes the install reproducible and tamper-evident:
+# every artifact, including the whole transitive closure, must match a hash
+# recorded here. A substituted or backdoored wheel fails the install instead of
+# running.
+#
+# NOT in pyproject.toml on purpose: these are not app dependencies. The API image
+# must not carry a 382 MB NLP model, and nothing in the request path imports them
+# (deidentify.py loads Presidio lazily and degrades cleanly when it is absent).
+#
+# HOW TO REGENERATE
+# -----------------
+# Resolved for the CONTAINER's platform (linux/amd64, CPython 3.11), not a laptop:
+#
+#     pip download --platform manylinux2014_x86_64 --python-version 3.11 \
+#         --implementation cp --only-binary=:all: --dest wheels \
+#         "presidio-analyzer==<v>" "presidio-anonymizer==<v>"
+#     for w in wheels/*.whl; do
+#       python - "$w" <<'PY'
+#     import hashlib, sys, pathlib
+#     p = pathlib.Path(sys.argv[1]); n, v = p.name.split("-")[:2]
+#     print(f"{n.replace('_','-').lower()}=={v} \\\n    --hash=sha256:{hashlib.sha256(p.read_bytes()).hexdigest()}")
+#     PY
+#     done
+#
+# FOLLOW-UP (not done here): bake this set into a second image stage pushed to
+# ECR so it is scanned, and give the export its own task definition. That removes
+# runtime installation from a PHI task entirely, rather than making it verifiable.
+#
+# The spaCy model is pinned by URL + hash at the bottom of this file.
+
+annotated-doc==0.0.5 \
+    --hash=sha256:117bac03a25ede5df5440e855b32d556049ca169ead221505badf432fed4b101
+annotated-types==0.8.0 \
+    --hash=sha256:f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0
+anyio==4.14.2 \
+    --hash=sha256:9f505dda5ac9f0c8309b5e8bd445a8c2bf7246f3ce950121e45ea15bc41d1494
+blis==1.3.3 \
+    --hash=sha256:e9327a6ca67de8ae76fe071e8584cc7f3b2e8bfadece4961d40f2826e1cda2df
+catalogue==2.0.10 \
+    --hash=sha256:58c2de0020aa90f4a2da7dfad161bf7b3b054c86a5f09fcedc0b2b740c109a9f
+certifi==2026.7.22 \
+    --hash=sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775
+cffi==2.1.0 \
+    --hash=sha256:aa7a1b53a2a4452ada2d1b5dade9960b2522f1e61293a811a077439e39029565
+charset-normalizer==3.4.9 \
+    --hash=sha256:04ce310cb89c15df659582aee80a0603788732a5e017d5bd5c81158106ce249c
+click==8.4.2 \
+    --hash=sha256:e6f9f66136c816745b9d65817da91d61d957fb16e02e4dcd0552553c5a197b76
+cloudpathlib==0.24.0 \
+    --hash=sha256:b1c51e2d2ec7dc4fed6538991f4aea849d6cf11a7e6b9069f86e461aa1f9b5b4
+confection==1.3.3 \
+    --hash=sha256:b9fef9ee84b237ef4611ec3eb5797b70e13063e6310ad9f15536373f5e313c82
+cryptography==48.0.1 \
+    --hash=sha256:f0d27a5696721ef7a672b8c810f6aded391058e0b9486e63e6d93baf765da691
+cymem==2.0.13 \
+    --hash=sha256:30c4e75a3a1d809e89106b0b21803eb78e839881aa1f5b9bd27b454bc73afde3
+filelock==3.32.2 \
+    --hash=sha256:87dd94cf281e586d135fa51132b8e3d9a598b316e90377a288663c9321036c82
+h11==0.16.0 \
+    --hash=sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86
+httpcore==1.0.9 \
+    --hash=sha256:2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55
+httpx==0.28.1 \
+    --hash=sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad
+idna==3.18 \
+    --hash=sha256:7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2
+jinja2==3.1.6 \
+    --hash=sha256:85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67
+markdown-it-py==4.2.0 \
+    --hash=sha256:9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a
+markupsafe==3.0.3 \
+    --hash=sha256:0bf2a864d67e76e5c9a34dc26ec616a66b9888e25e7b9460e1c76d3293bd9dbf
+mdurl==0.1.2 \
+    --hash=sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8
+murmurhash==1.0.15 \
+    --hash=sha256:c4cd739a00f5a4602201b74568ddabae46ec304719d9be752fd8f534a9464b5e
+numpy==2.2.6 \
+    --hash=sha256:ba10f8411898fc418a521833e014a77d3ca01c15b0c6cdcce6a0d2897e6dbbdf
+packaging==26.2 \
+    --hash=sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e
+phonenumbers==9.0.35 \
+    --hash=sha256:57ef9787ddf2bc8cc0906d5c876d43fcd65fa25e7330d00b9f2ba8528870b72a
+preshed==3.0.13 \
+    --hash=sha256:f8e6fe0620ed0f96a246d46447055c447e071cd8222731a045c235e8a758c918
+presidio-analyzer==2.2.364 \
+    --hash=sha256:0a9eeb60ccc416c505367b4989d056becb84ef082703ee3361c046fb75941739
+presidio-anonymizer==2.2.364 \
+    --hash=sha256:f3edfe80b5e83a22976439727e9d449c796b12efdf6cd70a6db860d4942a6b72
+pycparser==3.0 \
+    --hash=sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
+pydantic==2.13.4 \
+    --hash=sha256:45a282cde31d808236fd7ea9d919b128653c8b38b393d1c4ab335c62924d9aba
+pydantic-core==2.46.4 \
+    --hash=sha256:f9fa868638bf362d3d138ea55829cefb3d5f4b0d7f142234382a15e2485dbec4
+pygments==2.20.0 \
+    --hash=sha256:81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176
+pyyaml==6.0.3 \
+    --hash=sha256:b8bb0864c5a28024fac8a632c443c87c5aa6f215c0b126c449ae1a150412f31d
+regex==2026.7.19 \
+    --hash=sha256:09f3e5287f94f17b709dc9a9e70865855feee835c861613be144218ce4ca82cc
+requests==2.34.2 \
+    --hash=sha256:2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0
+requests-file==3.0.1 \
+    --hash=sha256:d0f5eb94353986d998f80ac63c7f146a307728be051d4d1cd390dbdb59c10fa2
+rich==15.0.0 \
+    --hash=sha256:33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb
+setuptools==83.0.0 \
+    --hash=sha256:29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3
+shellingham==1.5.4 \
+    --hash=sha256:7ecfff8f2fd72616f7481040475a65b2bf8af90a56c89140852d1120324e8686
+smart-open==8.0.1 \
+    --hash=sha256:3e97f90e92a952cb57863dfe132082c400a52eeeb27c067692fb51dbcc5b0089
+spacy==3.8.14 \
+    --hash=sha256:cc5e5f2ed121d57d819d247bb59253dc320a58acbd237b85f86c2aa38cab6bd1
+spacy-legacy==3.0.12 \
+    --hash=sha256:476e3bd0d05f8c339ed60f40986c07387c0a71479245d6d0f4298dbd52cda55f
+spacy-loggers==1.0.5 \
+    --hash=sha256:196284c9c446cc0cdb944005384270d775fdeaf4f494d8e269466cfa497ef645
+srsly==2.5.3 \
+    --hash=sha256:4ca4a068f6e14d84113a02fcb875c6b50a6285a12938c0e7a157eb3a63c50a86
+thinc==8.3.13 \
+    --hash=sha256:81337dfbee37f58f36c0c70f9a819dce1b32cdc13d959181e10de079621f6ac6
+tldextract==5.3.1 \
+    --hash=sha256:6bfe36d518de569c572062b788e16a659ccaceffc486d243af0484e8ecf432d9
+tqdm==4.70.0 \
+    --hash=sha256:7f585706bfddbdebf89daac705b2dfcc16890130727d3197ca62c732b4310953
+typer==0.27.0 \
+    --hash=sha256:6f4b27631e47f077871b7dc30e933ec0131c1390fbe0e387ea5574b5bac9ccf1
+typing-extensions==4.16.0 \
+    --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8
+typing-inspection==0.4.2 \
+    --hash=sha256:4ed1cacbdc298c220f1bd249ed5287caa16f34d44ef4e9c3d0cbad5b521545e7
+urllib3==2.7.0 \
+    --hash=sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897
+wasabi==1.1.3 \
+    --hash=sha256:f76e16e8f7e79f8c4c8be49b4024ac725713ab10cd7f19350ad18a8e3f71728c
+weasel==1.0.0 \
+    --hash=sha256:89518acee027f49d743126c3502d35e6dd14f5768be5c37c9af47c171b6005cc
+wrapt==2.3.0 \
+    --hash=sha256:fc648a335d7e01adb3640b25f02fd0ea05886cf04d0af7f4ee902bc7b5e466e8
+
+# The NER model itself. `python -m spacy download` resolves a version at runtime
+# from a GitHub release endpoint with no pin and no verification; this pins both.
+# Must stay compatible with the spacy version pinned above (3.8.x).
+https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl \
+    --hash=sha256:293e9547a655b25499198ab15a525b05b9407a75f10255e405e8c3854329ab63

@@ -1,7 +1,7 @@
 import logging
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Analysis, AppealLetter, Case, Extraction, Practice
@@ -25,10 +25,16 @@ def next_letter_version(existing_versions: list[int]) -> int:
 
 
 def format_amount_cents(cents: int | None) -> str:
-    """Render integer cents as a USD string for the letter (display only)."""
+    """Render integer cents as a USD string for the letter (display only).
+
+    Integer divmod rather than `cents / 100` — hard rule 11 forbids floats for
+    currency, and a float division is the exact shape of the bug the rule exists to
+    prevent, even where the magnitudes involved happen to round correctly."""
     if cents is None:
         return "the denied amount"
-    return f"${cents / 100:,.2f}"
+    sign = "-" if cents < 0 else ""
+    dollars, remainder = divmod(abs(cents), 100)
+    return f"{sign}${dollars:,}.{remainder:02d}"
 
 
 def _letterhead(case: Case, practice: Practice | None, extraction: Extraction | None) -> dict:
@@ -55,6 +61,16 @@ def _letterhead(case: Case, practice: Practice | None, extraction: Extraction | 
     }
 
 
+async def _archive_existing_drafts(session: AsyncSession, case: Case) -> int:
+    """Mark every non-archived letter on this case `archived`. Returns the count."""
+    result = await session.execute(
+        update(AppealLetter)
+        .where(AppealLetter.case_id == case.id, AppealLetter.status != "archived")
+        .values(status="archived")
+    )
+    return result.rowcount or 0
+
+
 async def run_appeal_letter(session: AsyncSession, case: Case) -> AppealLetter | None:
     """Draft the appeal letter for an appealable case and transition the case to
     `ready`. If the latest analysis says the denial is not appealable, skip
@@ -64,6 +80,11 @@ async def run_appeal_letter(session: AsyncSession, case: Case) -> AppealLetter |
     )
 
     if not should_draft_letter(analysis):
+        # A re-analysis can flip an appealable case to not-appealable. Any draft
+        # from the earlier run is now retracted advice, so archive it rather than
+        # leaving it downloadable — a practice must not be able to mail an appeal
+        # the system has since withdrawn.
+        await _archive_existing_drafts(session, case)
         case.status = "ready"
         await session.flush()
         logger.info(
@@ -98,6 +119,7 @@ async def run_appeal_letter(session: AsyncSession, case: Case) -> AppealLetter |
         analysis_json,
         clinical_text,
         supplemental_text,
+        appeal_level=analysis.recommended_appeal_level or "level_1_internal",
     )
 
     outcome = await claude_client.complete_json(
@@ -110,6 +132,16 @@ async def run_appeal_letter(session: AsyncSession, case: Case) -> AppealLetter |
         max_tokens=3000,
     )
     draft: LetterDraft = outcome.data
+
+    # Belt and braces behind the schema's min_length. If an empty body ever reaches
+    # here the case must NOT go `ready` — that is precisely the empty success state
+    # hard rule 9 forbids, and the UI would render an active Download button that
+    # 404s. Raise instead and let the pipeline mark the case `error`.
+    if not draft.body.strip():
+        raise ValueError("letter draft has an empty body")
+
+    # A new draft supersedes any previous one (re-analysis, retry).
+    await _archive_existing_drafts(session, case)
 
     existing = list(
         await session.scalars(select(AppealLetter.version).where(AppealLetter.case_id == case.id))

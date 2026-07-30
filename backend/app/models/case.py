@@ -48,4 +48,5 @@ class Case(Base, UUIDPrimaryKey, TimestampMixin):
     __table_args__ = (
         Index("ix_cases_practice_status", "practice_id", "status"),
         Index("ix_cases_appeal_deadline", "appeal_deadline"),
+        Index("ix_cases_created_by", "created_by"),
     )

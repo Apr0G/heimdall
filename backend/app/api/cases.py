@@ -1,4 +1,6 @@
+import re
 from datetime import UTC, datetime, timedelta
+from urllib.parse import quote
 from uuid import UUID, uuid4
 
 from fastapi import (
@@ -12,6 +14,7 @@ from fastapi import (
     status,
 )
 from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
@@ -34,6 +37,7 @@ from app.schemas.case import (
     CaseDetailResponse,
     CaseListItem,
     CaseListResponse,
+    CaseStatusFilter,
     CaseStatusPollResponse,
     CaseStatusResponse,
     CaseSummaryResponse,
@@ -67,7 +71,8 @@ from app.services.s3 import (
 
 router = APIRouter(prefix="/api/cases", tags=["cases"])
 
-VALID_OUTCOME_RESULTS = {"overturned", "upheld", "partial", "pending", "withdrawn"}
+# Outcome/action validation now lives on the schema as a Literal, so bad input is
+# a 422 at the boundary rather than a hand-maintained set checked in the router.
 # A reported outcome resolves the case unless it is still pending.
 _TERMINAL_RESULTS = {"overturned", "upheld", "partial", "withdrawn"}
 # A "win" for the recovery dashboard's win-rate.
@@ -123,7 +128,9 @@ async def list_cases(
     request: Request,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
-    status: str | None = Query(None, description="Filter by case status"),
+    # Literal, not str: an unvalidated value reaches the native Postgres enum and
+    # raises DataError -> 500. `?status=Ready` is a client bug deserving a 422.
+    status: CaseStatusFilter | None = Query(None, description="Filter by case status"),
     payer: str | None = Query(None, description="Case-insensitive payer name search"),
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
@@ -641,8 +648,20 @@ async def mark_submitted(
     if case.status not in {"ready", "submitted"}:
         raise HTTPException(status_code=409, detail="Only a ready case can be marked submitted")
     case.status = "submitted"
+    now = datetime.now(UTC)
     if case.submitted_at is None:
-        case.submitted_at = datetime.now(UTC)
+        case.submitted_at = now
+
+    # Finalize the letter the practice actually sent. This is what makes
+    # `finalized_at` real, and it is what export_corpus's "prefer the finalized
+    # letter" branch was always meant to select — the version that went to the
+    # payer, which is the one the outcome label belongs to.
+    letter = await _latest(session, AppealLetter, case_id, AppealLetter.version.desc())
+    if letter is not None and letter.status != "archived":
+        if letter.finalized_at is None:
+            letter.finalized_at = now
+        letter.status = "finalized"
+
     await log_audit(
         session,
         action="case_mark_submitted",
@@ -665,24 +684,32 @@ async def upsert_outcome(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> CaseStatusResponse:
+    # `result` and `action_taken` are Literal-typed on OutcomeRequest, so an invalid
+    # value is already a 422 before this handler runs.
     case = await _get_owned_case(session, case_id, current_user)
-    if body.result not in VALID_OUTCOME_RESULTS:
-        raise HTTPException(status_code=400, detail="Invalid outcome result")
     if case.status not in {"submitted", "resolved"}:
         raise HTTPException(
             status_code=409, detail="Mark the case submitted before logging an outcome"
         )
 
-    outcome = await session.scalar(select(Outcome).where(Outcome.case_id == case_id))
-    if outcome is None:
-        outcome = Outcome(case_id=case_id, source="user_reported")
-        session.add(outcome)
-    outcome.action_taken = body.action_taken
-    outcome.result = body.result
-    outcome.amount_recovered_cents = body.amount_recovered_cents
-    outcome.resolution_date = body.resolution_date
-    outcome.notes = body.notes
-    outcome.reported_by = current_user.id
+    # A real upsert, matching this endpoint's name. The previous SELECT-then-INSERT
+    # raced `outcomes.case_id`'s unique constraint: a double-clicked submit or a
+    # client retry after a slow response had both requests see None, both insert,
+    # and the loser raise IntegrityError at commit -> unhandled 500. The same file
+    # already solves this class of problem correctly for the pipeline claim.
+    values = {
+        "action_taken": body.action_taken,
+        "result": body.result,
+        "amount_recovered_cents": body.amount_recovered_cents,
+        "resolution_date": body.resolution_date,
+        "notes": body.notes,
+        "reported_by": current_user.id,
+    }
+    await session.execute(
+        pg_insert(Outcome)
+        .values(case_id=case_id, source="user_reported", **values)
+        .on_conflict_do_update(index_elements=["case_id"], set_=values)
+    )
 
     case.status = case_status_after_outcome(body.result)
     await log_audit(
@@ -701,9 +728,15 @@ async def upsert_outcome(
 
 
 @router.post("/{case_id}/retry", response_model=CaseStatusResponse)
+# Same AI limit as create_case and reanalyze_case: a retry schedules the full
+# pipeline, which is three Bedrock calls. The atomic claim gate bounds concurrent
+# retries, but spend was otherwise bounded only by the failure rate, not by any
+# request-rate cap. `response` is the parameter slowapi requires to inject headers.
+@limiter.limit(_settings.rate_limit_ai)
 async def retry_case(
     case_id: UUID,
     request: Request,
+    response: Response,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
@@ -737,6 +770,29 @@ async def retry_case(
     return CaseStatusResponse(id=case_id, status="processing")
 
 
+_FILENAME_SAFE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _attachment_disposition(filename: str) -> str:
+    """Build a Content-Disposition value that cannot 500 the download.
+
+    Starlette encodes header values as latin-1 in `Response.__init__`, so a single
+    non-latin-1 codepoint raises UnicodeEncodeError. `patient_initials` comes
+    straight from model output, and a curly apostrophe (U+2019, routine in
+    "O'Brien") is enough — producing a permanent 500 on that case's letter with no
+    UI path to fix the stored value.
+
+    So: an ASCII allowlist for the plain `filename` (with a `case` fallback if
+    nothing survives), plus RFC 5987 `filename*` carrying the real UTF-8 name for
+    clients that support it.
+    """
+    ascii_name = _FILENAME_SAFE.sub("-", filename).strip("-") or "appeal-case.pdf"
+    if not ascii_name.lower().endswith(".pdf"):
+        ascii_name += ".pdf"
+    encoded = quote(filename, safe="")
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{encoded}"
+
+
 @router.get("/{case_id}/letter.pdf")
 async def download_letter_pdf(
     case_id: UUID,
@@ -748,17 +804,42 @@ async def download_letter_pdf(
     letter = await _latest(session, AppealLetter, case_id, AppealLetter.version.desc())
     if letter is None or not letter.body:
         raise HTTPException(status_code=404, detail="No appeal letter for this case")
-    # PHI export audit — the drafted letter contains patient/claim detail.
-    await log_read(session, request, current_user, "letter_download", "case", case_id)
+    if letter.status == "archived":
+        # A re-analysis flipped this case to not-appealable, or a newer draft
+        # replaced this one. The practice must not be able to mail an appeal the
+        # system has since retracted.
+        raise HTTPException(
+            status_code=409,
+            detail="This appeal letter was superseded by a later analysis. Re-run the case.",
+        )
+
     pdf = await run_in_threadpool(pdf_gen.render_letter_pdf, letter.body)
-    # Minimum-necessary: keep the claim number out of the filename (it lands in
-    # browser download history / OS logs) — initials + a short id still identify it.
-    filename = f"appeal-{case.patient_initials or 'case'}-{str(case.id)[:8]}.pdf"
-    return Response(
+
+    # Build the response BEFORE the audit commit. log_read commits, so committing
+    # first recorded a PHI export that could then fail to be constructed and never
+    # reach the client — an audit trail asserting a disclosure that did not happen.
+    disposition = _attachment_disposition(
+        f"appeal-{case.patient_initials or 'case'}-{str(case.id)[:8]}.pdf"
+    )
+    response = Response(
         content=pdf,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": disposition},
     )
+
+    # Record the download on the letter itself. `status`/`downloaded_at` were
+    # declared in 0001 and never written by anything, which left three
+    # letter_status members unreachable and made export_corpus's "prefer the
+    # finalized letter" branch dead code. A download is the point at which a draft
+    # has actually left the building, so it is the transition worth recording.
+    if letter.downloaded_at is None:
+        letter.downloaded_at = datetime.now(UTC)
+    if letter.status == "draft":
+        letter.status = "downloaded"
+
+    # PHI export audit — the drafted letter contains patient/claim detail.
+    await log_read(session, request, current_user, "letter_download", "case", case_id)
+    return response
 
 
 def _require_supplemental_types(doc_types: list[str]) -> None:
@@ -772,7 +853,8 @@ def _require_supplemental_types(doc_types: list[str]) -> None:
     # request could spawn 100 duplicate S3 moves + Document rows + Textract jobs).
     if len(doc_types) != len(set(doc_types)):
         raise HTTPException(
-            status_code=400, detail="Each additional document type may be provided at most once."
+            status_code=400,
+            detail="Each additional document type may be provided at most once.",
         )
 
 

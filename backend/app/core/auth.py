@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 import httpx
 from fastapi import Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -13,6 +15,12 @@ from app.models import User
 # sends it automatically. Same-site (api.heimdallclaims.com <-> heimdallclaims.com)
 # so SameSite=Lax works and PHI never transits the frontend host.
 AUTH_COOKIE = "hd_session"
+
+# How stale `last_seen_at` may get before we write it again. The case-status poll
+# runs every 2 seconds, so stamping on every request would make one UPDATE per
+# poll per user. A minute of granularity is far finer than the 15-minute idle
+# window it feeds, so the enforcement is unaffected.
+_LAST_SEEN_WRITE_INTERVAL = timedelta(minutes=1)
 
 
 def set_auth_cookie(response: Response, token: str, max_age: int) -> None:
@@ -119,6 +127,21 @@ async def verify_access_token(token: str) -> dict:
     return claims
 
 
+def _idle_deadline_exceeded(last_seen: datetime | None) -> bool:
+    """Whether this session has been idle past the configured window.
+
+    Enforced HERE, server-side. The frontend's 15-minute `setTimeout` is a UX
+    affordance, not a control: closing the tab at minute 1 cancels the timer and
+    leaves the session valid for the token's full remaining life (~59 more
+    minutes). §164.312(a)(2)(iii) automatic logoff needs a server that refuses the
+    stale session, not a browser that intends to.
+    """
+    if settings.idle_timeout_minutes <= 0 or last_seen is None:
+        return False
+    idle_for = datetime.now(UTC) - last_seen
+    return idle_for > timedelta(minutes=settings.idle_timeout_minutes)
+
+
 async def get_current_user(
     request: Request,
     creds: HTTPAuthorizationCredentials | None = Depends(security),
@@ -132,6 +155,24 @@ async def get_current_user(
     user = await session.scalar(select(User).where(User.cognito_sub == claims["sub"]))
     if user is None:
         raise _unauthorized("User is not provisioned")
+
+    # Kill switch. Cognito access tokens cannot be revoked — only refresh tokens
+    # can — so without a server-side check an admin who learns an account is
+    # compromised has no supported lever at all, and the token stays good for its
+    # full 60-minute life. The users row cannot be deleted instead, because
+    # audit_logs.user_id is ON DELETE RESTRICT.
+    if not user.is_active:
+        raise _unauthorized("Account is deactivated")
+
+    if _idle_deadline_exceeded(user.last_seen_at):
+        raise _unauthorized("Session expired due to inactivity")
+
+    # Sliding activity stamp. Written on every authenticated request; the coarse
+    # granularity below keeps this from being a write on literally every poll.
+    now = datetime.now(UTC)
+    if user.last_seen_at is None or (now - user.last_seen_at) > _LAST_SEEN_WRITE_INTERVAL:
+        user.last_seen_at = now
+        await session.commit()
     return user
 
 

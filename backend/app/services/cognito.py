@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError, ParamValidationError
 
 from app.core.config import settings
@@ -54,7 +55,18 @@ def _get_client():
     # Lazily created so importing this module never requires AWS connectivity.
     global _client
     if _client is None:
-        _client = boto3.client("cognito-idp", region_name=settings.cognito_region)
+        # Explicit, TIGHT timeouts: these calls sit directly in the login path, so
+        # unbounded Cognito latency becomes unbounded login latency for every user.
+        # Auth payloads are tiny, hence the much shorter read_timeout than S3's.
+        _client = boto3.client(
+            "cognito-idp",
+            region_name=settings.cognito_region,
+            config=Config(
+                connect_timeout=5,
+                read_timeout=15,
+                retries={"max_attempts": 3, "mode": "standard"},
+            ),
+        )
     return _client
 
 

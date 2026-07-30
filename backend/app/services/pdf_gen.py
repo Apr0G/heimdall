@@ -17,17 +17,63 @@ _TOP = _PAGE_H - _MARGIN
 _WRAP = 92
 _LINES_PER_PAGE = (_TOP - _MARGIN) // _LEADING
 
+# The content stream is encoded latin-1 (one byte per char) so the xref table's
+# byte offsets stay exact. Anything outside latin-1 previously became "?" via
+# errors="replace" — turning an em-dash into "?" mid-sentence, and a name like
+# "Núñez" into "N??ez", in a letter that gets printed and mailed to a payer.
+# These are the characters a language model actually emits; map them to their
+# nearest typographic equivalent rather than losing them.
+_TYPOGRAPHIC = {
+    "‘": "'",  # left single quote
+    "’": "'",  # right single quote / apostrophe
+    "‚": ",",
+    "“": '"',  # left double quote
+    "”": '"',  # right double quote
+    "„": '"',
+    "–": "-",  # en dash
+    "—": "--",  # em dash
+    "…": "...",  # ellipsis
+    " ": " ",  # non-breaking space
+    "•": "-",  # bullet
+    "′": "'",  # prime
+    "″": '"',  # double prime
+    "­": "",  # soft hyphen
+    "​": "",  # zero-width space
+    "﻿": "",  # BOM
+    "\t": "    ",
+}
+
+
+def _normalize_typography(text: str) -> str:
+    """Fold model-emitted typographic characters into latin-1 equivalents.
+
+    Accented Latin letters (é, ñ, ü) already encode in latin-1 and are left
+    untouched — they must survive verbatim in a patient's or provider's name.
+    """
+    for src, dst in _TYPOGRAPHIC.items():
+        text = text.replace(src, dst)
+    return text
+
 
 def _wrap_lines(body: str) -> list[str]:
     """Split on explicit newlines, then word-wrap each paragraph to the page
     width. Blank lines are preserved so the letter keeps its spacing."""
     out: list[str] = []
-    for raw in body.replace("\r\n", "\n").split("\n"):
+    for raw in _normalize_typography(body).replace("\r\n", "\n").split("\n"):
         if not raw.strip():
             out.append("")
             continue
         line = ""
         for word in raw.split(" "):
+            # A single word longer than the wrap width can never fit, and the
+            # `and line` guard below would emit it whole — running it off the
+            # right margin of the printed letter. Hard-split it instead.
+            while len(word) > _WRAP:
+                if line:
+                    out.append(line)
+                    line = ""
+                out.append(word[:_WRAP])
+                word = word[_WRAP:]
             candidate = f"{line} {word}".strip()
             if len(candidate) > _WRAP and line:
                 out.append(line)

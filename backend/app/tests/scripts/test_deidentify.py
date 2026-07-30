@@ -2,13 +2,27 @@ from datetime import date
 
 import pytest
 
+from app.core import hashing
 from app.scripts.deidentify import deid_year, hash_ref, redact_text, scan_residual
 
 
+@pytest.fixture
+def pepper(monkeypatch):
+    """hash_ref is HMAC-keyed and fails closed without a pepper (§164.514(c))."""
+    monkeypatch.setattr(hashing.settings, "phi_hash_pepper", "test-pepper-not-a-real-secret")
+
+
 def test_redacts_formatted_phi():
-    text = "SSN 123-45-6789, call (555) 123-4567 or a@b.com on 03/15/1980, id 123456789"
+    # Synthetic SSN per hard rule 1 — 000-00-0000, never a realistic-looking one.
+    text = "SSN 000-00-0000, call (555) 123-4567 or a@b.com on 03/15/1980, id 123456789"
     out = redact_text(text, [])
-    for leaked in ("123-45-6789", "(555) 123-4567", "a@b.com", "03/15/1980", "123456789"):
+    for leaked in (
+        "000-00-0000",
+        "(555) 123-4567",
+        "a@b.com",
+        "03/15/1980",
+        "123456789",
+    ):
         assert leaked not in out
     assert "[SSN]" in out and "[PHONE]" in out and "[EMAIL]" in out and "[DATE]" in out
 
@@ -58,10 +72,82 @@ def test_scan_residual_flags_leaks_and_candidates():
     assert scan_residual("fully clean text") == {}
 
 
-def test_helpers():
+def test_helpers(pepper):
     assert deid_year(date(1980, 3, 15)) == 1980
     assert deid_year(None) is None
     assert hash_ref("CLM-1").startswith("ref_") and hash_ref("CLM-1") == hash_ref("clm-1")
+
+
+# --- HIGH-05: member IDs are redacted structurally ---------------------------
+#
+# The export built its exact-match key-set from extracted_json["member_id"], but
+# that JSON is written with exclude={"member_id"} per hard rule 5 — so the lookup
+# returned None for every case and the member ID was never redacted at all. These
+# patterns are the layer that does not depend on having captured the value.
+
+
+@pytest.mark.parametrize(
+    "member_id",
+    ["1EG4-TE5-MK73", "1EG4TE5MK73", "W1A2B3C4D", "ABC123456789", "XYZW00112233"],
+    ids=[
+        "mbi-dashed",
+        "mbi-plain",
+        "commercial-short",
+        "commercial-long",
+        "commercial-mixed",
+    ],
+)
+def test_member_id_shapes_are_redacted_without_being_captured(member_id):
+    out = redact_text(f"Member ID {member_id} was denied.", [])
+    assert member_id not in out
+    assert "[MEMBER_ID]" in out or "[ID]" in out
+
+
+def test_member_id_redaction_survives_an_empty_key_set():
+    """Exactly the production condition: known=[...None...] because the raw value
+    was excluded from the archived JSON by design."""
+    out = redact_text("Subscriber W1A2B3C4D, claim CLM-TEST-0001.", [None, None])
+    assert "W1A2B3C4D" not in out
+
+
+def test_member_patterns_do_not_eat_billing_codes():
+    """CPT/ICD/HCPCS/CARC/NPI must survive as training signal."""
+    out = redact_text("CPT 99213, ICD J45.909, HCPCS J1234, CARC CO-197, POS 11", [])
+    for keep in ("99213", "J45.909", "J1234", "CO-197", "11"):
+        assert keep in out
+
+
+def test_scan_residual_flags_surviving_member_ids():
+    assert scan_residual("leftover W1A2B3C4D").get("member_alnum") == 1
+    assert scan_residual("leftover 1EG4-TE5-MK73").get("mbi") == 1
+
+
+# --- MED-24: the re-identification code must be keyed ------------------------
+
+
+def test_hash_ref_fails_closed_without_a_pepper(monkeypatch):
+    """§164.514(c) requires a code NOT derived from information about the
+    individual. An unkeyed sha256(claim_number) is derived from exactly that, so
+    silently falling back to one would look identical while protecting nothing."""
+    monkeypatch.setattr(hashing.settings, "phi_hash_pepper", "")
+    with pytest.raises(hashing.PepperMissingError):
+        hash_ref("CLM-TEST-0001")
+
+
+def test_hash_ref_is_not_a_bare_sha256(pepper):
+    """Anyone holding an EOB could otherwise compute the digest offline and
+    confirm the case is in the corpus."""
+    import hashlib
+
+    claim = "CLM-TEST-0001"
+    bare = "ref_" + hashlib.sha256(claim.strip().lower().encode()).hexdigest()[:12]
+    assert hash_ref(claim) != bare
+
+
+def test_hash_ref_changes_with_the_pepper(monkeypatch, pepper):
+    first = hash_ref("CLM-TEST-0001")
+    monkeypatch.setattr(hashing.settings, "phi_hash_pepper", "a-different-pepper")
+    assert hash_ref("CLM-TEST-0001") != first
 
 
 def test_ner_catches_free_floating_names_and_keeps_codes():

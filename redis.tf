@@ -35,19 +35,61 @@ resource "aws_security_group" "redis" {
   }
 }
 
-resource "aws_elasticache_cluster" "redis" {
-  cluster_id           = "heimdall-redis"
+# AUTH token. Not PHI-bearing (keys are `user:<cognito sub>` and `ip:<addr>`), but
+# without a token ANYTHING that reaches port 6379 can FLUSHALL — which resets every
+# login-throttle counter and silently reopens the brute-force window that
+# rate_limit.py's fail-closed login peek exists to hold shut.
+resource "random_password" "redis_auth" {
+  length = 64
+  # ElastiCache rejects several punctuation characters in an AUTH token; keep it
+  # alphanumeric rather than discover which at apply time.
+  special = false
+}
+
+resource "aws_secretsmanager_secret" "redis_auth" {
+  name       = "heimdall/redis-auth-token"
+  kms_key_id = aws_kms_key.heimdall.arn
+}
+
+resource "aws_secretsmanager_secret_version" "redis_auth" {
+  secret_id     = aws_secretsmanager_secret.redis_auth.id
+  secret_string = random_password.redis_auth.result
+}
+
+# A replication group rather than aws_elasticache_cluster: the single-node cluster
+# resource supports NEITHER transit nor at-rest encryption, so there was no way to
+# encrypt it in place.
+#
+# NOTE: this REPLACES the existing cluster. Enabling encryption is not an in-place
+# change, and the rate-limit store is throwaway state — losing it resets counters,
+# it does not lose data. Apply during a quiet window.
+resource "aws_elasticache_replication_group" "redis" {
+  replication_group_id = "heimdall-redis"
+  description          = "Heimdall rate-limit store"
   engine               = "redis"
   engine_version       = "7.1"
   node_type            = "cache.t4g.micro" # smallest; ~$12/mo
-  num_cache_nodes      = 1
+  num_cache_clusters   = 1
   parameter_group_name = "default.redis7"
   port                 = 6379
   subnet_group_name    = aws_elasticache_subnet_group.redis.name
   security_group_ids   = [aws_security_group.redis.id]
+
+  # §164.312(e)(1) transmission security. Anything on the VPC path could
+  # previously read this traffic in cleartext.
+  transit_encryption_enabled = true
+  at_rest_encryption_enabled = true
+  kms_key_id                 = aws_kms_key.heimdall.arn
+  auth_token                 = random_password.redis_auth.result
+  auth_token_update_strategy = "ROTATE"
+
+  apply_immediately = true
 }
 
 output "redis_endpoint" {
-  description = "Set as REDIS_URL on the backend (already wired in ecs-express.tf)."
-  value       = "redis://${aws_elasticache_cluster.redis.cache_nodes[0].address}:6379"
+  description = <<-EOT
+    Wired as REDIS_URL in ecs-express.tf. Note the `rediss://` scheme — TLS is now
+    mandatory on this cluster, so a `redis://` URL will simply fail to connect.
+  EOT
+  value       = "rediss://${aws_elasticache_replication_group.redis.primary_endpoint_address}:6379"
 }

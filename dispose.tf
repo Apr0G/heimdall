@@ -9,6 +9,7 @@
 resource "aws_cloudwatch_log_group" "dispose" {
   name              = "/aws/ecs/heimdall-dispose"
   retention_in_days = 90
+  kms_key_id        = aws_kms_key.heimdall.arn
 }
 
 # Execution role: pull image + inject the app DB secret + write logs.

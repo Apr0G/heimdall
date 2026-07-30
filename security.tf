@@ -195,6 +195,7 @@ resource "aws_cloudtrail" "main" {
 resource "aws_cloudwatch_log_group" "flow" {
   name              = "/heimdall/vpc-flow-logs"
   retention_in_days = 90
+  kms_key_id        = aws_kms_key.heimdall.arn
 }
 
 resource "aws_iam_role" "flow" {

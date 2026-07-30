@@ -13,6 +13,10 @@ on:
       confirm:
         description: "Re-type the SAME practice UUID to confirm"
         required: true
+      expected_cases:
+        description: "How many cases you expect this practice to have (bind the confirmation to the target)"
+        required: true
+        default: ''
 
 permissions:
   id-token: write
@@ -21,13 +25,34 @@ permissions:
 jobs:
   dispose:
     runs-on: ubuntu-latest
+    # Required-reviewer gate — see the note in wipe-test-data.yml. The OIDC trust
+    # policy (ecs-express.tf) accepts this environment's `sub` claim alongside
+    # `ref:refs/heads/main`, so the gate no longer breaks role assumption.
+    environment: production-destructive
     steps:
       - name: Check confirmation
+        # Inputs via env:, never interpolated straight into the script — `${{ }}`
+        # is substituted before the shell parses the line.
+        env:
+          PID: ${{ inputs.practice_id }}
+          CONFIRM: ${{ inputs.confirm }}
+          EXPECTED_CASES: ${{ inputs.expected_cases }}
         run: |
-          if [ "${{ inputs.practice_id }}" != "${{ inputs.confirm }}" ]; then
+          if [ "$PID" != "$CONFIRM" ]; then
             echo "Confirmation failed — practice_id and confirm must match exactly."
             exit 1
           fi
+          case "$PID" in
+            [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-*-*-*-*) ;;
+            *) echo "practice_id must be a UUID."; exit 1 ;;
+          esac
+          case "$EXPECTED_CASES" in
+            ''|*[!0-9]*)
+              echo "expected_cases must be a non-negative integer — how many cases"
+              echo "this practice currently has. The script aborts if it disagrees."
+              exit 1
+              ;;
+          esac
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -37,6 +62,7 @@ jobs:
       - name: Run disposal as a one-off ECS task
         env:
           PID: ${{ inputs.practice_id }}
+          EXPECTED_CASES: ${{ inputs.expected_cases }}
         run: |
           set -euo pipefail
           CLUSTER=default
@@ -53,7 +79,8 @@ jobs:
           OVERRIDES=$(cat <<JSON
           {"containerOverrides":[{"name":"dispose","environment":[
             {"name":"PRACTICE_ID","value":"$PID"},
-            {"name":"DISPOSE_CONFIRM","value":"$PID"}
+            {"name":"DISPOSE_CONFIRM","value":"$PID"},
+            {"name":"DISPOSE_EXPECT_CASES","value":"$EXPECTED_CASES"}
           ]}]}
           JSON
           )

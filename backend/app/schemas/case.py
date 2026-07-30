@@ -1,7 +1,17 @@
 from datetime import date, datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
+
+# These mirror the Postgres `outcome_result`, `outcome_action` and `case_status`
+# enums. Typed as Literal so Pydantic rejects a bad value with a 422 AT THE
+# BOUNDARY. Passing an unchecked string through to a native enum column raises
+# DataError at commit — a 500, not a 400 — and in the outcome case it rolls back
+# the audit row written moments earlier, so the failed attempt leaves no trace.
+OutcomeResult = Literal["overturned", "upheld", "partial", "pending", "withdrawn"]
+OutcomeAction = Literal["appealed", "not_appealed", "pending"]
+CaseStatusFilter = Literal["draft", "processing", "ready", "submitted", "resolved", "error"]
 
 
 class CaseListItem(BaseModel):
@@ -178,8 +188,8 @@ class ProcessingIdsResponse(BaseModel):
 
 
 class OutcomeRequest(BaseModel):
-    result: str
-    action_taken: str = "appealed"
+    result: OutcomeResult
+    action_taken: OutcomeAction = "appealed"
     # Non-negative integer cents (defense in depth over the client-side check).
     amount_recovered_cents: int | None = Field(default=None, ge=0)
     resolution_date: date | None = None

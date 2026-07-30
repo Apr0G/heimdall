@@ -9,6 +9,8 @@ ten tables with FKs (ON DELETE RESTRICT), indexes, the updated_at trigger, and
 the append-only guard on audit_logs.
 """
 
+import os
+
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
@@ -455,6 +457,20 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # This drops EVERY PHI table plus audit_logs — a more complete destruction
+    # than wipe-test-data, which at least demands a typed phrase and now a live
+    # row count. It is not reachable from any workflow (migrate-db.yml runs the
+    # baked `alembic upgrade head` and passes no --overrides), so this guard is
+    # about the asymmetry, not a live path: the destructive operation should not
+    # be the one with no confirmation.
+    if os.environ.get("ALEMBIC_ALLOW_INITIAL_DOWNGRADE") != "DESTROY-ALL-DATA":
+        raise RuntimeError(
+            "Refusing to downgrade the initial revision: this DROPs every PHI "
+            "table and the append-only audit_logs. Set "
+            "ALEMBIC_ALLOW_INITIAL_DOWNGRADE=DESTROY-ALL-DATA to proceed, and "
+            "take a snapshot first."
+        )
+
     bind = op.get_bind()
 
     # Drop tables in reverse dependency order (triggers/indexes drop with them).

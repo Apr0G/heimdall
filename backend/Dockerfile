@@ -15,6 +15,13 @@ COPY alembic ./alembic
 COPY alembic.ini ./
 RUN pip install .
 
+# Pinned + hash-verified dependency set for the one-off corpus-export NER task.
+# NOT installed here — the API image must not carry a 382 MB NLP model, and
+# nothing in the request path imports Presidio. It ships as a manifest so the
+# export task installs a reproducible, tamper-evident set instead of resolving
+# `pip install presidio-analyzer` live against PyPI inside a PHI container.
+COPY requirements-deid.txt ./
+
 # AWS RDS CA bundle for optional verify-full DB TLS (enable via DB_SSL_CA_BUNDLE).
 # `ADD` fetches remote files as mode 0600 owned by root; the non-root appuser (set
 # below) loads this at import time in db/session.py, so make the (public) CA bundle

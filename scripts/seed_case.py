@@ -108,14 +108,10 @@ DEMO_CASES = [
 
 async def seed() -> None:
     async with AsyncSessionLocal() as session:
-        practice = await session.scalar(
-            select(Practice).order_by(Practice.created_at).limit(1)
-        )
+        practice = await session.scalar(select(Practice).order_by(Practice.created_at).limit(1))
         user = (
             await session.scalar(
-                select(User)
-                .where(User.practice_id == practice.id)
-                .order_by(User.created_at)
+                select(User).where(User.practice_id == practice.id).order_by(User.created_at)
             )
             if practice is not None
             else None

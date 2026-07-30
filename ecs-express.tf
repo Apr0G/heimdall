@@ -31,6 +31,18 @@ variable "github_repo" {
   default     = "Apr0G/heimdall"
 }
 
+variable "destructive_environment" {
+  description = <<-EOT
+    GitHub Environment name that the irreversible workflows (wipe-test-data,
+    dispose-practice) run under, so they can carry required reviewers. Must be
+    created by hand in the repo settings with at least one required reviewer —
+    Terraform only widens the OIDC trust policy to accept its `sub` claim; it
+    cannot create the environment or its protection rules.
+  EOT
+  type        = string
+  default     = "production-destructive"
+}
+
 variable "deploy_backend_service" {
   description = "Phase gate: false = create ECR + roles only; true = also create the Express service (do this after the first image is pushed to ECR)."
   type        = bool
@@ -82,10 +94,27 @@ resource "aws_iam_role" "gha_deploy" {
       Condition = {
         StringEquals = {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-          # Only workflows running on the main branch may assume the deploy role —
-          # not every branch/PR ref. All privileged workflows (deploy, migrate,
-          # export, wipe) run from main.
-          "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:ref:refs/heads/main"
+        }
+        # Two accepted subjects, no wider than before:
+        #
+        #   ref:refs/heads/main            — deploy, migrate, export, integrity.
+        #   environment:<destructive env>  — wipe-test-data and dispose-practice.
+        #
+        # A GitHub `environment:` REPLACES the ref in the sub claim, which is why
+        # the destructive workflows could not previously have required-reviewer
+        # gates: adding one broke role assumption outright. Listing both subjects
+        # removes that forced tradeoff. This does NOT loosen the branch
+        # restriction — a workflow run from a non-main branch without the
+        # environment still matches neither pattern.
+        #
+        # ORDERING: apply this BEFORE the workflows start requesting the
+        # environment, and create the environment (with required reviewers) in the
+        # repo settings, or the destructive workflows will fail to assume the role.
+        StringLike = {
+          "token.actions.githubusercontent.com:sub" = [
+            "repo:${var.github_repo}:ref:refs/heads/main",
+            "repo:${var.github_repo}:environment:${var.destructive_environment}",
+          ]
         }
       }
     }]
@@ -189,6 +218,8 @@ resource "aws_iam_role_policy" "ecs_execution_secrets" {
       # URL — never the admin URL (which migrations use).
       Resource = [
         var.app_db_role_active ? aws_secretsmanager_secret.app_database_url.arn : aws_secretsmanager_secret.database_url.arn,
+        aws_secretsmanager_secret.redis_auth.arn,
+        aws_secretsmanager_secret.phi_hash_pepper.arn,
         aws_kms_key.heimdall.arn,
       ]
     }]
@@ -213,6 +244,19 @@ resource "aws_iam_role_policy_attachment" "ecs_infra_managed" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRoleforExpressGatewayServices"
 }
 
+# --- API log group -----------------------------------------------------------
+# Declared in Terraform so retention is MANAGED. The ExpressGatewayService block
+# below carries no logConfiguration, so AWS auto-created this group at the default
+# "Never Expire" — and this is the group carrying request paths, case UUIDs and
+# exception text, i.e. the most PHI-adjacent log stream we have.
+# HIPAA-SERVICE-INVENTORY.md asserted "90-day retention" for it, unhedged, which
+# was not true of anything in the repo.
+resource "aws_cloudwatch_log_group" "api" {
+  name              = "/aws/ecs/heimdall-api"
+  retention_in_days = 90
+  kms_key_id        = aws_kms_key.heimdall.arn
+}
+
 # --- The Express service (via CloudFormation) --------------------------------
 # Created only once the image exists in ECR (deploy_backend_service=true).
 resource "aws_cloudformation_stack" "express" {
@@ -234,6 +278,16 @@ resource "aws_cloudformation_stack" "express" {
           PrimaryContainer = {
             Image         = "${aws_ecr_repository.backend.repository_url}:latest"
             ContainerPort = 8080
+            # Point at the Terraform-managed group above rather than letting AWS
+            # auto-create one with never-expire retention.
+            LogConfiguration = {
+              LogDriver = "awslogs"
+              Options = {
+                "awslogs-group"         = aws_cloudwatch_log_group.api.name
+                "awslogs-region"        = "us-east-1"
+                "awslogs-stream-prefix" = "api"
+              }
+            }
             Environment = [
               { Name = "APP_ENV", Value = "production" },
               { Name = "AWS_REGION", Value = "us-east-1" },
@@ -245,7 +299,10 @@ resource "aws_cloudformation_stack" "express" {
               { Name = "BEDROCK_MODEL_ID", Value = var.bedrock_model_id },
               { Name = "FRONTEND_URL", Value = var.frontend_url },
               { Name = "LEADS_TOPIC_ARN", Value = aws_sns_topic.leads.arn },
-              { Name = "REDIS_URL", Value = "redis://${aws_elasticache_cluster.redis.cache_nodes[0].address}:6379" },
+              # rediss:// — transit encryption is enforced on the cluster, and the
+              # AUTH token arrives separately via Secrets (below) so it never
+              # appears in the task definition's plaintext environment.
+              { Name = "REDIS_URL", Value = "rediss://${aws_elasticache_replication_group.redis.primary_endpoint_address}:6379" },
               { Name = "LOG_LEVEL", Value = "INFO" },
               # verify-full DB TLS: verify the RDS server cert + hostname against the
               # global CA bundle baked into the image. Verified to connect via a
@@ -255,6 +312,11 @@ resource "aws_cloudformation_stack" "express" {
             Secrets = [
               # heimdall_app (limited) once cut over; heimdall_admin until then.
               { Name = "DATABASE_URL", ValueFrom = var.app_db_role_active ? aws_secretsmanager_secret.app_database_url.arn : aws_secretsmanager_secret.database_url.arn },
+              { Name = "REDIS_AUTH_TOKEN", ValueFrom = aws_secretsmanager_secret.redis_auth.arn },
+              # Pepper for the keyed identifier hashes (member_id_hash, corpus
+              # claim_ref). Without it those degrade to omitted/failing rather
+              # than writing an offline-brute-forceable digest.
+              { Name = "PHI_HASH_PEPPER", ValueFrom = aws_secretsmanager_secret.phi_hash_pepper.arn },
             ]
           }
         }

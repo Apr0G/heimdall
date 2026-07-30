@@ -22,10 +22,22 @@ def _get_client():
     global _client
     if _client is None:
         # SigV4 is required for presigned PUTs against an SSE-KMS bucket.
+        #
+        # Explicit timeouts matter more here than anywhere else: get_bytes wraps
+        # its own 4-attempt loop with time.sleep, and every call runs on a
+        # Starlette threadpool worker. Layered together, a network black-hole to S3
+        # pins a worker for minutes per document — one per document per case — so a
+        # regional stall degrades into a full-service hang rather than a set of
+        # clean errors. read_timeout is generous because these are file bodies.
         _client = boto3.client(
             "s3",
             region_name=settings.aws_region,
-            config=Config(signature_version="s3v4"),
+            config=Config(
+                signature_version="s3v4",
+                connect_timeout=10,
+                read_timeout=60,
+                retries={"max_attempts": 3, "mode": "standard"},
+            ),
         )
     return _client
 

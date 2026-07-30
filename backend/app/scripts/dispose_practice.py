@@ -26,6 +26,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import settings
+from app.scripts import s3_purge
 
 # Deleted in this order so ON DELETE RESTRICT FKs are satisfied (children that
 # reference model_runs/documents first; model_runs before cases; cases last).
@@ -37,18 +38,6 @@ _DELETE_ORDER = [
     "documents",
     "model_runs",
 ]
-
-
-def _delete_all_versions(s3, bucket: str, prefix: str) -> int:
-    """Delete every version + delete-marker under a prefix (versioned bucket)."""
-    victims: list[dict] = []
-    paginator = s3.get_paginator("list_object_versions")
-    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-        for entry in page.get("Versions", []) + page.get("DeleteMarkers", []):
-            victims.append({"Key": entry["Key"], "VersionId": entry["VersionId"]})
-    for i in range(0, len(victims), 1000):  # delete_objects caps at 1000/call
-        s3.delete_objects(Bucket=bucket, Delete={"Objects": victims[i : i + 1000], "Quiet": True})
-    return len(victims)
 
 
 async def main() -> None:
@@ -73,6 +62,28 @@ async def main() -> None:
         case_count = await conn.scalar(
             text("SELECT count(*) FROM cases WHERE practice_id = :pid"), {"pid": pid}
         )
+        # DISPOSE_CONFIRM is the same practice id the script already acts on, so
+        # re-typing it proves intent about the id but nothing about the target's
+        # actual state. Binding to the live case count means the operator must know
+        # what they are destroying — and a stale dispatch against the wrong
+        # environment aborts before any object is deleted.
+        expected_raw = os.environ.get("DISPOSE_EXPECT_CASES", "")
+        if not expected_raw.strip():
+            raise SystemExit(
+                f"Refusing to run without DISPOSE_EXPECT_CASES=<n>. This practice "
+                f"currently has {case_count} case(s)."
+            )
+        try:
+            expected = int(expected_raw)
+        except ValueError as exc:
+            raise SystemExit(
+                f"DISPOSE_EXPECT_CASES must be an integer, got {expected_raw!r}"
+            ) from exc
+        if expected != case_count:
+            raise SystemExit(
+                f"ABORTED: practice {pid} has {case_count} case(s), but you "
+                f"confirmed {expected}. Nothing was deleted."
+            )
         # model_runs live under model_runs/<run_id>/ (not the practices/ prefix), so
         # collect their ids to purge those archives explicitly.
         run_ids = (
@@ -90,9 +101,16 @@ async def main() -> None:
         )
 
     # S3 first (rows carry no S3 pointers we still need after this).
-    s3_deleted = _delete_all_versions(s3, bucket, f"practices/{pid}/")
+    s3_deleted = s3_purge.delete_all_versions(s3, bucket, f"practices/{pid}/")
     for run_id in run_ids:
-        s3_deleted += _delete_all_versions(s3, bucket, f"model_runs/{run_id}/")
+        s3_deleted += s3_purge.delete_all_versions(s3, bucket, f"model_runs/{run_id}/")
+
+    # Verify before dropping the rows — they are the only index of these keys, so
+    # an incomplete purge stops being fixable the moment they are gone. This is a
+    # contractual destruction under a BAA; the attestation must be true.
+    s3_purge.assert_prefix_empty(s3, bucket, f"practices/{pid}/")
+    for run_id in run_ids:
+        s3_purge.assert_prefix_empty(s3, bucket, f"model_runs/{run_id}/")
 
     async with engine.begin() as conn:
         for table in _DELETE_ORDER:

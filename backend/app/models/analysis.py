@@ -1,7 +1,7 @@
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import Boolean, ForeignKey, Numeric, Text, text
+from sqlalchemy import Boolean, ForeignKey, Index, Numeric, Text, text
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -30,7 +30,12 @@ class Analysis(Base, UUIDPrimaryKey, CreatedAtMixin):
         ForeignKey("model_runs.id", ondelete="RESTRICT"),
         nullable=True,
     )
-    # Conditional-document requests (Phase 12), e.g. ["prior_auth","imaging"].
+    # Conditional-document requests (Phase 12), e.g. ["prior_auth","prior_treatment"].
     additional_documents_needed: Mapped[list[str]] = mapped_column(
         ARRAY(Text), nullable=False, server_default=text("'{}'::text[]")
+    )
+
+    __table_args__ = (
+        Index("ix_analyses_case_created", "case_id", text("created_at DESC")),
+        Index("ix_analyses_model_run_id", "model_run_id"),
     )

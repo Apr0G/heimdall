@@ -13,6 +13,10 @@ on:
         description: 'Type exactly: ERASE-ALL-PRODUCTION-DATA'
         required: true
         default: ''
+      expected_cases:
+        description: "How many cases you expect to destroy (check the dashboard first)"
+        required: true
+        default: ''
 
 permissions:
   id-token: write
@@ -21,14 +25,38 @@ permissions:
 jobs:
   wipe:
     runs-on: ubuntu-latest
+    # Required-reviewer gate. Previously one person with repo write could
+    # irreversibly destroy every practice's data with no second pair of eyes.
+    # This was not an oversight but a forced tradeoff: a GitHub environment
+    # changes the OIDC `sub` claim from `ref:refs/heads/main` to
+    # `environment:<name>`, which broke role assumption. The trust policy in
+    # ecs-express.tf now accepts both, so the gate costs nothing.
+    #
+    # SETUP: create this environment in repo Settings -> Environments with at
+    # least one required reviewer, and apply the terraform change first.
+    environment: production-destructive
     steps:
       - name: Check confirmation
+        # Inputs come in via env:, never interpolated straight into the script —
+        # `${{ inputs.x }}` is substituted BEFORE the shell parses the line, so a
+        # crafted value would be executed as shell. Same pattern as
+        # deploy-backend.yml.
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          EXPECTED_CASES: ${{ inputs.expected_cases }}
         run: |
-          if [ "${{ inputs.confirm }}" != "ERASE-ALL-PRODUCTION-DATA" ]; then
+          if [ "$CONFIRM" != "ERASE-ALL-PRODUCTION-DATA" ]; then
             echo "Confirmation failed — type exactly ERASE-ALL-PRODUCTION-DATA to proceed."
             echo "This deletes the entire training corpus across all practices."
             exit 1
           fi
+          case "$EXPECTED_CASES" in
+            ''|*[!0-9]*)
+              echo "expected_cases must be a non-negative integer — the number of"
+              echo "cases you expect to destroy. Check the dashboard first."
+              exit 1
+              ;;
+          esac
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -36,6 +64,8 @@ jobs:
           aws-region: us-east-1
 
       - name: Run the wipe as a one-off ECS task
+        env:
+          EXPECTED_CASES: ${{ inputs.expected_cases }}
         run: |
           set -euo pipefail
           CLUSTER=default
@@ -56,7 +86,7 @@ jobs:
             --task-definition "$TASKDEF" \
             --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=ENABLED}" \
-            --overrides "{\"containerOverrides\":[{\"name\":\"$CONTAINER\",\"command\":[\"python\",\"-m\",\"app.scripts.wipe_test_data\"],\"environment\":[{\"name\":\"WIPE_CONFIRM\",\"value\":\"WIPE\"}]}]}" \
+            --overrides "{\"containerOverrides\":[{\"name\":\"$CONTAINER\",\"command\":[\"python\",\"-m\",\"app.scripts.wipe_test_data\"],\"environment\":[{\"name\":\"WIPE_CONFIRM\",\"value\":\"WIPE\"},{\"name\":\"WIPE_EXPECT_CASES\",\"value\":\"$EXPECTED_CASES\"}]}]}" \
             --query 'tasks[0].taskArn' --output text)
           echo "Started wipe task: $TASK_ARN"
 

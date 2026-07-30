@@ -1,15 +1,17 @@
 from datetime import date
 
 import pytest
+from pydantic import ValidationError
 
 from app.prompts import extraction_prompt
 from app.schemas.extraction import ExtractionResult
 from app.services.claude_client import _extract_json
+from app.services.extraction import _appeal_deadline, deadline_note
 
 
 def test_prompt_version_is_pinned():
     # Guards against silently changing the prompt without bumping the version.
-    assert extraction_prompt.VERSION == "extract_v2"
+    assert extraction_prompt.VERSION == "extract_v3"
 
 
 def test_extract_json_tolerates_fences_and_preamble():
@@ -63,3 +65,73 @@ def test_well_formed_extraction_parses():
     assert result.carc_codes == ["CO-50"]
     # raw member_id is excluded from the persisted JSON
     assert "member_id" not in result.model_dump(exclude={"member_id"})
+
+
+# --- appeal deadlines (HIGH-01) ---------------------------------------------
+
+_DENIAL = date(2026, 5, 4)
+
+
+def test_original_medicare_gets_120_days():
+    """Part A/B redetermination window."""
+    assert _appeal_deadline(_DENIAL, "medicare") == date(2026, 9, 1)
+
+
+def test_medicare_advantage_gets_60_days_not_120():
+    """Part C reconsideration runs 60 days from the organization determination
+    notice (42 CFR 422.582). Bucketing MA with Original Medicare put the deadline
+    60 days late, and a missed filing deadline forfeits the claim permanently."""
+    assert _appeal_deadline(_DENIAL, "medicare_advantage") == date(2026, 7, 3)
+
+
+@pytest.mark.parametrize(
+    "plan", ["commercial", "medicaid", "medicaid_mco", "tricare", "other", "unknown"]
+)
+def test_non_medicare_plans_get_60_days(plan):
+    assert _appeal_deadline(_DENIAL, plan) == date(2026, 7, 3)
+
+
+def test_no_denial_date_yields_no_deadline():
+    assert _appeal_deadline(None, "medicare") is None
+
+
+def test_medicare_advantage_note_states_the_60_day_window():
+    note = deadline_note("medicare_advantage")
+    assert "60 days" in note
+    assert "Part C" in note
+
+
+# --- money (MED-09, hard rule 11) -------------------------------------------
+
+
+@pytest.mark.parametrize("field", ["billed_amount_cents", "denied_amount_cents"])
+@pytest.mark.parametrize("value", [450.0, 450.5, "450.00", -450])
+def test_dollar_valued_and_negative_amounts_are_rejected(field, value):
+    """450.0 used to coerce silently to 450 cents, recording a $450 claim as $4.50."""
+    with pytest.raises(ValidationError):
+        ExtractionResult.model_validate({field: value})
+
+
+@pytest.mark.parametrize("field", ["billed_amount_cents", "denied_amount_cents"])
+def test_integer_cents_accepted(field):
+    assert ExtractionResult.model_validate({field: 45000}).model_dump()[field] == 45000
+
+
+def test_denied_cannot_exceed_billed():
+    with pytest.raises(ValidationError):
+        ExtractionResult.model_validate(
+            {"billed_amount_cents": 10000, "denied_amount_cents": 20000}
+        )
+
+
+@pytest.mark.parametrize("value", [95, 1.5, -0.1])
+def test_confidence_out_of_range_is_rejected(value):
+    """Numeric(3,2) overflows above 9.99; the failing INSERT carries PHI bound
+    parameters into the traceback."""
+    with pytest.raises(ValidationError):
+        ExtractionResult.model_validate({"confidence": value})
+
+
+def test_overlong_patient_initials_rejected():
+    with pytest.raises(ValidationError):
+        ExtractionResult.model_validate({"patient_initials": "X" * 64})

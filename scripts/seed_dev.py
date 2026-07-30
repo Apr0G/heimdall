@@ -43,9 +43,7 @@ async def seed() -> None:
 
     async with AsyncSessionLocal() as session:
         practice = (
-            await session.execute(
-                select(Practice).where(Practice.name == practice_name)
-            )
+            await session.execute(select(Practice).where(Practice.name == practice_name))
         ).scalar_one_or_none()
         if practice is None:
             practice = Practice(

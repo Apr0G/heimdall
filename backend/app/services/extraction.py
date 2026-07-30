@@ -1,4 +1,3 @@
-import hashlib
 import logging
 from datetime import date, timedelta
 from decimal import Decimal
@@ -7,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
+from app.core import hashing
 from app.models import Case, Document, Extraction
 from app.prompts import extraction_prompt
 from app.schemas.extraction import ExtractionResult
@@ -14,8 +14,12 @@ from app.services import claude_client, s3
 
 logger = logging.getLogger(__name__)
 
-# Medicare gets 120 days to appeal; commercial/unknown/Medicaid default to 60.
-_MEDICARE_PLANS = {"medicare", "medicare_advantage"}
+# 120 days is the ORIGINAL Medicare (Part A/B) redetermination window only.
+# Medicare Advantage is Part C: reconsideration runs 60 days from the organization
+# determination notice (42 CFR 422.582), so it takes the 60-day default and must NOT
+# be bucketed with Original Medicare — that would show a deadline 60 days too late.
+_MEDICARE_PLANS = {"medicare"}
+_MEDICARE_ADVANTAGE_PLANS = {"medicare_advantage"}
 _MEDICAID_PLANS = {"medicaid", "medicaid_mco"}
 
 
@@ -34,6 +38,12 @@ def deadline_note(plan_type: str | None) -> str:
         "This deadline is an estimate from the denial date — confirm the exact "
         "filing deadline in the payer's policy before relying on it."
     )
+    if plan_type in _MEDICARE_ADVANTAGE_PLANS:
+        return (
+            "Medicare Advantage (Part C) plans allow 60 days from the organization "
+            "determination notice — not the 120-day Original Medicare window. Confirm "
+            "the exact window with the plan. " + base
+        )
     if plan_type in _MEDICAID_PLANS:
         return (
             "Medicaid appeal deadlines are state-specific and are often shorter than "
@@ -75,10 +85,32 @@ async def run_ai_extraction(session: AsyncSession, case: Case) -> Extraction:
     )
     result: ExtractionResult = outcome.data
 
-    # PHI minimization: hash the member id, and never persist the raw value.
-    member_id_hash = (
-        hashlib.sha256(result.member_id.encode("utf-8")).hexdigest() if result.member_id else None
-    )
+    # PHI minimization: keyed-hash the member id, and never persist the raw value.
+    #
+    # HMAC, not a bare digest. Member IDs are short, structured and payer-prefixed,
+    # so a plain SHA-256 is exhaustible offline — anyone with a DB dump recovers the
+    # raw identifiers, which means the hash was not a de-identification control at
+    # all. The practice id is mixed in as scope so an identical member across two
+    # practices does not produce an identical hash, which would otherwise prove the
+    # link and defeat tenant isolation.
+    #
+    # Degrades to NULL rather than failing the pipeline when no pepper is
+    # configured: this column currently has no readers, so a missing value costs
+    # nothing, while a weak value would look identical in the database and provide
+    # none of the protection.
+    member_id_hash = None
+    if result.member_id:
+        if hashing.is_configured():
+            member_id_hash = hashing.keyed_hash(
+                result.member_id,
+                purpose=hashing.MEMBER_ID,
+                scope=str(case.practice_id),
+            )
+        else:
+            logger.warning(
+                "member_id_hash omitted: PHI_HASH_PEPPER is not configured",
+                extra={"context": {"case_id": str(case.id)}},
+            )
     confidence = (
         Decimal(str(round(result.confidence, 2))) if result.confidence is not None else None
     )

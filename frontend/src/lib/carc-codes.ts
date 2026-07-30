@@ -12,7 +12,13 @@ export const CARC_MEANINGS: Record<string, string> = {
   "CO-96": "Non-covered charge(s).",
   "CO-97": "Service is bundled into another service (NCCI).",
   "CO-109": "Claim is not covered by this payer or contractor.",
-  "CO-151": "Information submitted does not support this level of service.",
+  // CO-150 and CO-151 are DIFFERENT denials and are easily transposed. 150 is
+  // about the LEVEL of service (argue E/M level); 151 is about how MANY services
+  // (argue units and frequency). 151 previously carried 150's wording here and in
+  // the analysis prompt, which steered the appeal at the wrong argument entirely.
+  "CO-150": "Information submitted does not support this level of service.",
+  "CO-151":
+    "Information submitted does not support this many/frequency of services.",
   "CO-167": "Diagnosis is not covered.",
   "CO-197": "Precertification / authorization is absent.",
   "PR-1": "Deductible amount (patient responsibility).",

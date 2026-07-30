@@ -26,6 +26,12 @@ class ClaudeJSONError(Exception):
     """The model did not return valid JSON matching the schema after a retry."""
 
 
+class ClaudeTruncatedError(Exception):
+    """The model hit max_tokens mid-response. Retrying the identical prompt would
+    truncate identically, so this is deliberately NOT retried — it is a capacity
+    problem (prompt or max_tokens), not a formatting one."""
+
+
 def _bedrock():
     global _client
     if _client is None:
@@ -104,20 +110,22 @@ def _extract_json(text: str) -> dict:
 async def _record_model_run(
     run_id: uuid.UUID,
     *,
-    case_id: uuid.UUID | None,
+    case_id: uuid.UUID,
     purpose: str,
     prompt_version: str,
     call: _RawCall,
     status: str,
     error_message: str | None,
 ) -> tuple[str, str]:
-    """Archive the raw request/response to S3 and write the model_runs row in its
-    own committed transaction, so the audit/cost record survives even if the
-    surrounding pipeline later fails and rolls back."""
+    """Write the model_runs row, then archive the raw request/response to S3.
+
+    Order matters (hard rule 7): the row is the billing and training record, so it
+    is committed FIRST with pre-computed S3 keys. If the archive upload then fails,
+    we lose the raw payload for a call we still paid for — recoverable. The old
+    order lost the row itself, which is not. The row commits in its own transaction
+    so it survives a later rollback of the surrounding pipeline."""
     request_key = f"model_runs/{run_id}/request.json"
     response_key = f"model_runs/{run_id}/response.json"
-    await run_in_threadpool(s3.put_text, request_key, json.dumps(call.request_body))
-    await run_in_threadpool(s3.put_text, response_key, json.dumps(call.response_body))
 
     async with AsyncSessionLocal() as session:
         session.add(
@@ -138,13 +146,16 @@ async def _record_model_run(
             )
         )
         await session.commit()
+
+    await run_in_threadpool(s3.put_text, request_key, json.dumps(call.request_body))
+    await run_in_threadpool(s3.put_text, response_key, json.dumps(call.response_body))
     return request_key, response_key
 
 
 async def _record_invoke_error(
     run_id: uuid.UUID,
     *,
-    case_id: uuid.UUID | None,
+    case_id: uuid.UUID,
     purpose: str,
     prompt_version: str,
     error_message: str,
@@ -177,7 +188,7 @@ def _invoke_error_message(exc: Exception) -> str:
 
 async def complete_json(
     *,
-    case_id: uuid.UUID | None,
+    case_id: uuid.UUID,
     purpose: str,
     prompt_version: str,
     system: str,
@@ -206,6 +217,24 @@ async def complete_json(
                 error_message=_invoke_error_message(exc),
             )
             raise
+
+        # A max_tokens stop is a truncated response, not malformed output. The retry
+        # sends the same prompt with the same ceiling, so it truncates again and the
+        # case reports "invalid JSON" having burned two full calls. Fail loudly and
+        # distinctly instead, and record the row before propagating.
+        if call.stop_reason == "max_tokens":
+            await _record_model_run(
+                run_id,
+                case_id=case_id,
+                purpose=purpose,
+                prompt_version=prompt_version,
+                call=call,
+                status="error",
+                error_message=f"response truncated at max_tokens={max_tokens}",
+            )
+            raise ClaudeTruncatedError(
+                f"{purpose}: model response hit the {max_tokens}-token ceiling"
+            )
 
         validated: ModelT | None = None
         error_message: str | None = None

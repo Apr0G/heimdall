@@ -1,8 +1,14 @@
-"""Wipe all synthetic case data — empties the dashboard.
+"""Wipe ALL case data across EVERY practice — empties the dashboard.
 
 Deletes every row in the case-family tables and the corresponding S3 objects
-(uploaded documents, extracted text, model-run payloads). **Keeps** users,
-practices, and the append-only ``audit_logs`` (HIPAA record of activity).
+(uploaded documents, extracted text, model-run payloads), **including all
+noncurrent versions and delete markers** — the bucket is versioned, so a plain
+keyed delete would only hide them. **Keeps** users, practices, and the append-only
+``audit_logs`` (HIPAA record of activity).
+
+The name understates the reach: nothing here is scoped to synthetic data or to one
+tenant. If this is ever pointed at a database that has held real PHI, it destroys
+every practice's documents.
 
 Guarded: refuses to run unless ``WIPE_CONFIRM=WIPE``. Meant to run as a one-off
 ECS task inside the VPC (the DB is private):  ``python -m app.scripts.wipe_test_data``
@@ -16,6 +22,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import settings
+from app.scripts import s3_purge
 
 # Every case-family table. TRUNCATE ... CASCADE resolves the ON DELETE RESTRICT
 # FKs; audit_logs is intentionally absent (it references users/practices, not
@@ -35,9 +42,34 @@ async def main() -> None:
     if os.environ.get("WIPE_CONFIRM") != "WIPE":
         raise SystemExit("Refusing to run without WIPE_CONFIRM=WIPE")
 
+    # WIPE_CONFIRM is a CONSTANT, and the workflow hardcodes it into the container
+    # override — so on that path it proves nothing about intent. WIPE_EXPECT_CASES
+    # binds the confirmation to the TARGET instead: the operator must already know
+    # how much data is about to be destroyed, and a stale or blind dispatch (wrong
+    # database, or many more rows than expected) aborts before touching anything.
+    expected_raw = os.environ.get("WIPE_EXPECT_CASES", "")
+    if not expected_raw.strip():
+        raise SystemExit(
+            "Refusing to run without WIPE_EXPECT_CASES=<n> — the number of cases "
+            "you expect to destroy. Check the dashboard first."
+        )
+    try:
+        expected_cases = int(expected_raw)
+    except ValueError as exc:
+        raise SystemExit(f"WIPE_EXPECT_CASES must be an integer, got {expected_raw!r}") from exc
+
     engine = create_async_engine(settings.database_url)
     s3 = boto3.client("s3", region_name=settings.aws_region)
     bucket = settings.s3_bucket_name
+
+    async with engine.connect() as conn:
+        actual_cases = await conn.scalar(text("SELECT count(*) FROM cases"))
+    if actual_cases != expected_cases:
+        raise SystemExit(
+            f"ABORTED: this database has {actual_cases} case(s), but you confirmed "
+            f"{expected_cases}. Nothing was deleted. Re-check which database you are "
+            "pointed at before re-running."
+        )
 
     # Collect the S3 keys before we drop the rows that reference them.
     async with engine.connect() as conn:
@@ -59,9 +91,22 @@ async def main() -> None:
             keys.add(resp)
 
     key_list = [k for k in keys if k]
-    for i in range(0, len(key_list), 1000):  # delete_objects caps at 1000/call
-        batch = [{"Key": k} for k in key_list[i : i + 1000]]
-        s3.delete_objects(Bucket=bucket, Delete={"Objects": batch, "Quiet": True})
+
+    # Purge the two prefixes wholesale, by VersionId. This is both the correct
+    # delete for a versioned bucket AND more complete than walking the key list:
+    # it also collects orphans whose rows were already gone, which the row-driven
+    # delete could never have found.
+    deleted = s3_purge.delete_all_versions(s3, bucket, "practices/")
+    deleted += s3_purge.delete_all_versions(s3, bucket, "model_runs/")
+    # Belt and braces for any referenced key outside those prefixes (e.g. a
+    # document still sitting under tmp-uploads/ because the case never advanced).
+    deleted += s3_purge.delete_all_versions_of_keys(s3, bucket, set(key_list))
+
+    # Verify BEFORE truncating. The rows are the only index of these keys, so an
+    # incomplete purge becomes unrecoverable the instant the tables are empty —
+    # and the script would still print a destruction count that never happened.
+    s3_purge.assert_prefix_empty(s3, bucket, "practices/")
+    s3_purge.assert_prefix_empty(s3, bucket, "model_runs/")
 
     async with engine.begin() as conn:
         # CASE_TABLES is a hardcoded module constant, never user input, so
@@ -71,7 +116,10 @@ async def main() -> None:
         )
 
     await engine.dispose()
-    print(f"Wiped {len(key_list)} S3 objects and truncated {len(CASE_TABLES)} tables.")
+    print(
+        f"Wiped {deleted} S3 object versions ({len(key_list)} keys referenced by rows) "
+        f"and truncated {len(CASE_TABLES)} tables."
+    )
 
 
 if __name__ == "__main__":
