@@ -142,6 +142,11 @@ resource "aws_iam_role_policy" "gha_deploy" {
           "ecr:PutImage",
           "ecr:BatchGetImage",
           "ecr:GetDownloadUrlForLayer",
+          # deploy-backend's `deploy-only` mode reports which image :latest
+          # actually points at before restarting onto it — that mode ships an
+          # image built by an earlier run, so the workflow's own SHA is not
+          # necessarily what goes live.
+          "ecr:DescribeImages",
         ]
         Resource = aws_ecr_repository.backend.arn
       },

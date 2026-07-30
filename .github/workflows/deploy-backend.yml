@@ -13,6 +13,30 @@ name: deploy-backend
 # dispatched from main. Adding a GitHub `environment:` here would change the sub
 # claim to ...:environment:<name> and break the role assumption until the
 # terraform trust policy is updated to match.
+#
+# ── SHIPPING A SCHEMA MIGRATION ──────────────────────────────────────────────
+# Code that REQUIRES a new column must not reach the service before the
+# migration that creates it. /healthz does not touch the database, so ECS would
+# happily keep such a task running and green while every authenticated request
+# 500s — it will not roll back for you.
+#
+# But `migrate-db` runs the `heimdall-migrate` task definition, which is pinned
+# to `:latest` — so the migration can only run once the new image IS `:latest`.
+# Pushing and restarting in one step made those two requirements contradictory.
+#
+# Hence the `mode` input. For a migration, run this three times:
+#
+#   1. mode=build-only      push the image; the service keeps running old code
+#   2. (run the migrate-db workflow)
+#   3. mode=deploy-only     restart onto the image from step 1
+#
+# For an ordinary deploy with no migration, leave mode=build-and-deploy.
+#
+# Residual risk in the gap between 1 and 2: `:latest` is already the new image,
+# so an UNPLANNED task restart (crash, AZ rebalance) in those ~3 minutes would
+# pull code that needs the not-yet-applied schema. That is a small, unlikely
+# window versus a guaranteed multi-minute outage the other way round — but it is
+# why steps 1 and 2 should be run back to back, not left overnight.
 on:
   workflow_dispatch:
     inputs:
@@ -20,6 +44,14 @@ on:
         description: 'Type "deploy" to confirm shipping to production'
         required: true
         default: ""
+      mode:
+        description: "build-and-deploy = normal. build-only = push image, do NOT restart (use before a migration). deploy-only = restart on the image already in ECR."
+        type: choice
+        options:
+          - build-and-deploy
+          - build-only
+          - deploy-only
+        default: build-and-deploy
       reason:
         description: "Why are you deploying? (recorded in the run log)"
         required: false
@@ -37,11 +69,16 @@ jobs:
         env:
           CONFIRM: ${{ inputs.confirm }}
           REASON: ${{ inputs.reason }}
+          MODE: ${{ inputs.mode }}
         run: |
+          # Every mode requires the confirmation, build-only included: pushing
+          # `:latest` means the next task restart — planned or not — picks the new
+          # image up. It is a production change even when nothing restarts today.
           if [ "$CONFIRM" != "deploy" ]; then
             echo "::error::Type 'deploy' in the confirm box to ship to production. Got: '$CONFIRM'"
             exit 1
           fi
+          echo "Mode: $MODE"
           echo "Deploy authorised by ${{ github.actor }} at $(date -u +%FT%TZ)"
           echo "Reason: ${REASON:-(none given)}"
 
@@ -65,6 +102,7 @@ jobs:
         id: ecr
 
       - name: Build and push image
+        if: inputs.mode != 'deploy-only'
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
           REPO: heimdall-backend
@@ -74,7 +112,19 @@ jobs:
           docker push "$REGISTRY/$REPO:latest"
           docker push "$REGISTRY/$REPO:$SHA"
 
+      # deploy-only ships whatever is already tagged :latest. Record which commit
+      # that actually is, so the run log is not silently ambiguous about what
+      # went live — the workflow's own SHA is NOT necessarily the image's.
+      - name: Report the image about to be deployed
+        if: inputs.mode == 'deploy-only'
+        run: |
+          aws ecr describe-images --repository-name heimdall-backend \
+            --image-ids imageTag=latest \
+            --query 'imageDetails[0].{Pushed:imagePushedAt,Digest:imageDigest,Tags:imageTags}' \
+            --output table
+
       - name: Redeploy the ECS Express service
+        if: inputs.mode != 'build-only'
         run: |
           aws ecs update-service \
             --cluster default \
@@ -87,10 +137,12 @@ jobs:
       # hid the RDS CA bundle crash for a day on 2026-07-13). Everything below
       # exists so a green check means "it is actually running".
       - name: Wait for the service to stabilise
+        if: inputs.mode != 'build-only'
         run: |
           aws ecs wait services-stable --cluster default --services heimdall-api
 
       - name: Verify the rollout completed and did not roll back
+        if: inputs.mode != 'build-only'
         run: |
           STATE=$(aws ecs describe-services --cluster default --services heimdall-api \
             --query 'services[0].deployments[?status==`PRIMARY`].rolloutState' --output text)
@@ -105,18 +157,43 @@ jobs:
           fi
 
       - name: Probe the live API
+        if: inputs.mode != 'build-only'
         run: |
           CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 \
             https://api.heimdallclaims.com/healthz)
           echo "healthz=$CODE"
           [ "$CODE" = "200" ] || { echo "::error::Health probe returned $CODE"; exit 1; }
+          # /healthz deliberately does NOT touch the database, so a 200 here proves
+          # the process is up — not that it can serve a request. If this deploy
+          # carried a migration, confirm a real authenticated page loads too.
 
       - name: Summary
+        env:
+          MODE: ${{ inputs.mode }}
         run: |
           {
-            echo "### Deployed to production"
-            echo ""
-            echo "- commit: \`${{ github.sha }}\`"
-            echo "- actor: @${{ github.actor }}"
-            echo "- verified: ECS rollout COMPLETED, task running, /healthz 200"
+            if [ "$MODE" = "build-only" ]; then
+              echo "### Image pushed — service NOT restarted"
+              echo ""
+              echo "- commit: \`${{ github.sha }}\`"
+              echo "- actor: @${{ github.actor }}"
+              echo "- the service is still running the PREVIOUS image"
+              echo ""
+              echo "**Next:** run **migrate-db**, then re-run this workflow with"
+              echo "\`mode=deploy-only\`. Do it now, not later — \`:latest\` is already"
+              echo "the new image, so an unplanned task restart would pick it up."
+            elif [ "$MODE" = "deploy-only" ]; then
+              echo "### Restarted onto the image already in ECR"
+              echo ""
+              echo "- workflow ref: \`${{ github.sha }}\` (see the image digest above"
+              echo "  for what actually shipped)"
+              echo "- actor: @${{ github.actor }}"
+              echo "- verified: ECS rollout COMPLETED, task running, /healthz 200"
+            else
+              echo "### Deployed to production"
+              echo ""
+              echo "- commit: \`${{ github.sha }}\`"
+              echo "- actor: @${{ github.actor }}"
+              echo "- verified: ECS rollout COMPLETED, task running, /healthz 200"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
