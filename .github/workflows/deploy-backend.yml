@@ -147,7 +147,15 @@ jobs:
       - name: Wait for the service to stabilise
         if: inputs.mode != 'build-only'
         run: |
-          aws ecs wait services-stable --cluster default --services heimdall-api
+          # The waiter hard-caps at 40x15s = 10 minutes, but a healthy rollout can
+          # take longer than that: new task startup plus the old task draining
+          # against the target group's 300s deregistration delay. On 2026-08-20 it
+          # timed out 34 seconds before a healthy deploy completed, failing the run
+          # red while the new code was already serving. One retry doubles the
+          # budget to 20 minutes; the poll step below remains the real pass/fail
+          # decision on rolloutState, so this cannot mask a genuine rollback.
+          aws ecs wait services-stable --cluster default --services heimdall-api ||
+            aws ecs wait services-stable --cluster default --services heimdall-api
 
       - name: Verify the rollout completed and did not roll back
         if: inputs.mode != 'build-only'
