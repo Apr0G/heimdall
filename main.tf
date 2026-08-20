@@ -170,6 +170,16 @@ resource "aws_cognito_user_pool" "heimdall" {
 
   software_token_mfa_configuration { enabled = true }
 
+  # Who the invite / reset-code emails come from. COGNITO_DEFAULT is AWS's
+  # no-reply@verificationemail.com; DEVELOPER sends through our SES identity
+  # (ses.tf) as no-reply@heimdallclaims.com. Gated — see ses.tf for why.
+  email_configuration {
+    email_sending_account  = var.cognito_email_from_ses ? "DEVELOPER" : "COGNITO_DEFAULT"
+    source_arn             = var.cognito_email_from_ses ? aws_ses_domain_identity.heimdall.arn : null
+    from_email_address     = var.cognito_email_from_ses ? local.mail_from : null
+    reply_to_email_address = var.cognito_email_from_ses ? local.mail_reply_to : null
+  }
+
   # Self-service "forgot password" goes through the verified email only — never
   # SMS/phone, which we don't collect.
   account_recovery_setting {
