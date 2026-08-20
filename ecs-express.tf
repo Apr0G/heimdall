@@ -288,10 +288,19 @@ resource "aws_cloudformation_stack" "express" {
       Api = {
         Type = "AWS::ECS::ExpressGatewayService"
         Properties = {
-          ServiceName           = "heimdall-api"
-          Cpu                   = "1024"
-          Memory                = "2048"
-          HealthCheckPath       = "/healthz"
+          ServiceName     = "heimdall-api"
+          Cpu             = "1024"
+          Memory          = "2048"
+          HealthCheckPath = "/healthz"
+          # Pin the service + its managed ALB to two AZs. Express defaulted to
+          # all six default-VPC subnets, which put six public IPv4 addresses on
+          # the ALB (~$22/mo in IP charges alone, the whole "VPC" bill line).
+          # Two AZs is standard HA. Same slice as the VPC endpoints, so tasks
+          # stay AZ-local to them. NetworkConfiguration is NOT in the schema's
+          # createOnlyProperties — this updates in place, no ALB replacement.
+          NetworkConfiguration = {
+            Subnets = slice(data.aws_subnets.default.ids, 0, 2)
+          }
           ExecutionRoleArn      = aws_iam_role.ecs_execution.arn
           InfrastructureRoleArn = aws_iam_role.ecs_infra.arn
           TaskRoleArn           = aws_iam_role.app.arn
