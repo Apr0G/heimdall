@@ -106,3 +106,16 @@ def test_complete_mfa_setup_rejects_unverified(monkeypatch):
     client.verify_software_token.return_value = {"Status": "ERROR"}
     with pytest.raises(cognito.InvalidCredentialsError):
         cognito.complete_mfa_setup("a@b.com", "s3", "000000")
+
+
+def test_complete_mfa_setup_wrong_code_is_bad_credential_not_5xx(monkeypatch):
+    """Cognito rejects a wrong first TOTP code with EnableSoftwareTokenMFAException
+    (NOT CodeMismatchException). Unmapped, it became CognitoError -> a generic
+    "something went wrong" 5xx; the user must see "code is wrong" (401)."""
+    client = _mock_client(monkeypatch)
+    client.verify_software_token.side_effect = ClientError(
+        {"Error": {"Code": "EnableSoftwareTokenMFAException", "Message": "Code mismatch"}},
+        "VerifySoftwareToken",
+    )
+    with pytest.raises(cognito.InvalidCredentialsError):
+        cognito.complete_mfa_setup("a@b.com", "s3", "111111")

@@ -18,6 +18,10 @@ _BAD_CREDENTIAL_CODES = {
     "UserNotConfirmedException",
     "CodeMismatchException",
     "ExpiredCodeException",
+    # VerifySoftwareToken (MFA enrollment) rejects a wrong first TOTP code with
+    # THIS, not CodeMismatchException — without it a mistyped code during setup
+    # surfaced as a generic 5xx ("something went wrong") instead of 401.
+    "EnableSoftwareTokenMFAException",
 }
 
 
