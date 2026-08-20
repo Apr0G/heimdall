@@ -2,7 +2,13 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
 
 import { api } from "@/lib/api";
 
@@ -15,18 +21,30 @@ export type User = {
 };
 
 // login resolves to "ok" (session started) or an MFA challenge to answer next.
-export type LoginResult = { status: "ok" } | { status: "mfa"; challenge: string; session: string };
+export type LoginResult =
+  { status: "ok" } | { status: "mfa"; challenge: string; session: string };
 
 type AuthContextValue = {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<LoginResult>;
   verifyMfa: (email: string, session: string, code: string) => Promise<void>;
-  startMfaSetup: (email: string, session: string) => Promise<{ secret: string; session: string }>;
-  completeMfaSetup: (email: string, session: string, code: string) => Promise<void>;
+  startMfaSetup: (
+    email: string,
+    session: string,
+  ) => Promise<{ secret: string; session: string }>;
+  completeMfaSetup: (
+    email: string,
+    session: string,
+    code: string,
+  ) => Promise<void>;
   // NEW_PASSWORD_REQUIRED (temporary password): like login, may resolve to "ok" or
   // hand off to an MFA challenge.
-  setNewPassword: (email: string, session: string, newPassword: string) => Promise<LoginResult>;
+  setNewPassword: (
+    email: string,
+    session: string,
+    newPassword: string,
+  ) => Promise<LoginResult>;
   logout: () => void;
 };
 
@@ -68,7 +86,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // react-hooks/set-state-in-effect.
   useEffect(() => {
     let active = true;
-    const authed = document.cookie.split("; ").some((c) => c.startsWith(`${AUTH_COOKIE}=1`));
+    const authed = document.cookie
+      .split("; ")
+      .some((c) => c.startsWith(`${AUTH_COOKIE}=1`));
     const request: Promise<User | null> = authed
       ? api.get<User>("/api/auth/me").then((res) => res.data)
       : Promise.resolve(null);
@@ -91,19 +111,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Shared tail once a session is established (direct login or after MFA): the
   // server has already set the httpOnly cookie, so just set the presence flag,
   // wipe any previous session's cache, load the user, and go to the app.
-  const completeAuth = useCallback(async (expiresIn?: number) => {
-    setAuthedCookie(expiresIn);
-    queryClient.clear();
-    const me = await api.get<User>("/api/auth/me");
-    setUser(me.data);
-    router.replace("/dashboard");
-  }, [router, queryClient]);
+  const completeAuth = useCallback(
+    async (expiresIn?: number) => {
+      setAuthedCookie(expiresIn);
+      queryClient.clear();
+      const me = await api.get<User>("/api/auth/me");
+      setUser(me.data);
+      // Admins land on the global overview; everyone else on their practice
+      // dashboard. UX only — /admin data is gated by require_role on the API.
+      router.replace(me.data.role === "admin" ? "/admin" : "/dashboard");
+    },
+    [router, queryClient],
+  );
 
   // Shared tail for the two calls that can either finish login or return a challenge.
   const settle = useCallback(
-    async (data: { mfa?: { challenge: string; session: string }; expires_in?: number }) => {
+    async (data: {
+      mfa?: { challenge: string; session: string };
+      expires_in?: number;
+    }) => {
       if (data.mfa) {
-        return { status: "mfa", challenge: data.mfa.challenge, session: data.mfa.session } as const;
+        return {
+          status: "mfa",
+          challenge: data.mfa.challenge,
+          session: data.mfa.session,
+        } as const;
       }
       await completeAuth(data.expires_in);
       return { status: "ok" } as const;
@@ -120,8 +152,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const setNewPassword = useCallback(
-    async (email: string, session: string, newPassword: string): Promise<LoginResult> => {
-      const res = await api.post("/api/auth/password/set", { email, session, new_password: newPassword });
+    async (
+      email: string,
+      session: string,
+      newPassword: string,
+    ): Promise<LoginResult> => {
+      const res = await api.post("/api/auth/password/set", {
+        email,
+        session,
+        new_password: newPassword,
+      });
       return settle(res.data);
     },
     [settle],
@@ -129,7 +169,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const verifyMfa = useCallback(
     async (email: string, session: string, code: string) => {
-      const res = await api.post("/api/auth/mfa/verify", { email, session, code });
+      const res = await api.post("/api/auth/mfa/verify", {
+        email,
+        session,
+        code,
+      });
       await completeAuth(res.data.expires_in);
     },
     [completeAuth],
@@ -142,7 +186,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const completeMfaSetup = useCallback(
     async (email: string, session: string, code: string) => {
-      const res = await api.post("/api/auth/mfa/setup/complete", { email, session, code });
+      const res = await api.post("/api/auth/mfa/setup/complete", {
+        email,
+        session,
+        code,
+      });
       await completeAuth(res.data.expires_in);
     },
     [completeAuth],

@@ -64,17 +64,25 @@ const GLOW = {
 };
 
 function errorText(err: unknown): string {
-  if (axios.isAxiosError(err) && (err.response?.status === 401 || err.response?.status === 400)) {
+  if (
+    axios.isAxiosError(err) &&
+    (err.response?.status === 401 || err.response?.status === 400)
+  ) {
     return "That code didn't match, or it expired. Try again.";
   }
   return "Something went wrong. Please try again.";
 }
 
 export default function LoginPage() {
-  const { login, verifyMfa, startMfaSetup, completeMfaSetup, setNewPassword } = useAuth();
+  const { login, verifyMfa, startMfaSetup, completeMfaSetup, setNewPassword } =
+    useAuth();
   const [step, setStep] = useState<Step>({ name: "password" });
 
-  const onChallenge = async (email: string, challenge: string, session: string) => {
+  const onChallenge = async (
+    email: string,
+    challenge: string,
+    session: string,
+  ) => {
     if (challenge === "NEW_PASSWORD_REQUIRED") {
       setStep({ name: "new_password", email, session });
     } else if (challenge === "MFA_SETUP") {
@@ -91,14 +99,22 @@ export default function LoginPage() {
       <div className="h-1 bg-gradient-to-r from-amber-500 to-blue-500" />
       <MarketingHeader showLogin={false} />
       <div className="relative flex flex-1 items-center justify-center px-4 py-12">
-        <div aria-hidden style={GLOW} className="pointer-events-none absolute inset-0" />
+        <div
+          aria-hidden
+          style={GLOW}
+          className="pointer-events-none absolute inset-0"
+        />
         <div className="relative w-full max-w-sm rounded-lg border border-border bg-card p-8 shadow-md">
-          {step.name === "password" && <PasswordStep onLogin={login} onChallenge={onChallenge} />}
+          {step.name === "password" && (
+            <PasswordStep onLogin={login} onChallenge={onChallenge} />
+          )}
 
           {step.name === "new_password" && (
             <NewPasswordStep
               onSubmit={(pw) => setNewPassword(step.email, step.session, pw)}
-              onChallenge={(challenge, session) => onChallenge(step.email, challenge, session)}
+              onChallenge={(challenge, session) =>
+                onChallenge(step.email, challenge, session)
+              }
             />
           )}
 
@@ -114,7 +130,9 @@ export default function LoginPage() {
             <CodeStep
               title="Set up two-factor authentication"
               description="Scan this QR code with an authenticator app (Google Authenticator, Authy, 1Password), then enter the 6-digit code it shows."
-              onSubmit={(code) => completeMfaSetup(step.email, step.session, code)}
+              onSubmit={(code) =>
+                completeMfaSetup(step.email, step.session, code)
+              }
             >
               <div className="flex justify-center">
                 <div className="rounded-md bg-white p-3">
@@ -129,7 +147,9 @@ export default function LoginPage() {
               <p className="text-center text-xs text-muted-foreground">
                 Can&rsquo;t scan? Enter this key manually:
                 <br />
-                <span className="font-mono break-all text-foreground">{step.secret}</span>
+                <span className="font-mono break-all text-foreground">
+                  {step.secret}
+                </span>
               </p>
             </CodeStep>
           )}
@@ -147,7 +167,11 @@ function PasswordStep({
     email: string,
     password: string,
   ) => Promise<{ status: string; challenge?: string; session?: string }>;
-  onChallenge: (email: string, challenge: string, session: string) => Promise<void>;
+  onChallenge: (
+    email: string,
+    challenge: string,
+    session: string,
+  ) => Promise<void>;
 }) {
   const [formError, setFormError] = useState<string | null>(null);
   const {
@@ -163,7 +187,7 @@ function PasswordStep({
       if (res.status === "mfa" && res.challenge && res.session) {
         await onChallenge(values.email, res.challenge, res.session);
       }
-      // On "ok" the auth context has already redirected to /dashboard.
+      // On "ok" the auth context has already redirected (role-aware).
     } catch (err) {
       if (axios.isAxiosError(err) && err.response?.status === 401) {
         setFormError("That email or password doesn't match our records.");
@@ -175,12 +199,22 @@ function PasswordStep({
 
   return (
     <>
-      <h1 className="mb-6 text-center text-base font-semibold">Sign in to your practice account</h1>
+      <h1 className="mb-6 text-center text-base font-semibold">
+        Sign in to your practice account
+      </h1>
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
         <div className="space-y-1.5">
           <Label htmlFor="email">Email</Label>
-          <Input id="email" type="email" autoComplete="email" autoFocus {...register("email")} />
-          {errors.email && <p className="text-sm text-destructive">{errors.email.message}</p>}
+          <Input
+            id="email"
+            type="email"
+            autoComplete="email"
+            autoFocus
+            {...register("email")}
+          />
+          {errors.email && (
+            <p className="text-sm text-destructive">{errors.email.message}</p>
+          )}
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="password">Password</Label>
@@ -190,7 +224,11 @@ function PasswordStep({
             autoComplete="current-password"
             {...register("password")}
           />
-          {errors.password && <p className="text-sm text-destructive">{errors.password.message}</p>}
+          {errors.password && (
+            <p className="text-sm text-destructive">
+              {errors.password.message}
+            </p>
+          )}
         </div>
         {formError && <p className="text-sm text-destructive">{formError}</p>}
         <Button type="submit" className="w-full" disabled={isSubmitting}>
@@ -199,7 +237,10 @@ function PasswordStep({
       </form>
       <p className="mt-5 text-center text-sm text-muted-foreground">
         Don&rsquo;t have an account?{" "}
-        <Link href="/get-started" className="font-medium text-foreground hover:underline">
+        <Link
+          href="/get-started"
+          className="font-medium text-foreground hover:underline"
+        >
           Get started
         </Link>
       </p>
@@ -232,11 +273,13 @@ function NewPasswordStep({
       if (res.status === "mfa" && res.challenge && res.session) {
         await onChallenge(res.challenge, res.session);
       }
-      // On "ok" the auth context has already redirected to /dashboard.
+      // On "ok" the auth context has already redirected (role-aware).
     } catch (err) {
       if (axios.isAxiosError(err) && err.response?.status === 400) {
         // Cognito's policy message, relayed by the API (never echoes the password).
-        setFormError(String(err.response.data?.detail ?? "That password isn't allowed."));
+        setFormError(
+          String(err.response.data?.detail ?? "That password isn't allowed."),
+        );
       } else if (axios.isAxiosError(err) && err.response?.status === 401) {
         setFormError("Your sign-in session expired. Please sign in again.");
       } else {
@@ -247,7 +290,9 @@ function NewPasswordStep({
 
   return (
     <>
-      <h1 className="text-center text-base font-semibold">Choose your password</h1>
+      <h1 className="text-center text-base font-semibold">
+        Choose your password
+      </h1>
       <p className="mt-2 mb-6 text-center text-sm text-muted-foreground">
         You signed in with a temporary password. Set your own to continue.
       </p>
@@ -262,7 +307,9 @@ function NewPasswordStep({
             {...register("newPassword")}
           />
           {errors.newPassword && (
-            <p className="text-sm text-destructive">{errors.newPassword.message}</p>
+            <p className="text-sm text-destructive">
+              {errors.newPassword.message}
+            </p>
           )}
         </div>
         <div className="space-y-1.5">
@@ -273,13 +320,21 @@ function NewPasswordStep({
             autoComplete="new-password"
             {...register("confirm")}
           />
-          {errors.confirm && <p className="text-sm text-destructive">{errors.confirm.message}</p>}
+          {errors.confirm && (
+            <p className="text-sm text-destructive">{errors.confirm.message}</p>
+          )}
         </div>
-        <ul className="space-y-1 text-xs text-muted-foreground" aria-label="Password requirements">
+        <ul
+          className="space-y-1 text-xs text-muted-foreground"
+          aria-label="Password requirements"
+        >
           {PASSWORD_RULES.map((rule) => {
             const ok = rule.test(current);
             return (
-              <li key={rule.label} className={ok ? "text-foreground" : undefined}>
+              <li
+                key={rule.label}
+                className={ok ? "text-foreground" : undefined}
+              >
                 <span aria-hidden className="mr-1.5 inline-block w-3">
                   {ok ? "✓" : "·"}
                 </span>
@@ -339,12 +394,18 @@ function CodeStep({
           autoFocus
           placeholder="123456"
           value={code}
-          onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+          onChange={(e) =>
+            setCode(e.target.value.replace(/\D/g, "").slice(0, 6))
+          }
           className="text-center font-mono tracking-[0.4em]"
         />
       </div>
       {error && <p className="text-sm text-destructive">{error}</p>}
-      <Button type="submit" className="w-full" disabled={busy || code.length < 6}>
+      <Button
+        type="submit"
+        className="w-full"
+        disabled={busy || code.length < 6}
+      >
         {busy ? "Verifying…" : "Verify"}
       </Button>
     </form>
