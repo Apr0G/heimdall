@@ -61,3 +61,20 @@ output "ses_dkim_records" {
     { host = "${t}._domainkey", type = "CNAME", value = "${t}.dkim.amazonses.com" }
   ]
 }
+
+# Bounces and complaints land in the existing alerts topic (email to the
+# founder). Volume is tiny, so a human reading each one IS the suppression
+# process: a bounced invite means a typo'd address to fix in Cognito.
+resource "aws_ses_identity_notification_topic" "bounce" {
+  identity                 = aws_ses_domain_identity.heimdall.domain
+  notification_type        = "Bounce"
+  topic_arn                = aws_sns_topic.alerts.arn
+  include_original_headers = false
+}
+
+resource "aws_ses_identity_notification_topic" "complaint" {
+  identity                 = aws_ses_domain_identity.heimdall.domain
+  notification_type        = "Complaint"
+  topic_arn                = aws_sns_topic.alerts.arn
+  include_original_headers = false
+}
