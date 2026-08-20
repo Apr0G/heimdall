@@ -18,6 +18,8 @@ from app.core.rate_limit import ip_key, login_allowed, register_login_failure
 from app.db.session import get_db
 from app.models import User
 from app.schemas.auth import (
+    ChangePasswordRequest,
+    ForgotPasswordRequest,
     LoginRequest,
     LoginResponse,
     MfaChallenge,
@@ -25,6 +27,7 @@ from app.schemas.auth import (
     MfaSetupStartRequest,
     MfaSetupStartResponse,
     MfaVerifyRequest,
+    ResetPasswordRequest,
     SetPasswordRequest,
     UserOut,
 )
@@ -33,7 +36,11 @@ from app.services.cognito import (
     CognitoError,
     InvalidCredentialsError,
     PasswordPolicyError,
+    RateLimitedError,
+    change_password,
     complete_mfa_setup,
+    confirm_forgot_password,
+    forgot_password,
     global_sign_out,
     initiate_auth,
     respond_new_password,
@@ -177,12 +184,7 @@ async def password_set(
             respond_new_password, body.email, body.session, body.new_password
         )
     except PasswordPolicyError as exc:
-        # Cognito's own policy text (e.g. "Password must have symbol characters") —
-        # never the password itself — is the most useful thing to show the user.
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Password doesn't meet the requirements: {exc}",
-        ) from None
+        raise _password_policy_400(exc) from None
     except InvalidCredentialsError:
         # Stale/expired session (Cognito sessions last ~3 minutes) or a bad request.
         await _record_auth_failure(session, request, throttle_key)
@@ -207,6 +209,140 @@ async def password_set(
     if auth.challenge:
         return LoginResponse(mfa=MfaChallenge(challenge=auth.challenge, session=auth.session))
     return await _finalize_login(session, request, response, auth.tokens, body.email)
+
+
+def _password_policy_400(exc: PasswordPolicyError) -> HTTPException:
+    # Cognito's own policy text (e.g. "Password must have symbol characters") —
+    # never the password itself — is the most useful thing to show the user.
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"Password doesn't meet the requirements: {exc}",
+    )
+
+
+_TOO_MANY = HTTPException(
+    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+    detail="Too many attempts. Please wait a while and try again.",
+)
+
+
+@router.post("/password/forgot", status_code=status.HTTP_202_ACCEPTED)
+async def password_forgot(
+    body: ForgotPasswordRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    """Start a self-service reset: Cognito emails a code to the account's address.
+
+    Always 202, whatever Cognito said about the account — an unknown address, a
+    not-yet-activated invite, and a real send are indistinguishable to the caller,
+    so this endpoint can't be used to enumerate users. Each call consumes a login
+    attempt from the IP's budget, because each one can trigger an email.
+    """
+    throttle_key = await _throttle(request)
+    await run_in_threadpool(register_login_failure, throttle_key)
+    try:
+        await run_in_threadpool(forgot_password, body.email)
+    except (InvalidCredentialsError, RateLimitedError):
+        pass  # deliberately indistinguishable from success
+    except CognitoError as exc:
+        await _record_auth_error(session, request)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Authentication service is unavailable",
+        ) from exc
+    # No email in metadata: it's caller-supplied and unverified at this point.
+    await log_audit(
+        session,
+        action="password_reset_requested",
+        ip=safe_ip(client_ip(request)),
+        user_agent=request.headers.get("user-agent"),
+    )
+    await session.commit()
+    return Response(status_code=status.HTTP_202_ACCEPTED)
+
+
+@router.post("/password/reset", status_code=status.HTTP_204_NO_CONTENT)
+async def password_reset(
+    body: ResetPasswordRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    """Finish a self-service reset with the emailed code. The user then signs in
+    normally (password + their existing authenticator)."""
+    throttle_key = await _throttle(request)
+    try:
+        await run_in_threadpool(confirm_forgot_password, body.email, body.code, body.new_password)
+    except PasswordPolicyError as exc:
+        raise _password_policy_400(exc) from None
+    except InvalidCredentialsError:
+        # Wrong/expired code — or an unknown user, which must look the same.
+        await _record_auth_failure(session, request, throttle_key)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="That code didn't match, or it expired. Request a new one.",
+        ) from None
+    except RateLimitedError:
+        raise _TOO_MANY from None
+    except CognitoError as exc:
+        await _record_auth_error(session, request)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Authentication service is unavailable",
+        ) from exc
+    await log_audit(
+        session,
+        action="password_reset",
+        ip=safe_ip(client_ip(request)),
+        user_agent=request.headers.get("user-agent"),
+        metadata={"email": body.email},  # verified: Cognito accepted the code for it
+    )
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/password/change", status_code=status.HTTP_204_NO_CONTENT)
+async def password_change(
+    body: ChangePasswordRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    creds: HTTPAuthorizationCredentials | None = Depends(security),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    """Signed-in password change. Cognito re-checks the current password against
+    the caller's own access token, so one user can never change another's."""
+    throttle_key = await _throttle(request)
+    token = request.cookies.get(AUTH_COOKIE) or (creds.credentials if creds else None)
+    try:
+        await run_in_threadpool(change_password, token, body.current_password, body.new_password)
+    except PasswordPolicyError as exc:
+        raise _password_policy_400(exc) from None
+    except InvalidCredentialsError:
+        await _record_auth_failure(session, request, throttle_key)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Your current password didn't match.",
+        ) from None
+    except RateLimitedError:
+        raise _TOO_MANY from None
+    except CognitoError as exc:
+        await _record_auth_error(session, request)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Authentication service is unavailable",
+        ) from exc
+    await log_audit(
+        session,
+        action="password_change",
+        resource_type="user",
+        resource_id=current_user.id,
+        user_id=current_user.id,
+        practice_id=current_user.practice_id,
+        ip=safe_ip(client_ip(request)),
+        user_agent=request.headers.get("user-agent"),
+    )
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/mfa/verify", response_model=LoginResponse)

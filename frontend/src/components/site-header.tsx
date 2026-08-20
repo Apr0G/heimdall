@@ -1,5 +1,6 @@
 "use client";
 
+import { UserRoundIcon } from "lucide-react";
 import Link from "next/link";
 
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -26,10 +27,21 @@ export function SiteHeader() {
             </Link>
           )}
           {user && (
-            <span className="hidden text-muted-foreground sm:inline">
+            <Link
+              href="/settings"
+              title="Account settings"
+              className="hidden max-w-[16rem] truncate text-muted-foreground hover:text-foreground sm:inline"
+            >
               {user.email}
-            </span>
+            </Link>
           )}
+          <Link
+            href="/settings"
+            aria-label="Account settings"
+            className="text-muted-foreground hover:text-foreground sm:hidden"
+          >
+            <UserRoundIcon className="size-4" />
+          </Link>
           <ThemeToggle />
           <Button variant="outline" size="sm" onClick={logout}>
             Log out

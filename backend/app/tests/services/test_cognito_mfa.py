@@ -119,3 +119,41 @@ def test_complete_mfa_setup_wrong_code_is_bad_credential_not_5xx(monkeypatch):
     )
     with pytest.raises(cognito.InvalidCredentialsError):
         cognito.complete_mfa_setup("a@b.com", "s3", "111111")
+
+
+def test_forgot_password_unknown_user_is_bad_credential(monkeypatch):
+    client = _mock_client(monkeypatch)
+    client.forgot_password.side_effect = ClientError(
+        {"Error": {"Code": "UserNotFoundException", "Message": "x"}}, "ForgotPassword"
+    )
+    with pytest.raises(cognito.InvalidCredentialsError):
+        cognito.forgot_password("nobody@heimdall.test")
+
+
+def test_forgot_password_limit_is_rate_limited(monkeypatch):
+    client = _mock_client(monkeypatch)
+    client.forgot_password.side_effect = ClientError(
+        {"Error": {"Code": "LimitExceededException", "Message": "x"}}, "ForgotPassword"
+    )
+    with pytest.raises(cognito.RateLimitedError):
+        cognito.forgot_password("a@b.com")
+
+
+def test_confirm_forgot_password_passes_code_and_password(monkeypatch):
+    client = _mock_client(monkeypatch)
+    cognito.confirm_forgot_password("a@b.com", "123456", "Correct-Horse-9!")
+    kwargs = client.confirm_forgot_password.call_args.kwargs
+    assert kwargs["Username"] == "a@b.com"
+    assert kwargs["ConfirmationCode"] == "123456"
+    assert kwargs["Password"] == "Correct-Horse-9!"
+
+
+def test_change_password_uses_access_token(monkeypatch):
+    client = _mock_client(monkeypatch)
+    cognito.change_password("tok", "Old-Horse-1!", "Correct-Horse-9!")
+    kwargs = client.change_password.call_args.kwargs
+    assert kwargs == {
+        "AccessToken": "tok",
+        "PreviousPassword": "Old-Horse-1!",
+        "ProposedPassword": "Correct-Horse-9!",
+    }

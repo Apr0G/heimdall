@@ -34,6 +34,10 @@ class PasswordPolicyError(Exception):
     is Cognito's own (policy text only, never the password) — safe to show."""
 
 
+class RateLimitedError(Exception):
+    """Cognito's own per-user limit on codes/attempts (LimitExceededException)."""
+
+
 class CognitoError(Exception):
     """Any other Cognito failure (service error, unexpected challenge)."""
 
@@ -58,6 +62,8 @@ def _client_error(exc: Exception) -> Exception:
             return InvalidCredentialsError(code)
         if code == "InvalidPasswordException":
             return PasswordPolicyError(exc.response.get("Error", {}).get("Message", ""))
+        if code in ("LimitExceededException", "TooManyRequestsException"):
+            return RateLimitedError(code)
         return CognitoError(code)
     return CognitoError(type(exc).__name__)  # other BotoCoreError (e.g. connection)
 
@@ -172,6 +178,41 @@ def complete_mfa_setup(email: str, session: str, code: str) -> dict:
     if result is None:
         raise CognitoError("mfa_setup_no_result")
     return result
+
+
+def forgot_password(email: str) -> None:
+    """Ask Cognito to email a reset code. Raises InvalidCredentialsError for an
+    unknown/unresettable user — the CALLER must swallow that so the response never
+    reveals whether an account exists."""
+    try:
+        _get_client().forgot_password(ClientId=settings.cognito_client_id, Username=email)
+    except (ClientError, BotoCoreError) as exc:
+        raise _client_error(exc) from exc
+
+
+def confirm_forgot_password(email: str, code: str, new_password: str) -> None:
+    """Finish a reset: the emailed code + the new password."""
+    try:
+        _get_client().confirm_forgot_password(
+            ClientId=settings.cognito_client_id,
+            Username=email,
+            ConfirmationCode=code,
+            Password=new_password,
+        )
+    except (ClientError, BotoCoreError) as exc:
+        raise _client_error(exc) from exc
+
+
+def change_password(access_token: str, current_password: str, new_password: str) -> None:
+    """Signed-in password change; Cognito re-verifies the current password."""
+    try:
+        _get_client().change_password(
+            AccessToken=access_token,
+            PreviousPassword=current_password,
+            ProposedPassword=new_password,
+        )
+    except (ClientError, BotoCoreError) as exc:
+        raise _client_error(exc) from exc
 
 
 def global_sign_out(access_token: str) -> None:

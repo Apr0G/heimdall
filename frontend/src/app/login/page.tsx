@@ -5,13 +5,19 @@ import axios from "axios";
 import Link from "next/link";
 import { QRCodeSVG } from "qrcode.react";
 import { useState } from "react";
-import { useForm, useWatch } from "react-hook-form";
+import { useForm } from "react-hook-form";
 import { z } from "zod";
 
 import { MarketingHeader } from "@/components/marketing-header";
+import {
+  NewPasswordFields,
+  passwordErrorText,
+  passwordPairSchema,
+} from "@/components/password-fields";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 
 const schema = z.object({
@@ -21,42 +27,21 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>;
 
-// Mirrors the Cognito pool's password_policy in main.tf. Cognito is the enforcer;
-// this just gives the user the rules up front instead of after a round-trip.
-const PASSWORD_RULES = [
-  { label: "At least 12 characters", test: (p: string) => p.length >= 12 },
-  { label: "An uppercase letter", test: (p: string) => /[A-Z]/.test(p) },
-  { label: "A lowercase letter", test: (p: string) => /[a-z]/.test(p) },
-  { label: "A number", test: (p: string) => /\d/.test(p) },
-  { label: "A symbol", test: (p: string) => /[^A-Za-z0-9]/.test(p) },
-];
-
-const newPasswordSchema = z
-  .object({
-    newPassword: z
-      .string()
-      .refine(
-        (p) => PASSWORD_RULES.every((r) => r.test(p)),
-        "Password doesn't meet the rules below",
-      ),
-    confirm: z.string(),
-  })
-  .refine((v) => v.newPassword === v.confirm, {
-    message: "Passwords don't match",
-    path: ["confirm"],
-  });
-
-type NewPasswordValues = z.infer<typeof newPasswordSchema>;
+type NewPasswordValues = z.infer<typeof passwordPairSchema>;
 
 // After a correct password, Cognito may require a new password (first login with a
 // temporary one), a TOTP code (enrolled), or a first-time enrollment (MFA_SETUP).
 // We carry the email + Cognito session through; new_password chains into the
 // MFA steps the same way the password step does.
+// The forgot-password branch is separate: request a code, then trade code + new
+// password for a reset; the user then signs in normally.
 type Step =
-  | { name: "password" }
+  | { name: "password"; notice?: string }
   | { name: "new_password"; email: string; session: string }
   | { name: "code"; email: string; session: string }
-  | { name: "setup"; email: string; session: string; secret: string };
+  | { name: "setup"; email: string; session: string; secret: string }
+  | { name: "forgot"; email?: string }
+  | { name: "reset"; email: string };
 
 const GLOW = {
   backgroundImage:
@@ -106,7 +91,33 @@ export default function LoginPage() {
         />
         <div className="relative w-full max-w-sm rounded-lg border border-border bg-card p-8 shadow-md">
           {step.name === "password" && (
-            <PasswordStep onLogin={login} onChallenge={onChallenge} />
+            <PasswordStep
+              notice={step.notice}
+              onLogin={login}
+              onChallenge={onChallenge}
+              onForgot={(email) => setStep({ name: "forgot", email })}
+            />
+          )}
+
+          {step.name === "forgot" && (
+            <ForgotStep
+              initialEmail={step.email}
+              onSent={(email) => setStep({ name: "reset", email })}
+              onBack={() => setStep({ name: "password" })}
+            />
+          )}
+
+          {step.name === "reset" && (
+            <ResetStep
+              email={step.email}
+              onDone={() =>
+                setStep({
+                  name: "password",
+                  notice: "Password updated. Sign in with your new password.",
+                })
+              }
+              onResend={() => setStep({ name: "forgot", email: step.email })}
+            />
           )}
 
           {step.name === "new_password" && (
@@ -160,9 +171,13 @@ export default function LoginPage() {
 }
 
 function PasswordStep({
+  notice,
   onLogin,
   onChallenge,
+  onForgot,
 }: {
+  notice?: string;
+  onForgot: (email: string) => void;
   onLogin: (
     email: string,
     password: string,
@@ -177,6 +192,7 @@ function PasswordStep({
   const {
     register,
     handleSubmit,
+    getValues,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({ resolver: zodResolver(schema) });
 
@@ -202,6 +218,14 @@ function PasswordStep({
       <h1 className="mb-6 text-center text-base font-semibold">
         Sign in to your practice account
       </h1>
+      {notice && (
+        <p
+          role="status"
+          className="mb-4 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300"
+        >
+          {notice}
+        </p>
+      )}
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
         <div className="space-y-1.5">
           <Label htmlFor="email">Email</Label>
@@ -217,7 +241,16 @@ function PasswordStep({
           )}
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="password">Password</Label>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="password">Password</Label>
+            <button
+              type="button"
+              onClick={() => onForgot(getValues("email"))}
+              className="text-xs text-muted-foreground hover:text-foreground hover:underline"
+            >
+              Forgot password?
+            </button>
+          </div>
           <Input
             id="password"
             type="password"
@@ -263,8 +296,7 @@ function NewPasswordStep({
     handleSubmit,
     control,
     formState: { errors, isSubmitting },
-  } = useForm<NewPasswordValues>({ resolver: zodResolver(newPasswordSchema) });
-  const current = useWatch({ control, name: "newPassword" }) ?? "";
+  } = useForm<NewPasswordValues>({ resolver: zodResolver(passwordPairSchema) });
 
   const submit = async (values: NewPasswordValues) => {
     setFormError(null);
@@ -275,16 +307,12 @@ function NewPasswordStep({
       }
       // On "ok" the auth context has already redirected (role-aware).
     } catch (err) {
-      if (axios.isAxiosError(err) && err.response?.status === 400) {
-        // Cognito's policy message, relayed by the API (never echoes the password).
-        setFormError(
-          String(err.response.data?.detail ?? "That password isn't allowed."),
-        );
-      } else if (axios.isAxiosError(err) && err.response?.status === 401) {
-        setFormError("Your sign-in session expired. Please sign in again.");
-      } else {
-        setFormError("Something went wrong. Please try again.");
-      }
+      setFormError(
+        passwordErrorText(
+          err,
+          "Your sign-in session expired. Please sign in again.",
+        ),
+      );
     }
   };
 
@@ -297,57 +325,189 @@ function NewPasswordStep({
         You signed in with a temporary password. Set your own to continue.
       </p>
       <form onSubmit={handleSubmit(submit)} className="space-y-4" noValidate>
-        <div className="space-y-1.5">
-          <Label htmlFor="newPassword">New password</Label>
-          <Input
-            id="newPassword"
-            type="password"
-            autoComplete="new-password"
-            autoFocus
-            {...register("newPassword")}
-          />
-          {errors.newPassword && (
-            <p className="text-sm text-destructive">
-              {errors.newPassword.message}
-            </p>
-          )}
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="confirm">Confirm password</Label>
-          <Input
-            id="confirm"
-            type="password"
-            autoComplete="new-password"
-            {...register("confirm")}
-          />
-          {errors.confirm && (
-            <p className="text-sm text-destructive">{errors.confirm.message}</p>
-          )}
-        </div>
-        <ul
-          className="space-y-1 text-xs text-muted-foreground"
-          aria-label="Password requirements"
-        >
-          {PASSWORD_RULES.map((rule) => {
-            const ok = rule.test(current);
-            return (
-              <li
-                key={rule.label}
-                className={ok ? "text-foreground" : undefined}
-              >
-                <span aria-hidden className="mr-1.5 inline-block w-3">
-                  {ok ? "✓" : "·"}
-                </span>
-                {rule.label}
-              </li>
-            );
-          })}
-        </ul>
+        <NewPasswordFields
+          register={register}
+          control={control}
+          errors={errors}
+          autoFocus
+        />
         {formError && <p className="text-sm text-destructive">{formError}</p>}
         <Button type="submit" className="w-full" disabled={isSubmitting}>
           {isSubmitting ? "Saving…" : "Set password and continue"}
         </Button>
       </form>
+    </>
+  );
+}
+
+const forgotSchema = z.object({
+  email: z.string().email("Enter a valid email"),
+});
+type ForgotValues = z.infer<typeof forgotSchema>;
+
+function ForgotStep({
+  initialEmail,
+  onSent,
+  onBack,
+}: {
+  initialEmail?: string;
+  onSent: (email: string) => void;
+  onBack: () => void;
+}) {
+  const [formError, setFormError] = useState<string | null>(null);
+  const {
+    register,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+  } = useForm<ForgotValues>({
+    resolver: zodResolver(forgotSchema),
+    defaultValues: { email: initialEmail ?? "" },
+  });
+
+  const submit = async (values: ForgotValues) => {
+    setFormError(null);
+    try {
+      // Always 202 — the server never says whether the address has an account.
+      await api.post("/api/auth/password/forgot", { email: values.email });
+      onSent(values.email);
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response?.status === 429) {
+        setFormError("Too many attempts. Please wait a while and try again.");
+      } else {
+        setFormError("Something went wrong. Please try again.");
+      }
+    }
+  };
+
+  return (
+    <>
+      <h1 className="text-center text-base font-semibold">
+        Reset your password
+      </h1>
+      <p className="mt-2 mb-6 text-center text-sm text-muted-foreground">
+        Enter your account email and we&rsquo;ll send a one-time code.
+      </p>
+      <form onSubmit={handleSubmit(submit)} className="space-y-4" noValidate>
+        <div className="space-y-1.5">
+          <Label htmlFor="email">Email</Label>
+          <Input
+            id="email"
+            type="email"
+            autoComplete="email"
+            autoFocus
+            {...register("email")}
+          />
+          {errors.email && (
+            <p className="text-sm text-destructive">{errors.email.message}</p>
+          )}
+        </div>
+        {formError && <p className="text-sm text-destructive">{formError}</p>}
+        <Button type="submit" className="w-full" disabled={isSubmitting}>
+          {isSubmitting ? "Sending…" : "Send code"}
+        </Button>
+      </form>
+      <p className="mt-5 text-center text-sm text-muted-foreground">
+        <button
+          type="button"
+          onClick={onBack}
+          className="font-medium text-foreground hover:underline"
+        >
+          Back to sign in
+        </button>
+      </p>
+    </>
+  );
+}
+
+const resetSchema = z
+  .object({
+    code: z.string().regex(/^\d{6}$/, "Enter the 6-digit code"),
+    newPassword: z.string(),
+    confirm: z.string(),
+  })
+  .and(passwordPairSchema);
+type ResetValues = z.infer<typeof resetSchema>;
+
+function ResetStep({
+  email,
+  onDone,
+  onResend,
+}: {
+  email: string;
+  onDone: () => void;
+  onResend: () => void;
+}) {
+  const [formError, setFormError] = useState<string | null>(null);
+  const {
+    register,
+    handleSubmit,
+    control,
+    formState: { errors, isSubmitting },
+  } = useForm<ResetValues>({ resolver: zodResolver(resetSchema) });
+
+  const submit = async (values: ResetValues) => {
+    setFormError(null);
+    try {
+      await api.post("/api/auth/password/reset", {
+        email,
+        code: values.code,
+        new_password: values.newPassword,
+      });
+      onDone();
+    } catch (err) {
+      setFormError(
+        passwordErrorText(
+          err,
+          "That code didn't match, or it expired. Request a new one.",
+        ),
+      );
+    }
+  };
+
+  return (
+    <>
+      <h1 className="text-center text-base font-semibold">Check your email</h1>
+      <p className="mt-2 mb-6 text-center text-sm text-muted-foreground">
+        If <span className="font-medium text-foreground">{email}</span> has an
+        account, a 6-digit code is on its way. Enter it with your new password.
+      </p>
+      <form onSubmit={handleSubmit(submit)} className="space-y-4" noValidate>
+        <div className="space-y-1.5">
+          <Label htmlFor="code">Code</Label>
+          <Input
+            id="code"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            autoFocus
+            placeholder="123456"
+            maxLength={6}
+            className="text-center font-mono tracking-[0.4em]"
+            {...register("code")}
+          />
+          {errors.code && (
+            <p className="text-sm text-destructive">{errors.code.message}</p>
+          )}
+        </div>
+        <NewPasswordFields
+          register={register}
+          control={control}
+          errors={errors}
+        />
+        {formError && <p className="text-sm text-destructive">{formError}</p>}
+        <Button type="submit" className="w-full" disabled={isSubmitting}>
+          {isSubmitting ? "Resetting…" : "Reset password"}
+        </Button>
+      </form>
+      <p className="mt-5 text-center text-sm text-muted-foreground">
+        Didn&rsquo;t get it?{" "}
+        <button
+          type="button"
+          onClick={onResend}
+          className="font-medium text-foreground hover:underline"
+        >
+          Send a new code
+        </button>
+      </p>
     </>
   );
 }

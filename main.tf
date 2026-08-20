@@ -170,6 +170,28 @@ resource "aws_cognito_user_pool" "heimdall" {
 
   software_token_mfa_configuration { enabled = true }
 
+  # Self-service "forgot password" goes through the verified email only — never
+  # SMS/phone, which we don't collect.
+  account_recovery_setting {
+    recovery_mechanism {
+      name     = "verified_email"
+      priority = 1
+    }
+  }
+
+  # The email carrying the forgot-password code ({####}).
+  verification_message_template {
+    default_email_option = "CONFIRM_WITH_CODE"
+    email_subject        = "Your Heimdall password reset code"
+    email_message        = <<-EOT
+      <p>Hello,</p>
+      <p>Someone asked to reset the password for your Heimdall account. Enter this code on the reset screen:</p>
+      <p style="font-size:20px;letter-spacing:4px"><strong>{####}</strong></p>
+      <p>The code expires in one hour. If you didn't request this, you can ignore this email — your password hasn't changed.</p>
+      <p>— Heimdall</p>
+    EOT
+  }
+
   # Login-only product: no self-service signup. Only admins create users, so a
   # stranger can't register and get auto-provisioned into a practice.
   admin_create_user_config {
@@ -203,6 +225,11 @@ resource "aws_cognito_user_pool_client" "heimdall" {
     "ALLOW_USER_PASSWORD_AUTH",
     "ALLOW_REFRESH_TOKEN_AUTH",
   ]
+
+  # Unknown users get the same error as a wrong password, and ForgotPassword for
+  # an unknown address succeeds silently — so login/reset can't enumerate accounts.
+  # The API also normalises these on its side; this closes the gap at the source.
+  prevent_user_existence_errors = "ENABLED"
 }
 
 # --- IAM: the role your app will use to call Bedrock + S3 ---
