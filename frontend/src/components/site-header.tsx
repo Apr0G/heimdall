@@ -1,15 +1,19 @@
 "use client";
 
-import { UserRoundIcon } from "lucide-react";
+import { SettingsIcon } from "lucide-react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 import { ThemeToggle } from "@/components/theme-toggle";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Wordmark } from "@/components/wordmark";
 import { useAuth } from "@/lib/auth-context";
+import { cn } from "@/lib/utils";
 
 export function SiteHeader() {
   const { user, logout } = useAuth();
+  const pathname = usePathname();
+  const onSettings = pathname.startsWith("/settings");
 
   return (
     <header className="border-b">
@@ -17,32 +21,35 @@ export function SiteHeader() {
         <Link href="/dashboard" aria-label="Heimdall dashboard">
           <Wordmark />
         </Link>
-        <div className="flex items-center gap-3 text-sm">
+        <div className="flex items-center gap-2 text-sm">
           {user?.role === "admin" && (
             <Link
               href="/admin"
-              className="text-muted-foreground hover:text-foreground"
+              className="mr-1 text-muted-foreground hover:text-foreground"
             >
               Admin
             </Link>
           )}
+          <ThemeToggle />
           {user && (
+            // A real button, not a bare email link: the gear is the universal
+            // "settings" cue, and the email makes clear whose account it opens.
             <Link
               href="/settings"
-              title="Account settings"
-              className="hidden max-w-[16rem] truncate text-muted-foreground hover:text-foreground sm:inline"
+              aria-label="Account settings"
+              aria-current={onSettings ? "page" : undefined}
+              title={user.email}
+              className={cn(
+                buttonVariants({ variant: "outline", size: "sm" }),
+                "max-w-[14rem]",
+                onSettings && "bg-muted text-foreground",
+              )}
             >
-              {user.email}
+              <SettingsIcon aria-hidden />
+              <span className="hidden truncate sm:inline">{user.email}</span>
+              <span className="sm:hidden">Account</span>
             </Link>
           )}
-          <Link
-            href="/settings"
-            aria-label="Account settings"
-            className="text-muted-foreground hover:text-foreground sm:hidden"
-          >
-            <UserRoundIcon className="size-4" />
-          </Link>
-          <ThemeToggle />
           <Button variant="outline" size="sm" onClick={logout}>
             Log out
           </Button>
