@@ -163,6 +163,9 @@ resource "aws_cognito_user_pool" "heimdall" {
     require_uppercase = true
     require_numbers   = true
     require_symbols   = true
+    # Invites (temporary passwords) expire after this; re-run provision-user to
+    # re-send. Explicit rather than the AWS default so the policy is in the repo.
+    temporary_password_validity_days = 7
   }
 
   software_token_mfa_configuration { enabled = true }
@@ -171,6 +174,22 @@ resource "aws_cognito_user_pool" "heimdall" {
   # stranger can't register and get auto-provisioned into a practice.
   admin_create_user_config {
     allow_admin_create_user_only = true
+
+    # The invite a provisioned user receives. {username} / {####} are Cognito's
+    # placeholders for the email and the temporary password. First login forces
+    # them to choose their own password, then enroll an authenticator.
+    invite_message_template {
+      email_subject = "Your Heimdall account"
+      email_message = <<-EOT
+        <p>Hello,</p>
+        <p>An account has been created for you on Heimdall, your practice's appeal-drafting workspace.</p>
+        <p>Sign in at <a href="https://heimdallclaims.com/login">heimdallclaims.com/login</a> with:</p>
+        <p>Email: {username}<br/>Temporary password: {####}</p>
+        <p>You'll be asked to choose your own password and set up an authenticator app. This temporary password expires in 7 days — if it has, ask your administrator to send a new one.</p>
+        <p>— Heimdall</p>
+      EOT
+      sms_message   = "Your Heimdall username is {username} and temporary password is {####}"
+    }
   }
 }
 

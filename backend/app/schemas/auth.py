@@ -10,9 +10,12 @@ class LoginRequest(BaseModel):
 
 
 class MfaChallenge(BaseModel):
-    # "SOFTWARE_TOKEN_MFA" (enter a code) | "MFA_SETUP" (enroll a TOTP device first).
+    # "SOFTWARE_TOKEN_MFA" (enter a code) | "MFA_SETUP" (enroll a TOTP device first)
+    # | "NEW_PASSWORD_REQUIRED" (temporary password: choose a real one first).
+    # Named for its original MFA-only role; the field name `mfa` on LoginResponse is
+    # kept so the frontend contract doesn't churn.
     challenge: str
-    session: str  # opaque Cognito session to carry into the /mfa/* call
+    session: str  # opaque Cognito session to carry into the next auth-step call
 
 
 class LoginResponse(BaseModel):
@@ -29,6 +32,12 @@ class MfaVerifyRequest(BaseModel):
     email: str
     session: str
     code: str
+
+
+class SetPasswordRequest(BaseModel):
+    email: str
+    session: str
+    new_password: str
 
 
 class MfaSetupStartRequest(BaseModel):

@@ -6,8 +6,11 @@ from botocore.exceptions import BotoCoreError, ClientError, ParamValidationError
 
 from app.core.config import settings
 
-# Cognito challenges we handle in the login flow (TOTP MFA).
+# Cognito challenges we handle in the login flow: TOTP MFA, plus the forced
+# password change a freshly-invited user (temporary password) must complete first.
 _MFA_CHALLENGES = ("SOFTWARE_TOKEN_MFA", "MFA_SETUP")
+NEW_PASSWORD_CHALLENGE = "NEW_PASSWORD_REQUIRED"
+_HANDLED_CHALLENGES = (*_MFA_CHALLENGES, NEW_PASSWORD_CHALLENGE)
 # Cognito error codes that mean "the secret/code the user supplied was wrong".
 _BAD_CREDENTIAL_CODES = {
     "NotAuthorizedException",
@@ -22,6 +25,11 @@ class InvalidCredentialsError(Exception):
     """Email/password (or MFA code) rejected by Cognito."""
 
 
+class PasswordPolicyError(Exception):
+    """A chosen password was rejected by the pool's password policy. The message
+    is Cognito's own (policy text only, never the password) — safe to show."""
+
+
 class CognitoError(Exception):
     """Any other Cognito failure (service error, unexpected challenge)."""
 
@@ -31,7 +39,7 @@ class AuthResult:
     """Outcome of a login step: either tokens (done) or an MFA challenge to answer."""
 
     tokens: dict | None = None
-    challenge: str | None = None  # "SOFTWARE_TOKEN_MFA" | "MFA_SETUP"
+    challenge: str | None = None  # "SOFTWARE_TOKEN_MFA" | "MFA_SETUP" | "NEW_PASSWORD_REQUIRED"
     session: str | None = None  # opaque Cognito session carried to the next step
 
 
@@ -44,6 +52,8 @@ def _client_error(exc: Exception) -> Exception:
         code = exc.response.get("Error", {}).get("Code", "")
         if code in _BAD_CREDENTIAL_CODES:
             return InvalidCredentialsError(code)
+        if code == "InvalidPasswordException":
+            return PasswordPolicyError(exc.response.get("Error", {}).get("Message", ""))
         return CognitoError(code)
     return CognitoError(type(exc).__name__)  # other BotoCoreError (e.g. connection)
 
@@ -82,14 +92,35 @@ def initiate_auth(email: str, password: str) -> AuthResult:
     except (ClientError, BotoCoreError) as exc:
         raise _client_error(exc) from exc
 
+    return _auth_result(resp)
+
+
+def _auth_result(resp: dict) -> AuthResult:
     result = resp.get("AuthenticationResult")
     if result is not None:
         return AuthResult(tokens=result)
     challenge = resp.get("ChallengeName")
-    if challenge in _MFA_CHALLENGES:
+    if challenge in _HANDLED_CHALLENGES:
         return AuthResult(challenge=challenge, session=resp["Session"])
-    # Any other challenge (e.g. NEW_PASSWORD_REQUIRED) is unsupported.
+    # Any other challenge (e.g. SMS_MFA, CUSTOM_CHALLENGE) is unsupported.
     raise CognitoError(challenge or "no_authentication_result")
+
+
+def respond_new_password(email: str, session: str, new_password: str) -> AuthResult:
+    """Answer NEW_PASSWORD_REQUIRED (first login with a temporary password). Cognito
+    may then issue tokens OR chain straight into an MFA challenge — for a brand-new
+    user on an MFA-required pool it is always MFA_SETUP — so the result has the same
+    shape as initiate_auth and the caller branches identically."""
+    try:
+        resp = _get_client().respond_to_auth_challenge(
+            ClientId=settings.cognito_client_id,
+            ChallengeName=NEW_PASSWORD_CHALLENGE,
+            Session=session,
+            ChallengeResponses={"USERNAME": email, "NEW_PASSWORD": new_password},
+        )
+    except (ClientError, BotoCoreError) as exc:
+        raise _client_error(exc) from exc
+    return _auth_result(resp)
 
 
 def respond_software_token_mfa(email: str, session: str, code: str) -> dict:

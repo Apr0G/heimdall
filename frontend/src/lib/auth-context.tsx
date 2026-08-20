@@ -24,6 +24,9 @@ type AuthContextValue = {
   verifyMfa: (email: string, session: string, code: string) => Promise<void>;
   startMfaSetup: (email: string, session: string) => Promise<{ secret: string; session: string }>;
   completeMfaSetup: (email: string, session: string, code: string) => Promise<void>;
+  // NEW_PASSWORD_REQUIRED (temporary password): like login, may resolve to "ok" or
+  // hand off to an MFA challenge.
+  setNewPassword: (email: string, session: string, newPassword: string) => Promise<LoginResult>;
   logout: () => void;
 };
 
@@ -96,16 +99,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     router.replace("/dashboard");
   }, [router, queryClient]);
 
+  // Shared tail for the two calls that can either finish login or return a challenge.
+  const settle = useCallback(
+    async (data: { mfa?: { challenge: string; session: string }; expires_in?: number }) => {
+      if (data.mfa) {
+        return { status: "mfa", challenge: data.mfa.challenge, session: data.mfa.session } as const;
+      }
+      await completeAuth(data.expires_in);
+      return { status: "ok" } as const;
+    },
+    [completeAuth],
+  );
+
   const login = useCallback(
     async (email: string, password: string): Promise<LoginResult> => {
       const res = await api.post("/api/auth/login", { email, password });
-      if (res.data.mfa) {
-        return { status: "mfa", challenge: res.data.mfa.challenge, session: res.data.mfa.session };
-      }
-      await completeAuth(res.data.expires_in);
-      return { status: "ok" };
+      return settle(res.data);
     },
-    [completeAuth],
+    [settle],
+  );
+
+  const setNewPassword = useCallback(
+    async (email: string, session: string, newPassword: string): Promise<LoginResult> => {
+      const res = await api.post("/api/auth/password/set", { email, session, new_password: newPassword });
+      return settle(res.data);
+    },
+    [settle],
   );
 
   const verifyMfa = useCallback(
@@ -146,7 +165,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, loading, login, verifyMfa, startMfaSetup, completeMfaSetup, logout }}
+      value={{
+        user,
+        loading,
+        login,
+        verifyMfa,
+        startMfaSetup,
+        completeMfaSetup,
+        setNewPassword,
+        logout,
+      }}
     >
       {children}
     </AuthContext.Provider>

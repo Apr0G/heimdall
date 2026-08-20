@@ -5,7 +5,7 @@ import axios from "axios";
 import Link from "next/link";
 import { QRCodeSVG } from "qrcode.react";
 import { useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 
 import { MarketingHeader } from "@/components/marketing-header";
@@ -21,10 +21,40 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>;
 
-// After a correct password, Cognito may require a TOTP code (enrolled) or a
-// first-time enrollment (MFA_SETUP). We carry the email + Cognito session through.
+// Mirrors the Cognito pool's password_policy in main.tf. Cognito is the enforcer;
+// this just gives the user the rules up front instead of after a round-trip.
+const PASSWORD_RULES = [
+  { label: "At least 12 characters", test: (p: string) => p.length >= 12 },
+  { label: "An uppercase letter", test: (p: string) => /[A-Z]/.test(p) },
+  { label: "A lowercase letter", test: (p: string) => /[a-z]/.test(p) },
+  { label: "A number", test: (p: string) => /\d/.test(p) },
+  { label: "A symbol", test: (p: string) => /[^A-Za-z0-9]/.test(p) },
+];
+
+const newPasswordSchema = z
+  .object({
+    newPassword: z
+      .string()
+      .refine(
+        (p) => PASSWORD_RULES.every((r) => r.test(p)),
+        "Password doesn't meet the rules below",
+      ),
+    confirm: z.string(),
+  })
+  .refine((v) => v.newPassword === v.confirm, {
+    message: "Passwords don't match",
+    path: ["confirm"],
+  });
+
+type NewPasswordValues = z.infer<typeof newPasswordSchema>;
+
+// After a correct password, Cognito may require a new password (first login with a
+// temporary one), a TOTP code (enrolled), or a first-time enrollment (MFA_SETUP).
+// We carry the email + Cognito session through; new_password chains into the
+// MFA steps the same way the password step does.
 type Step =
   | { name: "password" }
+  | { name: "new_password"; email: string; session: string }
   | { name: "code"; email: string; session: string }
   | { name: "setup"; email: string; session: string; secret: string };
 
@@ -41,8 +71,19 @@ function errorText(err: unknown): string {
 }
 
 export default function LoginPage() {
-  const { login, verifyMfa, startMfaSetup, completeMfaSetup } = useAuth();
+  const { login, verifyMfa, startMfaSetup, completeMfaSetup, setNewPassword } = useAuth();
   const [step, setStep] = useState<Step>({ name: "password" });
+
+  const onChallenge = async (email: string, challenge: string, session: string) => {
+    if (challenge === "NEW_PASSWORD_REQUIRED") {
+      setStep({ name: "new_password", email, session });
+    } else if (challenge === "MFA_SETUP") {
+      const s = await startMfaSetup(email, session);
+      setStep({ name: "setup", email, session: s.session, secret: s.secret });
+    } else {
+      setStep({ name: "code", email, session });
+    }
+  };
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -52,17 +93,12 @@ export default function LoginPage() {
       <div className="relative flex flex-1 items-center justify-center px-4 py-12">
         <div aria-hidden style={GLOW} className="pointer-events-none absolute inset-0" />
         <div className="relative w-full max-w-sm rounded-lg border border-border bg-card p-8 shadow-md">
-          {step.name === "password" && (
-            <PasswordStep
-              onLogin={login}
-              onChallenge={async (email, challenge, session) => {
-                if (challenge === "MFA_SETUP") {
-                  const s = await startMfaSetup(email, session);
-                  setStep({ name: "setup", email, session: s.session, secret: s.secret });
-                } else {
-                  setStep({ name: "code", email, session });
-                }
-              }}
+          {step.name === "password" && <PasswordStep onLogin={login} onChallenge={onChallenge} />}
+
+          {step.name === "new_password" && (
+            <NewPasswordStep
+              onSubmit={(pw) => setNewPassword(step.email, step.session, pw)}
+              onChallenge={(challenge, session) => onChallenge(step.email, challenge, session)}
             />
           )}
 
@@ -107,7 +143,10 @@ function PasswordStep({
   onLogin,
   onChallenge,
 }: {
-  onLogin: (email: string, password: string) => Promise<{ status: string; challenge?: string; session?: string }>;
+  onLogin: (
+    email: string,
+    password: string,
+  ) => Promise<{ status: string; challenge?: string; session?: string }>;
   onChallenge: (email: string, challenge: string, session: string) => Promise<void>;
 }) {
   const [formError, setFormError] = useState<string | null>(null);
@@ -164,6 +203,96 @@ function PasswordStep({
           Get started
         </Link>
       </p>
+    </>
+  );
+}
+
+function NewPasswordStep({
+  onSubmit,
+  onChallenge,
+}: {
+  onSubmit: (
+    newPassword: string,
+  ) => Promise<{ status: string; challenge?: string; session?: string }>;
+  onChallenge: (challenge: string, session: string) => Promise<void>;
+}) {
+  const [formError, setFormError] = useState<string | null>(null);
+  const {
+    register,
+    handleSubmit,
+    control,
+    formState: { errors, isSubmitting },
+  } = useForm<NewPasswordValues>({ resolver: zodResolver(newPasswordSchema) });
+  const current = useWatch({ control, name: "newPassword" }) ?? "";
+
+  const submit = async (values: NewPasswordValues) => {
+    setFormError(null);
+    try {
+      const res = await onSubmit(values.newPassword);
+      if (res.status === "mfa" && res.challenge && res.session) {
+        await onChallenge(res.challenge, res.session);
+      }
+      // On "ok" the auth context has already redirected to /dashboard.
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response?.status === 400) {
+        // Cognito's policy message, relayed by the API (never echoes the password).
+        setFormError(String(err.response.data?.detail ?? "That password isn't allowed."));
+      } else if (axios.isAxiosError(err) && err.response?.status === 401) {
+        setFormError("Your sign-in session expired. Please sign in again.");
+      } else {
+        setFormError("Something went wrong. Please try again.");
+      }
+    }
+  };
+
+  return (
+    <>
+      <h1 className="text-center text-base font-semibold">Choose your password</h1>
+      <p className="mt-2 mb-6 text-center text-sm text-muted-foreground">
+        You signed in with a temporary password. Set your own to continue.
+      </p>
+      <form onSubmit={handleSubmit(submit)} className="space-y-4" noValidate>
+        <div className="space-y-1.5">
+          <Label htmlFor="newPassword">New password</Label>
+          <Input
+            id="newPassword"
+            type="password"
+            autoComplete="new-password"
+            autoFocus
+            {...register("newPassword")}
+          />
+          {errors.newPassword && (
+            <p className="text-sm text-destructive">{errors.newPassword.message}</p>
+          )}
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="confirm">Confirm password</Label>
+          <Input
+            id="confirm"
+            type="password"
+            autoComplete="new-password"
+            {...register("confirm")}
+          />
+          {errors.confirm && <p className="text-sm text-destructive">{errors.confirm.message}</p>}
+        </div>
+        <ul className="space-y-1 text-xs text-muted-foreground" aria-label="Password requirements">
+          {PASSWORD_RULES.map((rule) => {
+            const ok = rule.test(current);
+            return (
+              <li key={rule.label} className={ok ? "text-foreground" : undefined}>
+                <span aria-hidden className="mr-1.5 inline-block w-3">
+                  {ok ? "✓" : "·"}
+                </span>
+                {rule.label}
+              </li>
+            );
+          })}
+        </ul>
+        {formError && <p className="text-sm text-destructive">{formError}</p>}
+        <Button type="submit" className="w-full" disabled={isSubmitting}>
+          {isSubmitting ? "Saving…" : "Set password and continue"}
+        </Button>
+      </form>
     </>
   );
 }

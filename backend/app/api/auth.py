@@ -25,15 +25,18 @@ from app.schemas.auth import (
     MfaSetupStartRequest,
     MfaSetupStartResponse,
     MfaVerifyRequest,
+    SetPasswordRequest,
     UserOut,
 )
 from app.services.audit import log_audit, safe_ip
 from app.services.cognito import (
     CognitoError,
     InvalidCredentialsError,
+    PasswordPolicyError,
     complete_mfa_setup,
     global_sign_out,
     initiate_auth,
+    respond_new_password,
     respond_software_token_mfa,
     start_mfa_setup,
 )
@@ -151,7 +154,56 @@ async def login(
             detail="Authentication service is unavailable",
         ) from exc
 
-    # Password accepted but a TOTP challenge remains — return it (no tokens yet).
+    # Password accepted but a challenge remains (TOTP, or a forced password change
+    # for a temporary password) — return it (no tokens yet).
+    if auth.challenge:
+        return LoginResponse(mfa=MfaChallenge(challenge=auth.challenge, session=auth.session))
+    return await _finalize_login(session, request, response, auth.tokens, body.email)
+
+
+@router.post("/password/set", response_model=LoginResponse)
+async def password_set(
+    body: SetPasswordRequest,
+    request: Request,
+    response: Response,
+    session: AsyncSession = Depends(get_db),
+) -> LoginResponse:
+    """Answer NEW_PASSWORD_REQUIRED: a user invited with a temporary password picks
+    their own. Cognito usually chains straight into MFA_SETUP afterwards, so this
+    returns the same shape as /login and the client branches the same way."""
+    throttle_key = await _throttle(request)
+    try:
+        auth = await run_in_threadpool(
+            respond_new_password, body.email, body.session, body.new_password
+        )
+    except PasswordPolicyError as exc:
+        # Cognito's own policy text (e.g. "Password must have symbol characters") —
+        # never the password itself — is the most useful thing to show the user.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Password doesn't meet the requirements: {exc}",
+        ) from None
+    except InvalidCredentialsError:
+        # Stale/expired session (Cognito sessions last ~3 minutes) or a bad request.
+        await _record_auth_failure(session, request, throttle_key)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Your sign-in session expired. Please sign in again.",
+        ) from None
+    except CognitoError as exc:
+        await _record_auth_error(session, request)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Authentication service is unavailable",
+        ) from exc
+
+    await log_audit(
+        session,
+        action="password_set",
+        ip=safe_ip(client_ip(request)),
+        user_agent=request.headers.get("user-agent"),
+    )
+    await session.commit()
     if auth.challenge:
         return LoginResponse(mfa=MfaChallenge(challenge=auth.challenge, session=auth.session))
     return await _finalize_login(session, request, response, auth.tokens, body.email)

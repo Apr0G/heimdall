@@ -163,6 +163,7 @@ resource "aws_iam_role_policy" "gha_deploy" {
           "arn:aws:ecs:us-east-1:${data.aws_caller_identity.current.account_id}:task-definition/default-heimdall-api:*",
           "arn:aws:ecs:us-east-1:${data.aws_caller_identity.current.account_id}:task-definition/heimdall-migrate:*",
           "arn:aws:ecs:us-east-1:${data.aws_caller_identity.current.account_id}:task-definition/heimdall-dispose:*",
+          "arn:aws:ecs:us-east-1:${data.aws_caller_identity.current.account_id}:task-definition/heimdall-provision:*",
         ]
       },
       {
@@ -186,6 +187,8 @@ resource "aws_iam_role_policy" "gha_deploy" {
           aws_iam_role.migrate_exec.arn,
           aws_iam_role.dispose_exec.arn,
           aws_iam_role.dispose_task.arn,
+          aws_iam_role.provision_exec.arn,
+          aws_iam_role.provision_task.arn,
         ]
       },
     ]

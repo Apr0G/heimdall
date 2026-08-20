@@ -1,0 +1,114 @@
+name: provision-user
+
+# Invites a user: creates their Cognito account (Cognito emails them a temporary
+# password) and the matching `users` row, as a one-off in-VPC ECS task. Re-running
+# for an existing invitee re-sends the invite with a fresh temporary password.
+# Attach to an existing practice (practice_id) OR create a new one (practice_name).
+on:
+  workflow_dispatch:
+    inputs:
+      email:
+        description: "User's email (becomes their login)"
+        required: true
+      role:
+        description: "Role"
+        required: true
+        type: choice
+        options: [doctor, office_manager, admin]
+        default: doctor
+      full_name:
+        description: "Display name (optional)"
+        required: false
+        default: ''
+      practice_id:
+        description: "Existing practice UUID (leave blank to create a new practice)"
+        required: false
+        default: ''
+      practice_name:
+        description: "New practice name (only if practice_id is blank)"
+        required: false
+        default: ''
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    # Deployment record for attribution (who invited whom), same as dispose.
+    environment: production-destructive
+    steps:
+      - name: Check inputs
+        env:
+          EMAIL: ${{ inputs.email }}
+          PID: ${{ inputs.practice_id }}
+          PNAME: ${{ inputs.practice_name }}
+        run: |
+          case "$EMAIL" in
+            *@*.*) ;;
+            *) echo "email must be an address."; exit 1 ;;
+          esac
+          if [ -n "$PID" ] && [ -n "$PNAME" ]; then
+            echo "Give practice_id OR practice_name, not both."; exit 1
+          fi
+          if [ -z "$PID" ] && [ -z "$PNAME" ]; then
+            echo "Give practice_id (existing) or practice_name (new)."; exit 1
+          fi
+          if [ -n "$PID" ]; then
+            case "$PID" in
+              [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-*-*-*-*) ;;
+              *) echo "practice_id must be a UUID."; exit 1 ;;
+            esac
+          fi
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::000000000000:role/heimdall-gha-deploy
+          aws-region: us-east-1
+
+      - name: Run provisioning as a one-off ECS task
+        env:
+          EMAIL: ${{ inputs.email }}
+          ROLE: ${{ inputs.role }}
+          FULL_NAME: ${{ inputs.full_name }}
+          PID: ${{ inputs.practice_id }}
+          PNAME: ${{ inputs.practice_name }}
+        run: |
+          set -euo pipefail
+          CLUSTER=default
+          TASKDEF=heimdall-provision
+
+          VPC=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true \
+            --query 'Vpcs[0].VpcId' --output text)
+          SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC" \
+            --query 'Subnets[].SubnetId' --output text | tr '\t' ',')
+          SG=$(aws ec2 describe-security-groups \
+            --filters "Name=group-name,Values=default-heimdall-api-$VPC" "Name=vpc-id,Values=$VPC" \
+            --query 'SecurityGroups[0].GroupId' --output text)
+
+          # jq builds the JSON so user-supplied names can't break out of the quoting.
+          OVERRIDES=$(jq -nc --arg email "$EMAIL" --arg role "$ROLE" --arg name "$FULL_NAME" \
+            --arg pid "$PID" --arg pname "$PNAME" '{containerOverrides:[{name:"provision",environment:[
+              {name:"PROVISION_EMAIL",value:$email},
+              {name:"PROVISION_ROLE",value:$role},
+              {name:"PROVISION_FULL_NAME",value:$name},
+              {name:"PROVISION_PRACTICE_ID",value:$pid},
+              {name:"PROVISION_PRACTICE_NAME",value:$pname}
+            ]}]}')
+
+          TASK_ARN=$(aws ecs run-task --cluster "$CLUSTER" --task-definition "$TASKDEF" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=ENABLED}" \
+            --overrides "$OVERRIDES" \
+            --query 'tasks[0].taskArn' --output text)
+          echo "Started provisioning task: $TASK_ARN"
+
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN"
+          EXIT=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+          REASON=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].stoppedReason' --output text)
+          echo "provision container exit code: $EXIT ($REASON)"
+          echo "Script output (user/practice ids) is in CloudWatch: /aws/ecs/heimdall-provision, stream provision/provision/${TASK_ARN##*/}"
+          test "$EXIT" = "0"
