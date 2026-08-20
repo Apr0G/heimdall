@@ -17,7 +17,19 @@ export function SiteHeader() {
           <Wordmark />
         </Link>
         <div className="flex items-center gap-3 text-sm">
-          {user && <span className="hidden text-muted-foreground sm:inline">{user.email}</span>}
+          {user?.role === "admin" && (
+            <Link
+              href="/admin"
+              className="text-muted-foreground hover:text-foreground"
+            >
+              Admin
+            </Link>
+          )}
+          {user && (
+            <span className="hidden text-muted-foreground sm:inline">
+              {user.email}
+            </span>
+          )}
           <ThemeToggle />
           <Button variant="outline" size="sm" onClick={logout}>
             Log out
