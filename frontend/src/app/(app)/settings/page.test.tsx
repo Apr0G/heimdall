@@ -85,9 +85,7 @@ describe("settings page", () => {
     api.post.mockResolvedValue({ data: null });
     const user = userEvent.setup();
     render(<SettingsPage />);
-    await user.click(
-      screen.getByRole("button", { name: "Forgot your current password?" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Reset password" }));
     await user.click(
       await screen.findByRole("button", { name: "Email me a code" }),
     );
@@ -97,8 +95,8 @@ describe("settings page", () => {
       }),
     );
     await user.type(await screen.findByLabelText("Code"), "246810");
-    await user.type(screen.getByLabelText("New password"), STRONG);
-    await user.type(screen.getByLabelText("Confirm new password"), STRONG);
+    await user.type(document.getElementById("reset-newPassword")!, STRONG);
+    await user.type(document.getElementById("reset-confirm")!, STRONG);
     await user.click(screen.getByRole("button", { name: "Reset password" }));
     await waitFor(() =>
       expect(api.post).toHaveBeenLastCalledWith("/api/auth/password/reset", {

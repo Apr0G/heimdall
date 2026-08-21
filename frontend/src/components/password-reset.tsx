@@ -83,12 +83,9 @@ function RequestStage({
 
   return (
     <>
-      <h3 className="text-base font-semibold">Reset your password</h3>
-      <p className="mt-1 mb-4 text-sm text-muted-foreground">
-        We&rsquo;ll email a one-time code to{" "}
-        <span className="font-medium text-foreground">{email}</span>. After you
-        set a new password you&rsquo;ll be signed out everywhere and sign in
-        again.
+      <p className="mb-4 text-sm text-muted-foreground">
+        We&rsquo;ll send the code to{" "}
+        <span className="font-medium text-foreground">{email}</span>.
       </p>
       {error && <p className="mb-3 text-sm text-destructive">{error}</p>}
       <Button onClick={send} disabled={busy}>
@@ -172,6 +169,7 @@ function ResetStage({
           register={register}
           control={control}
           errors={errors}
+          idPrefix="reset-"
         />
         {formError && <p className="text-sm text-destructive">{formError}</p>}
         <Button type="submit" disabled={isSubmitting}>

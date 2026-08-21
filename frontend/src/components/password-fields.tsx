@@ -69,11 +69,14 @@ export function NewPasswordFields<
   control,
   errors,
   autoFocus,
+  idPrefix = "",
 }: {
   register: UseFormRegister<T>;
   control: Control<T>;
   errors: FieldErrors<T>;
   autoFocus?: boolean;
+  /** Keeps ids unique when two password forms share a page (Settings). */
+  idPrefix?: string;
 }) {
   const current =
     (useWatch({ control, name: "newPassword" as Path<T> }) as
@@ -84,9 +87,9 @@ export function NewPasswordFields<
   return (
     <>
       <div className="space-y-1.5">
-        <Label htmlFor="newPassword">New password</Label>
+        <Label htmlFor={`${idPrefix}newPassword`}>New password</Label>
         <Input
-          id="newPassword"
+          id={`${idPrefix}newPassword`}
           type="password"
           autoComplete="new-password"
           autoFocus={autoFocus}
@@ -97,9 +100,9 @@ export function NewPasswordFields<
         )}
       </div>
       <div className="space-y-1.5">
-        <Label htmlFor="confirm">Confirm new password</Label>
+        <Label htmlFor={`${idPrefix}confirm`}>Confirm new password</Label>
         <Input
-          id="confirm"
+          id={`${idPrefix}confirm`}
           type="password"
           autoComplete="new-password"
           {...register("confirm" as Path<T>)}

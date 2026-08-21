@@ -90,6 +90,20 @@ export default function SettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
+          <ChangePasswordForm />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Forgot password</CardTitle>
+          <CardDescription>
+            Don&rsquo;t know your current password? We&rsquo;ll email you a
+            one-time code so you can choose a new one. Afterwards you&rsquo;ll
+            be signed out everywhere and sign in again.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
           {forgot && user ? (
             <PasswordReset
               email={user.email}
@@ -102,7 +116,9 @@ export default function SettingsPage() {
               }}
             />
           ) : (
-            <ChangePasswordForm onForgot={() => setForgot(true)} />
+            <Button variant="outline" onClick={() => setForgot(true)}>
+              Reset password
+            </Button>
           )}
         </CardContent>
       </Card>
@@ -140,7 +156,7 @@ export default function SettingsPage() {
   );
 }
 
-function ChangePasswordForm({ onForgot }: { onForgot: () => void }) {
+function ChangePasswordForm() {
   const [formError, setFormError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const {
@@ -171,16 +187,7 @@ function ChangePasswordForm({ onForgot }: { onForgot: () => void }) {
   return (
     <form onSubmit={handleSubmit(submit)} className="space-y-4" noValidate>
       <div className="space-y-1.5">
-        <div className="flex items-center justify-between">
-          <Label htmlFor="currentPassword">Current password</Label>
-          <button
-            type="button"
-            onClick={onForgot}
-            className="text-xs text-muted-foreground hover:text-foreground hover:underline"
-          >
-            Forgot your current password?
-          </button>
-        </div>
+        <Label htmlFor="currentPassword">Current password</Label>
         <Input
           id="currentPassword"
           type="password"
