@@ -1,6 +1,13 @@
 # Pinned, hash-verified dependency set for the de-identification NER pass
 # (Presidio + spaCy), used ONLY by the one-off corpus-export ECS task.
 #
+# NAMED deid.lock, NOT requirements-*.txt, ON PURPOSE: this is a complete
+# `--no-deps` closure, so every pin must move together (pydantic-core must match
+# pydantic exactly, thinc must match spaCy, ...). Dependabot scans requirements*
+# files and was opening single-package bumps against it, each of which would have
+# broken the install at import time. Regenerate the whole file (see below) — never
+# bump one line.
+#
 # WHY THIS FILE EXISTS
 # --------------------
 # export-corpus.yml used to run, inside the production task definition:

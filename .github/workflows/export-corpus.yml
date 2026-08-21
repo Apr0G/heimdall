@@ -57,14 +57,14 @@ jobs:
           INC=$([ "$INCLUDE" = "true" ] && echo 1 || echo 0)
           if [ "$NER" = "true" ]; then
             USE_NER=1
-            # Hash-verified install (backend/requirements-deid.txt). Every artifact
+            # Hash-verified install (backend/deid.lock). Every artifact
             # in the transitive closure, plus the spaCy model, must match a recorded
             # sha256 or the install FAILS — so a compromised or typosquatted release
             # cannot execute code inside a task that holds DATABASE_URL and the app
             # task role. --no-deps because the file already pins the full closure;
             # --only-binary and --disable-pip-version-check keep pip from doing
             # anything else on the network.
-            CMD='["sh","-c","pip install --require-hashes --no-deps --only-binary=:all: --disable-pip-version-check -r requirements-deid.txt && python -m app.scripts.export_corpus"]'
+            CMD='["sh","-c","pip install --require-hashes --no-deps --only-binary=:all: --disable-pip-version-check -r deid.lock && python -m app.scripts.export_corpus"]'
           else
             USE_NER=0
             CMD='["python","-m","app.scripts.export_corpus"]'

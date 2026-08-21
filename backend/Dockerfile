@@ -20,7 +20,7 @@ RUN pip install .
 # nothing in the request path imports Presidio. It ships as a manifest so the
 # export task installs a reproducible, tamper-evident set instead of resolving
 # `pip install presidio-analyzer` live against PyPI inside a PHI container.
-COPY requirements-deid.txt ./
+COPY deid.lock ./
 
 # AWS RDS CA bundle for optional verify-full DB TLS (enable via DB_SSL_CA_BUNDLE).
 # `ADD` fetches remote files as mode 0600 owned by root; the non-root appuser (set
