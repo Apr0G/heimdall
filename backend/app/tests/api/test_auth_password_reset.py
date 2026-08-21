@@ -32,11 +32,22 @@ def _stub_side_effects(monkeypatch):
     monkeypatch.setattr(auth_api, "log_audit", AsyncMock())
 
     class _Session:
+        # The reset path looks the user up by email to revoke their sessions.
+        found_user = MagicMock(sessions_revoked_at=None, session_keep_jti="old")
+
+        async def scalar(self, stmt):
+            return self.found_user
+
         async def commit(self):
             pass
 
+    monkeypatch.setattr(
+        auth_api, "verify_access_token", AsyncMock(return_value={"jti": "this-jti"})
+    )
+    _stub_side_effects.session = _Session()
+
     async def _db():
-        yield _Session()
+        yield _stub_side_effects.session
 
     app.dependency_overrides[auth_api.get_db] = _db
     yield
@@ -93,11 +104,14 @@ def test_forgot_outage_is_502(monkeypatch):
 RESET = {"email": "doctor@heimdall.test", "code": "123456", "new_password": NEW_PW}
 
 
-def test_reset_success_is_204_and_audited(monkeypatch):
+def test_reset_success_is_204_audited_and_revokes_all_sessions(monkeypatch):
     monkeypatch.setattr(auth_api, "confirm_forgot_password", lambda e, c, p: None)
     resp = client.post("/api/auth/password/reset", json=RESET)
     assert resp.status_code == 204
     assert auth_api.log_audit.await_args.kwargs["action"] == "password_reset"
+    found = _stub_side_effects.session.found_user
+    assert found.sessions_revoked_at is not None
+    assert found.session_keep_jti is None  # nothing survives a reset
 
 
 def test_reset_bad_code_is_401_and_counted(monkeypatch):
@@ -156,6 +170,9 @@ def test_change_uses_callers_own_token_and_audits_user(monkeypatch):
     kwargs = auth_api.log_audit.await_args.kwargs
     assert kwargs["action"] == "password_change"
     assert kwargs["user_id"] == user.id and kwargs["practice_id"] == user.practice_id
+    # Every other session is revoked; the one making the change is kept by jti.
+    assert user.sessions_revoked_at is not None
+    assert user.session_keep_jti == "this-jti"
 
 
 def test_change_wrong_current_password_is_401_and_counted(monkeypatch):

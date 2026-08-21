@@ -32,5 +32,13 @@ class User(Base, UUIDPrimaryKey, TimestampMixin):
     # setTimeout is a UX affordance — a closed tab cancels it and leaves the
     # session valid for the token's full remaining life.
     last_seen_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    # App-side session revocation (Cognito can't revoke issued access tokens and we
+    # verify them locally). Tokens with iat before sessions_revoked_at are refused,
+    # except the one whose jti equals session_keep_jti — the session that changed
+    # the password keeps working; everything else is signed out.
+    sessions_revoked_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    session_keep_jti: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (Index("ix_users_practice_id", "practice_id"),)

@@ -69,3 +69,66 @@ export async function fetchAdminOverview(): Promise<AdminOverview> {
   const res = await api.get<AdminOverview>("/api/admin/overview");
   return res.data;
 }
+
+// --- User management (mirrors AdminUsersResponse / AdminInviteRequest) -------
+
+export type AdminPractice = { id: string; name: string };
+
+export type AdminUser = {
+  id: string;
+  email: string;
+  full_name: string | null;
+  role: "doctor" | "office_manager" | "admin";
+  practice_id: string;
+  practice_name: string;
+  is_active: boolean;
+  last_login_at: string | null;
+  created_at: string;
+  invite_pending: boolean;
+};
+
+export type AdminUsers = { users: AdminUser[]; practices: AdminPractice[] };
+
+export type InvitePayload = {
+  email: string;
+  role: AdminUser["role"];
+  full_name?: string | null;
+  practice_id?: string | null;
+  practice_name?: string | null;
+};
+
+export type InviteResult = {
+  user: AdminUser;
+  created_user: boolean;
+  created_practice: boolean;
+  invite_resent: boolean;
+};
+
+export async function fetchAdminUsers(): Promise<AdminUsers> {
+  const res = await api.get<AdminUsers>("/api/admin/users");
+  return res.data;
+}
+
+export async function inviteUser(
+  payload: InvitePayload,
+): Promise<InviteResult> {
+  const res = await api.post<InviteResult>("/api/admin/users", payload);
+  return res.data;
+}
+
+export async function resendInvite(userId: string): Promise<AdminUser> {
+  const res = await api.post<AdminUser>(
+    `/api/admin/users/${userId}/resend-invite`,
+  );
+  return res.data;
+}
+
+export async function setUserActive(
+  userId: string,
+  active: boolean,
+): Promise<AdminUser> {
+  const res = await api.post<AdminUser>(
+    `/api/admin/users/${userId}/${active ? "reactivate" : "deactivate"}`,
+  );
+  return res.data;
+}

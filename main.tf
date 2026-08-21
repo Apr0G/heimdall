@@ -262,6 +262,22 @@ resource "aws_iam_role_policy" "app" {
     Version = "2012-10-17"
     Statement = [
       {
+        # Admin user management (/api/admin/users): invite, re-send invite,
+        # disable/enable, and sign a user out of Cognito. Gated in the API by
+        # require_role("admin") with an audit row per call. Scoped to our pool;
+        # deliberately NO AdminSetUserPassword / AdminDeleteUser.
+        Sid    = "CognitoUserAdmin"
+        Effect = "Allow"
+        Action = [
+          "cognito-idp:AdminCreateUser",
+          "cognito-idp:AdminGetUser",
+          "cognito-idp:AdminDisableUser",
+          "cognito-idp:AdminEnableUser",
+          "cognito-idp:AdminUserGlobalSignOut",
+        ]
+        Resource = aws_cognito_user_pool.heimdall.arn
+      },
+      {
         Effect = "Allow"
         Action = ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"]
         # Scoped to Anthropic Claude models + their inference profiles.

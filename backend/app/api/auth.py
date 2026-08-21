@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
@@ -290,12 +291,18 @@ async def password_reset(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Authentication service is unavailable",
         ) from exc
+    # Cognito accepted the code for this email, so it's verified. Sign the account
+    # out everywhere: a reset is most often "someone else might have my password".
+    user = await session.scalar(select(User).where(User.email == body.email.strip().lower()))
+    if user is not None:
+        user.sessions_revoked_at = datetime.now(UTC)
+        user.session_keep_jti = None
     await log_audit(
         session,
         action="password_reset",
         ip=safe_ip(client_ip(request)),
         user_agent=request.headers.get("user-agent"),
-        metadata={"email": body.email},  # verified: Cognito accepted the code for it
+        metadata={"email": body.email},
     )
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -331,6 +338,11 @@ async def password_change(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Authentication service is unavailable",
         ) from exc
+    # Sign out every OTHER session: tokens issued before now are refused, except
+    # this one (matched by jti), so the user stays in the tab they're using.
+    claims = await verify_access_token(token)
+    current_user.sessions_revoked_at = datetime.now(UTC)
+    current_user.session_keep_jti = claims.get("jti")
     await log_audit(
         session,
         action="password_change",

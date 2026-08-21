@@ -8,6 +8,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from starlette.responses import JSONResponse
 
 from app.api.admin import router as admin_router
+from app.api.admin_users import router as admin_users_router
 from app.api.auth import router as auth_router
 from app.api.cases import router as cases_router
 from app.api.documents import router as documents_router
@@ -67,6 +68,7 @@ async def _unhandled_exception(request: Request, exc: Exception) -> JSONResponse
 
 app.include_router(health_router)
 app.include_router(admin_router)
+app.include_router(admin_users_router)
 app.include_router(auth_router)
 app.include_router(cases_router)
 app.include_router(documents_router)

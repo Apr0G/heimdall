@@ -185,6 +185,9 @@ async def get_current_user(
     if not user.is_active:
         raise _unauthorized("Account is deactivated")
 
+    if session_revoked(claims, user.sessions_revoked_at, user.session_keep_jti):
+        raise _unauthorized("Session was signed out")
+
     if _idle_deadline_exceeded(user.last_seen_at):
         raise _unauthorized("Session expired due to inactivity")
 
@@ -201,6 +204,24 @@ async def get_current_user(
             user.last_seen_at = now
             await session.commit()
     return user
+
+
+def session_revoked(claims: dict, revoked_at: datetime | None, keep_jti: str | None) -> bool:
+    """Whether this token predates a revocation (password change/reset, admin
+    deactivation) and isn't the one session allowed to survive it. Pure, so the
+    boundary cases are unit-testable. A token with no iat is treated as revoked
+    once any revocation exists — fail closed."""
+    if revoked_at is None:
+        return False
+    if keep_jti is not None and claims.get("jti") == keep_jti:
+        return False
+    iat = claims.get("iat")
+    if iat is None:
+        return True
+    # iat has one-second resolution; treat the token as issued at the END of its
+    # second so a login landing in the same second as the revocation isn't
+    # refused. A one-second grace is immaterial; a false lockout is not.
+    return datetime.fromtimestamp(iat + 1, tz=UTC) <= revoked_at
 
 
 def role_allowed(role: str | None, allowed: tuple[str, ...]) -> bool:

@@ -1,8 +1,6 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
-import { useEffect } from "react";
 
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -14,7 +12,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { type AdminOverview, fetchAdminOverview } from "@/lib/admin";
-import { useAuth } from "@/lib/auth-context";
 import { formatCents, humanize } from "@/lib/format";
 
 // Fixed display order (matches the backend enums); the payload zero-fills every
@@ -69,33 +66,17 @@ function formatDateTime(iso: string | null): string {
 }
 
 export default function AdminPage() {
-  const { user, loading } = useAuth();
-  const router = useRouter();
-
-  // UX guard only — the real gate is require_role("admin") on the API.
-  useEffect(() => {
-    if (!loading && user && user.role !== "admin") router.replace("/dashboard");
-  }, [loading, user, router]);
-
-  const isAdmin = user?.role === "admin";
   const overview = useQuery({
     queryKey: ["admin-overview"],
     queryFn: fetchAdminOverview,
-    // Don't fire a guaranteed-403 request during the redirect frame.
-    enabled: isAdmin,
   });
 
-  if (!isAdmin) return null;
-
   return (
-    <main className="mx-auto max-w-6xl space-y-8 px-4 py-8">
+    <section className="space-y-8">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">
-          Admin overview
-        </h1>
+        <h2 className="text-lg font-semibold">Overview</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Global aggregates across all practices. Every view of this page is
-          audit-logged.
+          Global aggregates — no case-level or patient-level data.
         </p>
       </div>
 
@@ -112,7 +93,7 @@ export default function AdminPage() {
         </div>
       )}
       {overview.data && <Overview data={overview.data} />}
-    </main>
+    </section>
   );
 }
 

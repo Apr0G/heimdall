@@ -65,3 +65,46 @@ class AdminOverviewResponse(BaseModel):
     model_runs: AdminModelRunStats
     outcomes: AdminOutcomeStats
     practices: list[PracticeBreakdownItem]
+
+
+# --- User management --------------------------------------------------------
+
+
+class AdminPracticeItem(BaseModel):
+    id: UUID
+    name: str
+
+
+class AdminUserItem(BaseModel):
+    id: UUID
+    email: str
+    full_name: str | None
+    role: str
+    practice_id: UUID
+    practice_name: str
+    is_active: bool
+    last_login_at: datetime | None
+    created_at: datetime
+    # Never logged in → the invite (temporary password) is still what they hold,
+    # so "Resend invite" is the useful action.
+    invite_pending: bool
+
+
+class AdminUsersResponse(BaseModel):
+    users: list[AdminUserItem]
+    practices: list[AdminPracticeItem]
+
+
+class AdminInviteRequest(BaseModel):
+    email: str
+    role: str
+    full_name: str | None = None
+    practice_id: UUID | None = None
+    practice_name: str | None = None
+
+
+class AdminInviteResponse(BaseModel):
+    user: AdminUserItem
+    created_user: bool
+    created_practice: bool
+    invite_resent: bool
