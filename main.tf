@@ -296,13 +296,6 @@ resource "aws_iam_role_policy" "app" {
           aws_ses_domain_identity.heimdall.arn,
           "arn:aws:ses:us-east-1:${data.aws_caller_identity.current.account_id}:identity/no-reply@${local.mail_domain}",
         ]
-        # ses:FromAddress carries the full header value, display name included
-        # ("Heimdall <no-reply@...>"), so match both bare and named forms.
-        Condition = {
-          StringLike = {
-            "ses:FromAddress" = ["no-reply@heimdallclaims.com", "*<no-reply@heimdallclaims.com>"]
-          }
-        }
       },
       {
         Effect = "Allow"
