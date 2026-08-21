@@ -76,8 +76,12 @@ export default function AdminUsersPage() {
             Invite staff, re-send invitations, and deactivate accounts.
           </p>
         </div>
-        <Button onClick={() => setInviting((v) => !v)} aria-expanded={inviting}>
-          <UserPlusIcon aria-hidden />
+        <Button
+          variant={inviting ? "outline" : "default"}
+          onClick={() => setInviting((v) => !v)}
+          aria-expanded={inviting}
+        >
+          {!inviting && <UserPlusIcon aria-hidden />}
           {inviting ? "Close" : "Invite user"}
         </Button>
       </div>
