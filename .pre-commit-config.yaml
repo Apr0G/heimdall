@@ -43,3 +43,9 @@ repos:
         language: system
         files: ^frontend/.*\.(ts|tsx|js|jsx|mjs)$
         pass_filenames: false
+      - id: vitest
+        name: vitest (frontend)
+        entry: bash -c 'cd frontend && npm test -- --reporter=dot'
+        language: system
+        files: ^frontend/.*\.(ts|tsx)$
+        pass_filenames: false
