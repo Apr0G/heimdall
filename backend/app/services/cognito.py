@@ -192,16 +192,6 @@ def password_challenge(email: str, password: str) -> str:
     return auth.challenge
 
 
-def verify_password_and_totp(email: str, password: str, code: str) -> dict:
-    """Re-authenticate with BOTH factors and return fresh tokens. Used for
-    sensitive, signed-in actions (password change) so a stolen session cookie
-    alone can't perform them."""
-    auth = initiate_auth(email, password)
-    if auth.challenge != "SOFTWARE_TOKEN_MFA":
-        raise InvalidCredentialsError("totp_not_enrolled")
-    return respond_software_token_mfa(email, auth.session, code)
-
-
 def admin_recreate_user(email: str, password: str) -> str:
     """Authenticator reset. Cognito offers no way to drop a user's TOTP device
     while the pool requires MFA (verified empirically: disabling the preference

@@ -51,7 +51,6 @@ from app.services.cognito import (
     respond_new_password,
     respond_software_token_mfa,
     start_mfa_setup,
-    verify_password_and_totp,
 )
 from app.services.mailer import MailError, send_email
 from app.services.recovery_codes import issue_code, verify_code
@@ -323,26 +322,19 @@ async def password_change(
     creds: HTTPAuthorizationCredentials | None = Depends(security),
     session: AsyncSession = Depends(get_db),
 ) -> Response:
-    """Signed-in password change. Both factors are re-checked first — current
-    password AND a fresh authenticator code — so a stolen session cookie alone
-    can't rotate the password and lock the owner out. The change itself runs
-    against the freshly minted token, i.e. for the re-authenticated user only."""
+    """Signed-in password change. Cognito re-checks the current password against
+    the caller's own access token, so one user can never change another's."""
     throttle_key = await _throttle(request)
     token = request.cookies.get(AUTH_COOKIE) or (creds.credentials if creds else None)
     try:
-        fresh = await run_in_threadpool(
-            verify_password_and_totp, current_user.email, body.current_password, body.code
-        )
-        await run_in_threadpool(
-            change_password, fresh["AccessToken"], body.current_password, body.new_password
-        )
+        await run_in_threadpool(change_password, token, body.current_password, body.new_password)
     except PasswordPolicyError as exc:
         raise _password_policy_400(exc) from None
     except InvalidCredentialsError:
         await _record_auth_failure(session, request, throttle_key)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Your current password or authenticator code didn't match.",
+            detail="Your current password didn't match.",
         ) from None
     except RateLimitedError:
         raise _TOO_MANY from None

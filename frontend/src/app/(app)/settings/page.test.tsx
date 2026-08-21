@@ -33,7 +33,6 @@ async function fill(current: string, next = STRONG, confirm = next) {
   const user = userEvent.setup();
   render(<SettingsPage />);
   await user.type(screen.getByLabelText("Current password"), current);
-  await user.type(screen.getByLabelText("Authenticator code"), "246810");
   await user.type(screen.getByLabelText("New password"), next);
   await user.type(screen.getByLabelText("Confirm new password"), confirm);
   await user.click(screen.getByRole("button", { name: "Update password" }));
@@ -66,35 +65,52 @@ describe("settings page", () => {
     );
   });
 
-  it("sends both factors in snake_case, confirms, and clears the form", async () => {
+  it("sends snake_case fields, confirms, and clears the form", async () => {
     api.post.mockResolvedValue({ data: null });
     await fill("Old-Horse-1!");
     await waitFor(() =>
       expect(api.post).toHaveBeenCalledWith("/api/auth/password/change", {
         current_password: "Old-Horse-1!",
         new_password: STRONG,
-        code: "246810",
       }),
     );
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Password updated.",
     );
     expect(screen.getByLabelText("Current password")).toHaveValue("");
-    expect(screen.getByLabelText("Authenticator code")).toHaveValue("");
     expect(screen.getByLabelText("New password")).toHaveValue("");
   });
 
-  it("requires a 6-digit authenticator code before calling the API", async () => {
+  it("offers forgot-password: emails a code, resets, then signs out", async () => {
+    api.post.mockResolvedValue({ data: null });
     const user = userEvent.setup();
     render(<SettingsPage />);
-    await user.type(screen.getByLabelText("Current password"), "Old-Horse-1!");
+    await user.click(
+      screen.getByRole("button", { name: "Forgot your current password?" }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Email me a code" }),
+    );
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith("/api/auth/password/forgot", {
+        email: "doctor@heimdall.test",
+      }),
+    );
+    await user.type(await screen.findByLabelText("Code"), "246810");
     await user.type(screen.getByLabelText("New password"), STRONG);
     await user.type(screen.getByLabelText("Confirm new password"), STRONG);
-    await user.click(screen.getByRole("button", { name: "Update password" }));
-    expect(
-      await screen.findByText(/6-digit code from your authenticator/),
-    ).toBeInTheDocument();
-    expect(api.post).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Reset password" }));
+    await waitFor(() =>
+      expect(api.post).toHaveBeenLastCalledWith("/api/auth/password/reset", {
+        email: "doctor@heimdall.test",
+        code: "246810",
+        new_password: STRONG,
+      }),
+    );
+    await waitFor(() => expect(auth.logout).toHaveBeenCalled());
+    expect(toast.message).toHaveBeenCalledWith(
+      expect.stringMatching(/Password updated/),
+    );
   });
 
   it("refuses to reuse the current password without a round-trip", async () => {
@@ -105,13 +121,11 @@ describe("settings page", () => {
     expect(api.post).not.toHaveBeenCalled();
   });
 
-  it("maps 401 to a factors message and 400 to the server reason", async () => {
+  it("maps 401 to a current-password message and 400 to the server reason", async () => {
     api.post.mockRejectedValueOnce(httpError(401));
     const user = await fill("Wrong-Horse-1!");
     expect(
-      await screen.findByText(
-        /current password or authenticator code didn't match/,
-      ),
+      await screen.findByText(/current password didn't match/),
     ).toBeInTheDocument();
 
     api.post.mockRejectedValueOnce(

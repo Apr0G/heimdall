@@ -23,6 +23,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AuthenticatorRecovery } from "@/components/authenticator-recovery";
+import { PasswordReset } from "@/components/password-reset";
 import { homePath, useAuth } from "@/lib/auth-context";
 import { api } from "@/lib/api";
 import { humanize } from "@/lib/format";
@@ -30,9 +31,6 @@ import { humanize } from "@/lib/format";
 const schema = z
   .object({
     currentPassword: z.string().min(1, "Enter your current password"),
-    code: z
-      .string()
-      .regex(/^\d{6}$/, "Enter the 6-digit code from your authenticator app"),
     newPassword: z.string(),
     confirm: z.string(),
   })
@@ -46,6 +44,7 @@ type Values = z.infer<typeof schema>;
 export default function SettingsPage() {
   const { user, logout } = useAuth();
   const [resetting, setResetting] = useState(false);
+  const [forgot, setForgot] = useState(false);
   const isAdmin = user?.role === "admin";
 
   return (
@@ -87,12 +86,24 @@ export default function SettingsPage() {
         <CardHeader>
           <CardTitle>Change password</CardTitle>
           <CardDescription>
-            Confirm your current password and an authenticator code.
             You&rsquo;ll stay signed in here; every other session is signed out.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <ChangePasswordForm />
+          {forgot && user ? (
+            <PasswordReset
+              email={user.email}
+              onCancel={() => setForgot(false)}
+              onDone={() => {
+                toast.message(
+                  "Password updated. Sign in with your new password.",
+                );
+                logout();
+              }}
+            />
+          ) : (
+            <ChangePasswordForm onForgot={() => setForgot(true)} />
+          )}
         </CardContent>
       </Card>
 
@@ -129,7 +140,7 @@ export default function SettingsPage() {
   );
 }
 
-function ChangePasswordForm() {
+function ChangePasswordForm({ onForgot }: { onForgot: () => void }) {
   const [formError, setFormError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const {
@@ -147,16 +158,12 @@ function ChangePasswordForm() {
       await api.post("/api/auth/password/change", {
         current_password: values.currentPassword,
         new_password: values.newPassword,
-        code: values.code,
       });
       reset();
       setDone(true);
     } catch (err) {
       setFormError(
-        passwordErrorText(
-          err,
-          "Your current password or authenticator code didn't match.",
-        ),
+        passwordErrorText(err, "Your current password didn't match."),
       );
     }
   };
@@ -164,7 +171,16 @@ function ChangePasswordForm() {
   return (
     <form onSubmit={handleSubmit(submit)} className="space-y-4" noValidate>
       <div className="space-y-1.5">
-        <Label htmlFor="currentPassword">Current password</Label>
+        <div className="flex items-center justify-between">
+          <Label htmlFor="currentPassword">Current password</Label>
+          <button
+            type="button"
+            onClick={onForgot}
+            className="text-xs text-muted-foreground hover:text-foreground hover:underline"
+          >
+            Forgot your current password?
+          </button>
+        </div>
         <Input
           id="currentPassword"
           type="password"
@@ -175,21 +191,6 @@ function ChangePasswordForm() {
           <p className="text-sm text-destructive">
             {errors.currentPassword.message}
           </p>
-        )}
-      </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="code">Authenticator code</Label>
-        <Input
-          id="code"
-          inputMode="numeric"
-          autoComplete="one-time-code"
-          placeholder="123456"
-          maxLength={6}
-          className="max-w-[12rem] font-mono tracking-[0.3em]"
-          {...register("code")}
-        />
-        {errors.code && (
-          <p className="text-sm text-destructive">{errors.code.message}</p>
         )}
       </div>
       <NewPasswordFields
