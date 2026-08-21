@@ -286,10 +286,16 @@ resource "aws_iam_role_policy" "app" {
       {
         # The API emails authenticator-recovery codes itself (services/mailer.py)
         # from no-reply@heimdallclaims.com. Limited to our verified identity.
-        Sid      = "SesSendRecoveryCodes"
-        Effect   = "Allow"
-        Action   = ["ses:SendEmail", "ses:SendRawEmail"]
-        Resource = aws_ses_domain_identity.heimdall.arn
+        Sid    = "SesSendRecoveryCodes"
+        Effect = "Allow"
+        Action = ["ses:SendEmail", "ses:SendRawEmail"]
+        # SES authorises against the identity of the From ADDRESS, which is a
+        # distinct ARN from the domain identity even though the domain is what
+        # is verified — so both are listed.
+        Resource = [
+          aws_ses_domain_identity.heimdall.arn,
+          "arn:aws:ses:us-east-1:${data.aws_caller_identity.current.account_id}:identity/no-reply@${local.mail_domain}",
+        ]
         # ses:FromAddress carries the full header value, display name included
         # ("Heimdall <no-reply@...>"), so match both bare and named forms.
         Condition = {
