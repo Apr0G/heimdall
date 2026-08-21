@@ -289,13 +289,12 @@ resource "aws_iam_role_policy" "app" {
         Sid    = "SesSendRecoveryCodes"
         Effect = "Allow"
         Action = ["ses:SendEmail", "ses:SendRawEmail"]
-        # SES authorises against the identity of the From ADDRESS, which is a
-        # distinct ARN from the domain identity even though the domain is what
-        # is verified — so both are listed.
-        Resource = [
-          aws_ses_domain_identity.heimdall.arn,
-          "arn:aws:ses:us-east-1:${data.aws_caller_identity.current.account_id}:identity/no-reply@${local.mail_domain}",
-        ]
+        # SES authorises against the From-address identity AND, when the
+        # recipient happens to be a verified identity in this account (our own
+        # test mailboxes during the sandbox period), the recipient's identity
+        # too. Every identity in this account is ours, so account-scoped `*`
+        # is the honest boundary; the From address is fixed in the app config.
+        Resource = "arn:aws:ses:us-east-1:${data.aws_caller_identity.current.account_id}:identity/*"
       },
       {
         Effect = "Allow"
