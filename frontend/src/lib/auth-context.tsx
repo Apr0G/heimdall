@@ -54,6 +54,13 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 // server-side, where it cannot read localStorage.
 const AUTH_COOKIE = "hd_authed";
 
+/** Where a signed-in user "lives": admins on the global admin area, everyone
+ *  else on their practice dashboard. The single source for every redirect,
+ *  back-link, and logo link. */
+export function homePath(role: string | null | undefined): string {
+  return role === "admin" ? "/admin" : "/dashboard";
+}
+
 // Fallback lifetime when the server didn't tell us (matches Cognito's default
 // access-token validity of one hour).
 const DEFAULT_SESSION_SECONDS = 3600;
@@ -119,7 +126,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(me.data);
       // Admins land on the global overview; everyone else on their practice
       // dashboard. UX only — /admin data is gated by require_role on the API.
-      router.replace(me.data.role === "admin" ? "/admin" : "/dashboard");
+      router.replace(homePath(me.data.role));
     },
     [router, queryClient],
   );

@@ -3,6 +3,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
 import { useState } from "react";
+import { toast } from "sonner";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
@@ -21,13 +22,17 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useAuth } from "@/lib/auth-context";
+import { AuthenticatorRecovery } from "@/components/authenticator-recovery";
+import { homePath, useAuth } from "@/lib/auth-context";
 import { api } from "@/lib/api";
 import { humanize } from "@/lib/format";
 
 const schema = z
   .object({
     currentPassword: z.string().min(1, "Enter your current password"),
+    code: z
+      .string()
+      .regex(/^\d{6}$/, "Enter the 6-digit code from your authenticator app"),
     newPassword: z.string(),
     confirm: z.string(),
   })
@@ -39,15 +44,17 @@ const schema = z
 type Values = z.infer<typeof schema>;
 
 export default function SettingsPage() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
+  const [resetting, setResetting] = useState(false);
+  const isAdmin = user?.role === "admin";
 
   return (
     <main className="mx-auto max-w-2xl space-y-6 px-4 py-8">
       <Link
-        href="/dashboard"
+        href={homePath(user?.role)}
         className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
-        <span aria-hidden>←</span> Appeals
+        <span aria-hidden>←</span> {isAdmin ? "Admin" : "Appeals"}
       </Link>
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Account</h1>
@@ -80,12 +87,42 @@ export default function SettingsPage() {
         <CardHeader>
           <CardTitle>Change password</CardTitle>
           <CardDescription>
-            You&rsquo;ll stay signed in here. Your authenticator app is
-            unaffected.
+            Confirm your current password and an authenticator code.
+            You&rsquo;ll stay signed in here; every other session is signed out.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <ChangePasswordForm />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Authenticator app</CardTitle>
+          <CardDescription>
+            New phone, or lost the app? Reset it here. We&rsquo;ll confirm your
+            password and email you a code; afterwards you&rsquo;ll be signed out
+            everywhere and set up a new authenticator at your next sign-in.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {resetting && user ? (
+            <AuthenticatorRecovery
+              email={user.email}
+              cancelLabel="Cancel"
+              onCancel={() => setResetting(false)}
+              onDone={() => {
+                toast.message(
+                  "Authenticator reset. Sign in again to set up a new one.",
+                );
+                logout();
+              }}
+            />
+          ) : (
+            <Button variant="outline" onClick={() => setResetting(true)}>
+              Reset authenticator
+            </Button>
+          )}
         </CardContent>
       </Card>
     </main>
@@ -110,12 +147,16 @@ function ChangePasswordForm() {
       await api.post("/api/auth/password/change", {
         current_password: values.currentPassword,
         new_password: values.newPassword,
+        code: values.code,
       });
       reset();
       setDone(true);
     } catch (err) {
       setFormError(
-        passwordErrorText(err, "Your current password didn't match."),
+        passwordErrorText(
+          err,
+          "Your current password or authenticator code didn't match.",
+        ),
       );
     }
   };
@@ -134,6 +175,21 @@ function ChangePasswordForm() {
           <p className="text-sm text-destructive">
             {errors.currentPassword.message}
           </p>
+        )}
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="code">Authenticator code</Label>
+        <Input
+          id="code"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          placeholder="123456"
+          maxLength={6}
+          className="max-w-[12rem] font-mono tracking-[0.3em]"
+          {...register("code")}
+        />
+        {errors.code && (
+          <p className="text-sm text-destructive">{errors.code.message}</p>
         )}
       </div>
       <NewPasswordFields

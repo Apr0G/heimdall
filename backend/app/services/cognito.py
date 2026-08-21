@@ -180,6 +180,60 @@ def complete_mfa_setup(email: str, session: str, code: str) -> dict:
     return result
 
 
+def password_challenge(email: str, password: str) -> str:
+    """Check a password WITHOUT completing a login: run InitiateAuth and return the
+    challenge Cognito raises next ("SOFTWARE_TOKEN_MFA" = password right and an
+    authenticator is enrolled; "MFA_SETUP" = password right, nothing enrolled).
+    Raises InvalidCredentialsError for a wrong password."""
+    auth = initiate_auth(email, password)
+    if auth.challenge is None:
+        # MFA is required on the pool, so tokens here would mean misconfiguration.
+        raise CognitoError("no_mfa_challenge")
+    return auth.challenge
+
+
+def verify_password_and_totp(email: str, password: str, code: str) -> dict:
+    """Re-authenticate with BOTH factors and return fresh tokens. Used for
+    sensitive, signed-in actions (password change) so a stolen session cookie
+    alone can't perform them."""
+    auth = initiate_auth(email, password)
+    if auth.challenge != "SOFTWARE_TOKEN_MFA":
+        raise InvalidCredentialsError("totp_not_enrolled")
+    return respond_software_token_mfa(email, auth.session, code)
+
+
+def admin_recreate_user(email: str, password: str) -> str:
+    """Authenticator reset. Cognito offers no way to drop a user's TOTP device
+    while the pool requires MFA (verified empirically: disabling the preference
+    still yields SOFTWARE_TOKEN_MFA, and the challenge session can't associate a
+    new token), so the identity is recreated: same email, same password, no
+    authenticator — the next login runs the normal MFA_SETUP enrollment. Returns
+    the NEW sub; the caller rebinds the users row. Only call after the person
+    has proven both the password and control of the mailbox."""
+    client = _get_client()
+    try:
+        client.admin_delete_user(UserPoolId=settings.cognito_user_pool_id, Username=email)
+        resp = client.admin_create_user(
+            UserPoolId=settings.cognito_user_pool_id,
+            Username=email,
+            MessageAction="SUPPRESS",  # no invite email — they keep their password
+            UserAttributes=[
+                {"Name": "email", "Value": email},
+                {"Name": "email_verified", "Value": "true"},
+            ],
+        )
+        client.admin_set_user_password(
+            UserPoolId=settings.cognito_user_pool_id,
+            Username=email,
+            Password=password,
+            Permanent=True,
+        )
+    except (ClientError, BotoCoreError) as exc:
+        raise _client_error(exc) from exc
+    attrs = {a["Name"]: a["Value"] for a in resp["User"]["Attributes"]}
+    return attrs["sub"]
+
+
 def forgot_password(email: str) -> None:
     """Ask Cognito to email a reset code. Raises InvalidCredentialsError for an
     unknown/unresettable user — the CALLER must swallow that so the response never

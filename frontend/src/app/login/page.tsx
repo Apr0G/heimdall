@@ -8,6 +8,7 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
+import { AuthenticatorRecovery } from "@/components/authenticator-recovery";
 import { MarketingHeader } from "@/components/marketing-header";
 import {
   NewPasswordFields,
@@ -41,6 +42,7 @@ type Step =
   | { name: "code"; email: string; session: string }
   | { name: "setup"; email: string; session: string; secret: string }
   | { name: "forgot"; email?: string }
+  | { name: "recover"; email?: string }
   | { name: "reset"; email: string };
 
 const GLOW = {
@@ -104,6 +106,9 @@ export default function LoginPage() {
               initialEmail={step.email}
               onSent={(email) => setStep({ name: "reset", email })}
               onBack={() => setStep({ name: "password" })}
+              onLostAuthenticator={(email) =>
+                setStep({ name: "recover", email: email || undefined })
+              }
             />
           )}
 
@@ -134,6 +139,31 @@ export default function LoginPage() {
               title="Two-factor authentication"
               description="Enter the 6-digit code from your authenticator app."
               onSubmit={(code) => verifyMfa(step.email, step.session, code)}
+              footer={
+                <button
+                  type="button"
+                  onClick={() =>
+                    setStep({ name: "recover", email: step.email })
+                  }
+                  className="font-medium text-foreground hover:underline"
+                >
+                  Lost your authenticator?
+                </button>
+              }
+            />
+          )}
+
+          {step.name === "recover" && (
+            <AuthenticatorRecovery
+              email={step.email}
+              onDone={() =>
+                setStep({
+                  name: "password",
+                  notice: "Authenticator reset. Sign in to set up a new one.",
+                })
+              }
+              onCancel={() => setStep({ name: "password" })}
+              cancelLabel="Back to sign in"
             />
           )}
 
@@ -349,15 +379,18 @@ function ForgotStep({
   initialEmail,
   onSent,
   onBack,
+  onLostAuthenticator,
 }: {
   initialEmail?: string;
   onSent: (email: string) => void;
   onBack: () => void;
+  onLostAuthenticator: (email: string) => void;
 }) {
   const [formError, setFormError] = useState<string | null>(null);
   const {
     register,
     handleSubmit,
+    getValues,
     formState: { errors, isSubmitting },
   } = useForm<ForgotValues>({
     resolver: zodResolver(forgotSchema),
@@ -407,6 +440,16 @@ function ForgotStep({
         </Button>
       </form>
       <p className="mt-5 text-center text-sm text-muted-foreground">
+        Lost your authenticator instead?{" "}
+        <button
+          type="button"
+          onClick={() => onLostAuthenticator(getValues("email"))}
+          className="font-medium text-foreground hover:underline"
+        >
+          Reset it
+        </button>
+      </p>
+      <p className="mt-2 text-center text-sm text-muted-foreground">
         <button
           type="button"
           onClick={onBack}
@@ -517,11 +560,13 @@ function CodeStep({
   description,
   onSubmit,
   children,
+  footer,
 }: {
   title: string;
   description: string;
   onSubmit: (code: string) => Promise<void>;
   children?: React.ReactNode;
+  footer?: React.ReactNode;
 }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -568,6 +613,9 @@ function CodeStep({
       >
         {busy ? "Verifying…" : "Verify"}
       </Button>
+      {footer && (
+        <p className="text-center text-sm text-muted-foreground">{footer}</p>
+      )}
     </form>
   );
 }

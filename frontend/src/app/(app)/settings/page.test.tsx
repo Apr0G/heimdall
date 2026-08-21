@@ -4,10 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { httpError } from "@/test/axios-error";
 
-const { api } = vi.hoisted(() => ({ api: { post: vi.fn() } }));
-vi.mock("@/lib/api", () => ({ api }));
-vi.mock("@/lib/auth-context", () => ({
-  useAuth: () => ({
+const { api, auth, toast } = vi.hoisted(() => ({
+  api: { post: vi.fn() },
+  auth: {
     user: {
       id: "u1",
       email: "doctor@heimdall.test",
@@ -15,7 +14,15 @@ vi.mock("@/lib/auth-context", () => ({
       role: "office_manager",
       practice_id: "p1",
     },
-  }),
+    logout: vi.fn(),
+  },
+  toast: { message: vi.fn() },
+}));
+vi.mock("@/lib/api", () => ({ api }));
+vi.mock("sonner", () => ({ toast }));
+vi.mock("@/lib/auth-context", () => ({
+  useAuth: () => auth,
+  homePath: (role: string) => (role === "admin" ? "/admin" : "/dashboard"),
 }));
 
 import SettingsPage from "./page";
@@ -26,36 +33,68 @@ async function fill(current: string, next = STRONG, confirm = next) {
   const user = userEvent.setup();
   render(<SettingsPage />);
   await user.type(screen.getByLabelText("Current password"), current);
+  await user.type(screen.getByLabelText("Authenticator code"), "246810");
   await user.type(screen.getByLabelText("New password"), next);
   await user.type(screen.getByLabelText("Confirm new password"), confirm);
   await user.click(screen.getByRole("button", { name: "Update password" }));
   return user;
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  auth.user.role = "office_manager";
+});
 
 describe("settings page", () => {
-  it("shows the profile with a humanised role", () => {
+  it("shows the profile with a humanised role and a role-aware back link", () => {
     render(<SettingsPage />);
     expect(screen.getByText("Dr. Jane Doe")).toBeInTheDocument();
     expect(screen.getByText("doctor@heimdall.test")).toBeInTheDocument();
     expect(screen.getByText("Office manager")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Appeals/ })).toHaveAttribute(
+      "href",
+      "/dashboard",
+    );
   });
 
-  it("sends snake_case fields, confirms, and clears the form", async () => {
+  it("sends admins back to the admin area", () => {
+    auth.user.role = "admin";
+    render(<SettingsPage />);
+    expect(screen.getByRole("link", { name: /Admin/ })).toHaveAttribute(
+      "href",
+      "/admin",
+    );
+  });
+
+  it("sends both factors in snake_case, confirms, and clears the form", async () => {
     api.post.mockResolvedValue({ data: null });
     await fill("Old-Horse-1!");
     await waitFor(() =>
       expect(api.post).toHaveBeenCalledWith("/api/auth/password/change", {
         current_password: "Old-Horse-1!",
         new_password: STRONG,
+        code: "246810",
       }),
     );
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Password updated.",
     );
     expect(screen.getByLabelText("Current password")).toHaveValue("");
+    expect(screen.getByLabelText("Authenticator code")).toHaveValue("");
     expect(screen.getByLabelText("New password")).toHaveValue("");
+  });
+
+  it("requires a 6-digit authenticator code before calling the API", async () => {
+    const user = userEvent.setup();
+    render(<SettingsPage />);
+    await user.type(screen.getByLabelText("Current password"), "Old-Horse-1!");
+    await user.type(screen.getByLabelText("New password"), STRONG);
+    await user.type(screen.getByLabelText("Confirm new password"), STRONG);
+    await user.click(screen.getByRole("button", { name: "Update password" }));
+    expect(
+      await screen.findByText(/6-digit code from your authenticator/),
+    ).toBeInTheDocument();
+    expect(api.post).not.toHaveBeenCalled();
   });
 
   it("refuses to reuse the current password without a round-trip", async () => {
@@ -66,11 +105,13 @@ describe("settings page", () => {
     expect(api.post).not.toHaveBeenCalled();
   });
 
-  it("maps 401 to a current-password message and 400 to the server reason", async () => {
+  it("maps 401 to a factors message and 400 to the server reason", async () => {
     api.post.mockRejectedValueOnce(httpError(401));
     const user = await fill("Wrong-Horse-1!");
     expect(
-      await screen.findByText(/current password didn't match/),
+      await screen.findByText(
+        /current password or authenticator code didn't match/,
+      ),
     ).toBeInTheDocument();
 
     api.post.mockRejectedValueOnce(
@@ -78,5 +119,42 @@ describe("settings page", () => {
     );
     await user.click(screen.getByRole("button", { name: "Update password" }));
     expect(await screen.findByText(/too short/)).toBeInTheDocument();
+  });
+
+  it("resets the authenticator: password -> emailed code -> signed out", async () => {
+    api.post.mockResolvedValue({ data: null });
+    const user = userEvent.setup();
+    render(<SettingsPage />);
+    await user.click(
+      screen.getByRole("button", { name: "Reset authenticator" }),
+    );
+    expect(screen.getByLabelText("Email")).toHaveValue("doctor@heimdall.test");
+    expect(screen.getByLabelText("Email")).toHaveAttribute("readonly");
+    await user.type(screen.getByLabelText("Password"), "Old-Horse-1!");
+    await user.click(screen.getByRole("button", { name: "Email me a code" }));
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith("/api/auth/mfa/recover/start", {
+        email: "doctor@heimdall.test",
+        password: "Old-Horse-1!",
+      }),
+    );
+    await user.type(await screen.findByLabelText("Code"), "135790");
+    await user.click(
+      screen.getByRole("button", { name: "Reset authenticator" }),
+    );
+    await waitFor(() =>
+      expect(api.post).toHaveBeenLastCalledWith(
+        "/api/auth/mfa/recover/complete",
+        {
+          email: "doctor@heimdall.test",
+          password: "Old-Horse-1!",
+          code: "135790",
+        },
+      ),
+    );
+    await waitFor(() => expect(auth.logout).toHaveBeenCalled());
+    expect(toast.message).toHaveBeenCalledWith(
+      expect.stringMatching(/Authenticator reset/),
+    );
   });
 });

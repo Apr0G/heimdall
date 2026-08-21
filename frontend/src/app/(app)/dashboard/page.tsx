@@ -1,12 +1,21 @@
 "use client";
 
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
-import { DeadlineBadge, OutcomeBadge, StatusBadge } from "@/components/case-badges";
+import {
+  DeadlineBadge,
+  OutcomeBadge,
+  StatusBadge,
+} from "@/components/case-badges";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -26,9 +35,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { carcMeaning } from "@/lib/carc-codes";
 import { toastError } from "@/lib/errors";
+import { useAuth } from "@/lib/auth-context";
 import { useDebouncedValue } from "@/lib/use-debounce";
 import {
   type CaseListItem,
@@ -40,12 +54,13 @@ import {
 } from "@/lib/cases";
 import { formatCents, formatDate, humanize } from "@/lib/format";
 
-const QUICK_RESULTS: { result: string; label: string; token: string | null }[] = [
-  { result: "overturned", label: "Overturned", token: "--ok" },
-  { result: "upheld", label: "Upheld", token: "--danger" },
-  { result: "partial", label: "Partial", token: "--warn" },
-  { result: "pending", label: "Still pending", token: null },
-];
+const QUICK_RESULTS: { result: string; label: string; token: string | null }[] =
+  [
+    { result: "overturned", label: "Overturned", token: "--ok" },
+    { result: "upheld", label: "Upheld", token: "--danger" },
+    { result: "partial", label: "Partial", token: "--warn" },
+    { result: "pending", label: "Still pending", token: null },
+  ];
 
 const STATUS_OPTIONS = [
   "all",
@@ -58,6 +73,16 @@ const STATUS_OPTIONS = [
 ];
 
 export default function DashboardPage() {
+  const { user } = useAuth();
+  const router = useRouter();
+  const isAdmin = user?.role === "admin";
+
+  // Admins live on /admin; /dashboard is the practice view. The edge proxy only
+  // knows "signed in", so the role-aware hop happens here.
+  useEffect(() => {
+    if (isAdmin) router.replace("/admin");
+  }, [isAdmin, router]);
+
   const [status, setStatus] = useState("all");
   const [payer, setPayer] = useState("");
   const [page, setPage] = useState(1);
@@ -77,7 +102,10 @@ export default function DashboardPage() {
     placeholderData: keepPreviousData, // keep the old page visible while the next loads
   });
 
-  const { data: summary } = useQuery({ queryKey: ["case-summary"], queryFn: fetchSummary });
+  const { data: summary } = useQuery({
+    queryKey: ["case-summary"],
+    queryFn: fetchSummary,
+  });
 
   // Capture "now" once (lazy initializer) so render stays pure.
   const [now] = useState(() => Date.now());
@@ -89,7 +117,9 @@ export default function DashboardPage() {
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-[26px] font-extrabold tracking-tight">Appeals</h1>
-          <p className="text-sm text-muted-foreground">Track every denial from upload to outcome.</p>
+          <p className="text-sm text-muted-foreground">
+            Track every denial from upload to outcome.
+          </p>
         </div>
         <Link href="/cases/new" className={buttonVariants()}>
           + New Appeal
@@ -134,7 +164,9 @@ export default function DashboardPage() {
       {isLoading ? (
         <TableSkeleton />
       ) : isError ? (
-        <p className="text-sm text-destructive">Couldn&rsquo;t load cases. Please try again.</p>
+        <p className="text-sm text-destructive">
+          Couldn&rsquo;t load cases. Please try again.
+        </p>
       ) : items.length === 0 ? (
         <EmptyState hasFilters={hasFilters} />
       ) : (
@@ -240,11 +272,15 @@ function CasesTable({ items, now }: { items: CaseListItem[]; now: number }) {
               onClick={() => router.push(`/cases/${c.id}`)}
               className="cursor-pointer"
             >
-              <TableCell className="font-medium">{c.patient_initials ?? "—"}</TableCell>
+              <TableCell className="font-medium">
+                {c.patient_initials ?? "—"}
+              </TableCell>
               <TableCell>{formatDate(c.date_of_service)}</TableCell>
               <TableCell>
                 <div>{c.payer_name ?? "—"}</div>
-                <div className="text-xs text-muted-foreground">{humanize(c.plan_type)}</div>
+                <div className="text-xs text-muted-foreground">
+                  {humanize(c.plan_type)}
+                </div>
               </TableCell>
               <TableCell className="text-right font-mono font-medium">
                 {formatCents(c.denied_amount_cents, c.currency)}
@@ -260,7 +296,9 @@ function CasesTable({ items, now }: { items: CaseListItem[]; now: number }) {
                               {code}
                             </span>
                           </TooltipTrigger>
-                          <TooltipContent className="max-w-xs">{carcMeaning(code)}</TooltipContent>
+                          <TooltipContent className="max-w-xs">
+                            {carcMeaning(code)}
+                          </TooltipContent>
                         </Tooltip>
                       ))}
                 </div>
@@ -283,7 +321,8 @@ function CasesTable({ items, now }: { items: CaseListItem[]; now: number }) {
                     <OutcomeBadge result={c.outcome_result} />
                     {c.amount_recovered_cents != null && (
                       <span className="text-xs text-muted-foreground">
-                        {formatCents(c.amount_recovered_cents, c.currency)} recovered
+                        {formatCents(c.amount_recovered_cents, c.currency)}{" "}
+                        recovered
                       </span>
                     )}
                   </div>
@@ -311,7 +350,8 @@ function EmptyState({ hasFilters }: { hasFilters: boolean }) {
     <div className="rounded-md border border-dashed p-12 text-center">
       <h2 className="text-lg font-medium">No appeals yet</h2>
       <p className="mt-1 text-sm text-muted-foreground">
-        Upload a denial, the original claim, and your clinical notes to get started.
+        Upload a denial, the original claim, and your clinical notes to get
+        started.
       </p>
       <Link href="/cases/new" className={buttonVariants({ className: "mt-4" })}>
         + New Appeal
@@ -321,11 +361,14 @@ function EmptyState({ hasFilters }: { hasFilters: boolean }) {
 }
 
 function RecoveryStats({ summary }: { summary: CaseSummary }) {
-  const winRate = summary.win_rate == null ? "—" : `${Math.round(summary.win_rate * 100)}%`;
+  const winRate =
+    summary.win_rate == null ? "—" : `${Math.round(summary.win_rate * 100)}%`;
   return (
     <div className="grid gap-3.5 sm:grid-cols-3">
       <div className="rounded-lg border border-border bg-card p-[18px] shadow-sm">
-        <div className="mb-2 text-[13px] text-muted-foreground">Cases this month</div>
+        <div className="mb-2 text-[13px] text-muted-foreground">
+          Cases this month
+        </div>
         <div className="text-3xl font-extrabold tracking-tight tabular-nums">
           {summary.month_case_count}
         </div>
@@ -380,20 +423,26 @@ function PendingBanner({ pending }: { pending: PendingOutcomeItem[] }) {
       >
         <span
           className="flex size-[26px] shrink-0 items-center justify-center rounded-full text-sm font-bold"
-          style={{ background: "color-mix(in oklab, var(--warn) 22%, var(--card))", color: "var(--warn)" }}
+          style={{
+            background: "color-mix(in oklab, var(--warn) 22%, var(--card))",
+            color: "var(--warn)",
+          }}
           aria-hidden
         >
           !
         </span>
         <span className="flex-1 text-sm">
           <strong>
-            You have {pending.length} pending case{pending.length === 1 ? "" : "s"}.
+            You have {pending.length} pending case
+            {pending.length === 1 ? "" : "s"}.
           </strong>{" "}
           <span className="text-muted-foreground">
             Tell us how they turned out so we can sharpen future estimates.
           </span>
         </span>
-        <span className="text-xs text-muted-foreground">{open ? "Hide" : "Review"}</span>
+        <span className="text-xs text-muted-foreground">
+          {open ? "Hide" : "Review"}
+        </span>
       </button>
       {open && (
         <div className="space-y-2 px-4 pb-3.5">
@@ -407,7 +456,9 @@ function PendingBanner({ pending }: { pending: PendingOutcomeItem[] }) {
                 <span className="text-muted-foreground">
                   {" "}
                   · {c.payer_name ?? "Unknown"} ·{" "}
-                  <span className="font-mono">{formatCents(c.denied_amount_cents, c.currency)}</span>{" "}
+                  <span className="font-mono">
+                    {formatCents(c.denied_amount_cents, c.currency)}
+                  </span>{" "}
                   · submitted {c.submitted_days_ago}d ago
                 </span>
               </div>

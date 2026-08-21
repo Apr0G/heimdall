@@ -53,6 +53,18 @@ class ResetPasswordRequest(BaseModel):
 class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
+    code: str  # current TOTP — both factors are re-checked before the change
+
+
+class MfaRecoverStartRequest(BaseModel):
+    email: str
+    password: str
+
+
+class MfaRecoverCompleteRequest(BaseModel):
+    email: str
+    password: str
+    code: str  # the emailed one-time code
 
 
 class MfaSetupStartRequest(BaseModel):

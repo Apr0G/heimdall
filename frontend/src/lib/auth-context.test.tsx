@@ -15,7 +15,7 @@ const { api, router } = vi.hoisted(() => ({
 vi.mock("@/lib/api", () => ({ api }));
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
 
-import { AuthProvider, useAuth } from "./auth-context";
+import { AuthProvider, homePath, useAuth } from "./auth-context";
 
 function setup() {
   const qc = new QueryClient();
@@ -34,6 +34,12 @@ beforeEach(() => {
 });
 
 describe("auth context", () => {
+  it("homePath sends admins to /admin and everyone else to /dashboard", () => {
+    expect(homePath("admin")).toBe("/admin");
+    expect(homePath("doctor")).toBe("/dashboard");
+    expect(homePath(undefined)).toBe("/dashboard");
+  });
+
   it("does not call /me without the presence cookie", async () => {
     const { result } = setup();
     await waitFor(() => expect(result.current.loading).toBe(false));

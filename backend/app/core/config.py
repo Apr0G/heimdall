@@ -64,6 +64,16 @@ class Settings(BaseSettings):
     # REDIS_URL so the credential never sits in the task definition's plaintext
     # environment; `redis_dsn` splices it in at connect time.
     redis_auth_token: str = ""
+    # Transactional email the API sends itself (authenticator-recovery codes) via
+    # SES. The sender must be a verified SES identity (ses.tf); the pool's own
+    # invite/reset emails are configured on the Cognito side, not here.
+    mail_from: str = "Heimdall <no-reply@heimdallclaims.com>"
+    mail_reply_to: str = "info@heimdallclaims.com"
+    # Authenticator-recovery email codes: lifetime and attempts before a new code
+    # must be requested.
+    mfa_recovery_code_ttl_seconds: int = 600
+    mfa_recovery_max_attempts: int = 5
+
     rate_limit_general: str = "150/minute"  # authed general API, per user
     rate_limit_auth: str = "10/15minutes"  # login, per IP
     rate_limit_public: str = "15/minute"  # unauthenticated public endpoints, per IP

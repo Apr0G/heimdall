@@ -7,7 +7,7 @@ import { usePathname } from "next/navigation";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Wordmark } from "@/components/wordmark";
-import { useAuth } from "@/lib/auth-context";
+import { homePath, useAuth } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
 
 export function SiteHeader() {
@@ -18,7 +18,7 @@ export function SiteHeader() {
   return (
     <header className="border-b">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
-        <Link href="/dashboard" aria-label="Heimdall dashboard">
+        <Link href={homePath(user?.role)} aria-label="Heimdall home">
           <Wordmark />
         </Link>
         <div className="flex items-center gap-2 text-sm">

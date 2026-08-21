@@ -198,6 +198,92 @@ describe("temporary password (NEW_PASSWORD_REQUIRED)", () => {
   });
 });
 
+describe("lost authenticator", () => {
+  it("is offered on the code step and resets via password + emailed code", async () => {
+    auth.login.mockResolvedValue({
+      status: "mfa",
+      challenge: "SOFTWARE_TOKEN_MFA",
+      session: "s1",
+    });
+    api.post.mockResolvedValue({ data: null });
+    const user = await signIn();
+    await user.click(
+      await screen.findByRole("button", { name: "Lost your authenticator?" }),
+    );
+    expect(
+      await screen.findByText("Reset your authenticator"),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Email")).toHaveValue(EMAIL); // carried from sign-in
+    await user.type(screen.getByLabelText("Password"), "hunter2-hunter2");
+    await user.click(screen.getByRole("button", { name: "Email me a code" }));
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith("/api/auth/mfa/recover/start", {
+        email: EMAIL,
+        password: "hunter2-hunter2",
+      }),
+    );
+    await user.type(await screen.findByLabelText("Code"), "135790");
+    await user.click(
+      screen.getByRole("button", { name: "Reset authenticator" }),
+    );
+    await waitFor(() =>
+      expect(api.post).toHaveBeenLastCalledWith(
+        "/api/auth/mfa/recover/complete",
+        {
+          email: EMAIL,
+          password: "hunter2-hunter2",
+          code: "135790",
+        },
+      ),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      /Authenticator reset/,
+    );
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
+  });
+
+  it("is NOT offered on the initial sign-in form", () => {
+    render(<LoginPage />);
+    expect(screen.queryByText(/authenticator/i)).toBeNull();
+  });
+
+  it("is reachable from the forgot-password page and explains a wrong password", async () => {
+    api.post.mockRejectedValue(httpError(401));
+    const user = userEvent.setup();
+    render(<LoginPage />);
+    await user.click(screen.getByRole("button", { name: "Forgot password?" }));
+    await user.click(await screen.findByRole("button", { name: "Reset it" }));
+    expect(
+      await screen.findByText("Reset your authenticator"),
+    ).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Email"), EMAIL);
+    await user.type(screen.getByLabelText("Password"), "wrong-wrong-wrong");
+    await user.click(screen.getByRole("button", { name: "Email me a code" }));
+    expect(
+      await screen.findByText(/doesn't match our records/),
+    ).toBeInTheDocument();
+  });
+
+  it("explains when there is no authenticator to reset", async () => {
+    api.post.mockRejectedValue(
+      httpError(
+        400,
+        "There's no authenticator on this account yet - just sign in to set one up.",
+      ),
+    );
+    const user = userEvent.setup();
+    render(<LoginPage />);
+    await user.click(screen.getByRole("button", { name: "Forgot password?" }));
+    await user.click(await screen.findByRole("button", { name: "Reset it" }));
+    await user.type(screen.getByLabelText("Email"), EMAIL);
+    await user.type(screen.getByLabelText("Password"), "hunter2-hunter2");
+    await user.click(screen.getByRole("button", { name: "Email me a code" }));
+    expect(
+      await screen.findByText(/no authenticator on this account/),
+    ).toBeInTheDocument();
+  });
+});
+
 describe("forgot password", () => {
   async function openForgot(prefill = true) {
     const user = userEvent.setup();

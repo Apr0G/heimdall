@@ -142,15 +142,24 @@ def test_reset_rate_limited_is_429(monkeypatch):
 
 # --- /password/change -------------------------------------------------------
 
-CHANGE = {"current_password": "Old-Horse-1!", "new_password": NEW_PW}
+CHANGE = {"current_password": "Old-Horse-1!", "new_password": NEW_PW, "code": "123456"}
 
 
 def _signed_in():
     user = MagicMock()
     user.id = uuid4()
     user.practice_id = uuid4()
+    user.email = "doctor@heimdall.test"
     app.dependency_overrides[auth_api.get_current_user] = lambda: user
     return user
+
+
+@pytest.fixture(autouse=True)
+def _reauth_ok(monkeypatch):
+    # Both factors are re-checked before a change; by default they pass and mint a token.
+    monkeypatch.setattr(
+        auth_api, "verify_password_and_totp", MagicMock(return_value={"AccessToken": "fresh-token"})
+    )
 
 
 def test_change_requires_auth():
@@ -158,7 +167,7 @@ def test_change_requires_auth():
     assert resp.status_code == 401
 
 
-def test_change_uses_callers_own_token_and_audits_user(monkeypatch):
+def test_change_reauths_both_factors_and_audits_user(monkeypatch):
     user = _signed_in()
     calls = []
     monkeypatch.setattr(auth_api, "change_password", lambda tok, old, new: calls.append(tok))
@@ -166,7 +175,12 @@ def test_change_uses_callers_own_token_and_audits_user(monkeypatch):
         "/api/auth/password/change", json=CHANGE, headers={"Authorization": "Bearer bearer-token"}
     )
     assert resp.status_code == 204
-    assert calls == ["bearer-token"]  # Cognito scopes the change to this token's owner
+    # Password + TOTP re-checked for the signed-in user's own email...
+    auth_api.verify_password_and_totp.assert_called_once_with(
+        "doctor@heimdall.test", "Old-Horse-1!", "123456"
+    )
+    # ...and the change runs on the token re-auth minted, not the session cookie.
+    assert calls == ["fresh-token"]
     kwargs = auth_api.log_audit.await_args.kwargs
     assert kwargs["action"] == "password_change"
     assert kwargs["user_id"] == user.id and kwargs["practice_id"] == user.practice_id
@@ -175,16 +189,16 @@ def test_change_uses_callers_own_token_and_audits_user(monkeypatch):
     assert user.session_keep_jti == "this-jti"
 
 
-def test_change_wrong_current_password_is_401_and_counted(monkeypatch):
+def test_change_wrong_password_or_code_is_401_and_counted(monkeypatch):
     _signed_in()
-    monkeypatch.setattr(
-        auth_api, "change_password", _raiser(InvalidCredentialsError("NotAuthorized"))
-    )
+    auth_api.verify_password_and_totp.side_effect = InvalidCredentialsError("CodeMismatch")
+    monkeypatch.setattr(auth_api, "change_password", MagicMock())
     resp = client.post(
         "/api/auth/password/change", json=CHANGE, headers={"Authorization": "Bearer t"}
     )
     assert resp.status_code == 401
     auth_api.register_login_failure.assert_called_once()
+    auth_api.change_password.assert_not_called()
     assert CHANGE["current_password"] not in resp.text and NEW_PW not in resp.text
 
 

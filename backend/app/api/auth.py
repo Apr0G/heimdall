@@ -24,6 +24,8 @@ from app.schemas.auth import (
     LoginRequest,
     LoginResponse,
     MfaChallenge,
+    MfaRecoverCompleteRequest,
+    MfaRecoverStartRequest,
     MfaSetupCompleteRequest,
     MfaSetupStartRequest,
     MfaSetupStartResponse,
@@ -38,16 +40,21 @@ from app.services.cognito import (
     InvalidCredentialsError,
     PasswordPolicyError,
     RateLimitedError,
+    admin_recreate_user,
     change_password,
     complete_mfa_setup,
     confirm_forgot_password,
     forgot_password,
     global_sign_out,
     initiate_auth,
+    password_challenge,
     respond_new_password,
     respond_software_token_mfa,
     start_mfa_setup,
+    verify_password_and_totp,
 )
+from app.services.mailer import MailError, send_email
+from app.services.recovery_codes import issue_code, verify_code
 from app.services.users import link_user_on_login
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -316,19 +323,26 @@ async def password_change(
     creds: HTTPAuthorizationCredentials | None = Depends(security),
     session: AsyncSession = Depends(get_db),
 ) -> Response:
-    """Signed-in password change. Cognito re-checks the current password against
-    the caller's own access token, so one user can never change another's."""
+    """Signed-in password change. Both factors are re-checked first — current
+    password AND a fresh authenticator code — so a stolen session cookie alone
+    can't rotate the password and lock the owner out. The change itself runs
+    against the freshly minted token, i.e. for the re-authenticated user only."""
     throttle_key = await _throttle(request)
     token = request.cookies.get(AUTH_COOKIE) or (creds.credentials if creds else None)
     try:
-        await run_in_threadpool(change_password, token, body.current_password, body.new_password)
+        fresh = await run_in_threadpool(
+            verify_password_and_totp, current_user.email, body.current_password, body.code
+        )
+        await run_in_threadpool(
+            change_password, fresh["AccessToken"], body.current_password, body.new_password
+        )
     except PasswordPolicyError as exc:
         raise _password_policy_400(exc) from None
     except InvalidCredentialsError:
         await _record_auth_failure(session, request, throttle_key)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Your current password didn't match.",
+            detail="Your current password or authenticator code didn't match.",
         ) from None
     except RateLimitedError:
         raise _TOO_MANY from None
@@ -352,6 +366,151 @@ async def password_change(
         practice_id=current_user.practice_id,
         ip=safe_ip(client_ip(request)),
         user_agent=request.headers.get("user-agent"),
+    )
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+_RECOVERY_SUBJECT = "Your Heimdall authenticator reset code"
+
+
+def _recovery_email(code: str) -> tuple[str, str]:
+    text = (
+        "Hello,\n\nSomeone asked to reset the authenticator app on your Heimdall account. "
+        f"Enter this code on the reset screen: {code}\n\nThe code expires in 10 minutes. "
+        "If you didn't request this, you can ignore this email - nothing has changed. "
+        "If you don't recognise the activity, contact your administrator.\n\n- Heimdall"
+    )
+    html = (
+        "<p>Hello,</p><p>Someone asked to reset the authenticator app on your Heimdall account. "
+        "Enter this code on the reset screen:</p>"
+        f'<p style="font-size:20px;letter-spacing:4px"><strong>{code}</strong></p>'
+        "<p>The code expires in 10 minutes. If you didn't request this, you can ignore this "
+        "email &mdash; nothing has changed. If you don't recognise the activity, contact your "
+        "administrator.</p><p>&mdash; Heimdall</p>"
+    )
+    return text, html
+
+
+@router.post("/mfa/recover/start", status_code=status.HTTP_202_ACCEPTED)
+async def mfa_recover_start(
+    body: MfaRecoverStartRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    """Lost authenticator, step 1: prove the password, then we email a one-time
+    code. The password check is the gate — an unknown email or wrong password is
+    a plain 401 (same as login), and nothing is sent."""
+    throttle_key = await _throttle(request)
+    email = body.email.strip().lower()
+    try:
+        challenge = await run_in_threadpool(password_challenge, email, body.password)
+    except InvalidCredentialsError:
+        await _record_auth_failure(session, request, throttle_key)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password"
+        ) from None
+    except (RateLimitedError, CognitoError) as exc:
+        await _record_auth_error(session, request)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Authentication service is unavailable",
+        ) from exc
+    if challenge != "SOFTWARE_TOKEN_MFA":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="There's no authenticator on this account yet - just sign in to set one up.",
+        )
+    # Each start consumes an attempt: a correct password still shouldn't let
+    # anyone flood a mailbox with codes.
+    await run_in_threadpool(register_login_failure, throttle_key)
+    code = issue_code(email)
+    text, html = _recovery_email(code)
+    try:
+        await run_in_threadpool(
+            send_email, to=email, subject=_RECOVERY_SUBJECT, text=text, html=html
+        )
+    except MailError as exc:
+        await _record_auth_error(session, request)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="We couldn't send the email right now. Please try again later.",
+        ) from exc
+    await log_audit(
+        session,
+        action="mfa_reset_requested",
+        ip=safe_ip(client_ip(request)),
+        user_agent=request.headers.get("user-agent"),
+        metadata={"email": email},  # password was verified, so the email is the user's
+    )
+    await session.commit()
+    return Response(status_code=status.HTTP_202_ACCEPTED)
+
+
+@router.post("/mfa/recover/complete", status_code=status.HTTP_204_NO_CONTENT)
+async def mfa_recover_complete(
+    body: MfaRecoverCompleteRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    """Lost authenticator, step 2: password + emailed code -> the authenticator is
+    removed (identity recreated, same password), every session is signed out, and
+    the next login enrolls a new authenticator."""
+    throttle_key = await _throttle(request)
+    email = body.email.strip().lower()
+    try:
+        challenge = await run_in_threadpool(password_challenge, email, body.password)
+    except InvalidCredentialsError:
+        await _record_auth_failure(session, request, throttle_key)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password"
+        ) from None
+    except (RateLimitedError, CognitoError) as exc:
+        await _record_auth_error(session, request)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Authentication service is unavailable",
+        ) from exc
+    if challenge != "SOFTWARE_TOKEN_MFA":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="There's no authenticator on this account yet - just sign in to set one up.",
+        )
+    if not verify_code(email, body.code.strip()):
+        await _record_auth_failure(session, request, throttle_key)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="That code didn't match, or it expired. Request a new one.",
+        )
+
+    user = await session.scalar(select(User).where(User.email == email))
+    if user is None:
+        # Cognito knows them but the app doesn't — nothing to rebind; refuse.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account is not provisioned. Contact your administrator.",
+        )
+    try:
+        new_sub = await run_in_threadpool(admin_recreate_user, email, body.password)
+    except (InvalidCredentialsError, RateLimitedError, CognitoError) as exc:
+        await _record_auth_error(session, request)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Authentication service is unavailable",
+        ) from exc
+    user.cognito_sub = new_sub
+    user.sessions_revoked_at = datetime.now(UTC)
+    user.session_keep_jti = None
+    await log_audit(
+        session,
+        action="mfa_reset",
+        resource_type="user",
+        resource_id=user.id,
+        user_id=user.id,
+        practice_id=user.practice_id,
+        ip=safe_ip(client_ip(request)),
+        user_agent=request.headers.get("user-agent"),
+        metadata={"email": email},
     )
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

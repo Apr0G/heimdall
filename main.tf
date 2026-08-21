@@ -262,10 +262,14 @@ resource "aws_iam_role_policy" "app" {
     Version = "2012-10-17"
     Statement = [
       {
-        # Admin user management (/api/admin/users): invite, re-send invite,
-        # disable/enable, and sign a user out of Cognito. Gated in the API by
-        # require_role("admin") with an audit row per call. Scoped to our pool;
-        # deliberately NO AdminSetUserPassword / AdminDeleteUser.
+        # Cognito user administration, scoped to our pool:
+        #  - /api/admin/users (require_role("admin"), audit row per call): invite,
+        #    re-send invite, disable/enable, global sign-out.
+        #  - authenticator recovery (/api/auth/mfa/recover/*): Cognito cannot drop
+        #    a TOTP device while the pool requires MFA, so after the person proves
+        #    password + emailed code the identity is recreated with the same
+        #    password (AdminDeleteUser + AdminCreateUser + AdminSetUserPassword).
+        #    Audited as mfa_reset; every session revoked.
         Sid    = "CognitoUserAdmin"
         Effect = "Allow"
         Action = [
@@ -274,8 +278,21 @@ resource "aws_iam_role_policy" "app" {
           "cognito-idp:AdminDisableUser",
           "cognito-idp:AdminEnableUser",
           "cognito-idp:AdminUserGlobalSignOut",
+          "cognito-idp:AdminDeleteUser",
+          "cognito-idp:AdminSetUserPassword",
         ]
         Resource = aws_cognito_user_pool.heimdall.arn
+      },
+      {
+        # The API emails authenticator-recovery codes itself (services/mailer.py)
+        # from no-reply@heimdallclaims.com. Limited to our verified identity.
+        Sid      = "SesSendRecoveryCodes"
+        Effect   = "Allow"
+        Action   = ["ses:SendEmail", "ses:SendRawEmail"]
+        Resource = aws_ses_domain_identity.heimdall.arn
+        Condition = {
+          StringLike = { "ses:FromAddress" = "no-reply@heimdallclaims.com" }
+        }
       },
       {
         Effect = "Allow"
