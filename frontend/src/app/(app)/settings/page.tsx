@@ -23,6 +23,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AuthenticatorRecovery } from "@/components/authenticator-recovery";
+import { DeactivationRequestCard } from "@/components/deactivation-request";
 import { PasswordReset } from "@/components/password-reset";
 import { homePath, useAuth } from "@/lib/auth-context";
 import { api } from "@/lib/api";
@@ -150,6 +151,18 @@ export default function SettingsPage() {
               Reset authenticator
             </Button>
           )}
+        </CardContent>
+      </Card>
+      <Card className="border-destructive/30">
+        <CardHeader>
+          <CardTitle>Deactivate account</CardTitle>
+          <CardDescription>
+            Accounts belong to your practice, so deactivation is approved by an
+            administrator. Send a request and they&rsquo;ll be notified.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <DeactivationRequestCard />
         </CardContent>
       </Card>
     </main>

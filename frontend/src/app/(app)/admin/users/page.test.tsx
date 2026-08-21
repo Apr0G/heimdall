@@ -11,6 +11,8 @@ const { adminApi, me } = vi.hoisted(() => ({
     inviteUser: vi.fn(),
     resendInvite: vi.fn(),
     setUserActive: vi.fn(),
+    fetchDeactivationRequests: vi.fn(),
+    resolveDeactivationRequest: vi.fn(),
   },
   me: {
     id: "me",
@@ -87,6 +89,7 @@ beforeEach(() => {
     users: USERS,
     practices: PRACTICES,
   });
+  adminApi.fetchDeactivationRequests.mockResolvedValue([]);
 });
 
 describe("admin users page", () => {
@@ -251,5 +254,42 @@ describe("admin users page", () => {
     const pending = await row("new@sunrise.test");
     await user.click(pending.getByRole("button", { name: "Resend invite" }));
     expect(await pending.findByText(/already signed in/)).toBeInTheDocument();
+  });
+
+  it("shows pending deactivation requests and resolves them", async () => {
+    adminApi.fetchDeactivationRequests.mockResolvedValue([
+      {
+        id: "req-1",
+        user: USERS[1],
+        reason: "Leaving the practice",
+        status: "pending",
+        created_at: "2026-08-21T00:00:00Z",
+      },
+    ]);
+    adminApi.resolveDeactivationRequest.mockResolvedValue({
+      ...USERS[1],
+      is_active: false,
+    });
+    const user = userEvent.setup();
+    renderPage();
+    const card = within(
+      await screen.findByTestId("deactivation-request-new@sunrise.test"),
+    );
+    expect(card.getByText(/Leaving the practice/)).toBeInTheDocument();
+    await user.click(card.getByRole("button", { name: /Approve/ }));
+    await waitFor(() =>
+      expect(
+        adminApi.resolveDeactivationRequest.mock.calls[0]?.slice(0, 2),
+      ).toEqual(["req-1", "approve"]),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      /deactivated and signed out/,
+    );
+  });
+
+  it("hides the requests section when there are none", async () => {
+    renderPage();
+    await screen.findByTestId("user-row-admin@heimdall.test");
+    expect(screen.queryByText("Deactivation requests")).toBeNull();
   });
 });

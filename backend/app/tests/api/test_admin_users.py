@@ -36,11 +36,15 @@ def _user(role="doctor", last_login=None, active=True):
 
 
 class FakeSession:
-    def __init__(self, target=None):
+    def __init__(self, target=None, pending=None):
         self.target = target
+        self.pending = pending  # an open DeactivationRequest for the target, if any
         self.practice = MagicMock(name="practice")
         self.practice.name = "Sunrise"
         self.committed = False
+
+    async def scalar(self, stmt):
+        return self.pending
 
     async def execute(self, stmt):
         res = MagicMock()
@@ -194,3 +198,13 @@ def test_invite_success_audits_and_returns_item(admin, monkeypatch):
     assert body["user"]["practice_name"] == "Sunrise" and body["user"]["invite_pending"] is True
     assert session.committed
     assert admin_users.log_audit.await_args.kwargs["action"] == "user_invited"
+
+
+def test_manual_deactivate_marks_open_request_approved(admin):
+    target = _user()
+    pending = MagicMock(status="pending", resolved_by=None, resolved_at=None)
+    session = _db(FakeSession(target=target, pending=pending))
+    resp = client.post(f"/api/admin/users/{target.id}/deactivate")
+    assert resp.status_code == 200
+    assert pending.status == "approved" and pending.resolved_by == admin.id
+    assert session.committed

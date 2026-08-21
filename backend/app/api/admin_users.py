@@ -18,8 +18,9 @@ from starlette.concurrency import run_in_threadpool
 from app.api.admin import require_admin
 from app.core.net import client_ip
 from app.db.session import get_db
-from app.models import Practice, User
+from app.models import DeactivationRequest, Practice, User
 from app.schemas.admin import (
+    AdminDeactivationRequestItem,
     AdminInviteRequest,
     AdminInviteResponse,
     AdminPracticeItem,
@@ -189,6 +190,15 @@ async def deactivate(
             status_code=status.HTTP_400_BAD_REQUEST, detail="You can't deactivate your own account."
         )
     target, practice = await _get_target(session, user_id)
+    await _deactivate(session, request, current_user, target)
+    await session.commit()
+    return _item(target, practice.name)
+
+
+async def _deactivate(session: AsyncSession, request: Request, admin: User, target: User) -> None:
+    """Cognito first (a failure changes nothing), then the app-side kill switch +
+    session revocation + audit. Does NOT commit. Shared by the manual button and
+    request approval; any open deactivation request is marked approved."""
     try:
         await run_in_threadpool(admin_set_enabled, target.email, False)
     except (InvalidCredentialsError, CognitoError) as exc:
@@ -198,9 +208,16 @@ async def deactivate(
     target.deactivated_at = now
     target.sessions_revoked_at = now
     target.session_keep_jti = None
-    await _audit(session, request, current_user, "user_deactivated", target)
-    await session.commit()
-    return _item(target, practice.name)
+    pending = await session.scalar(
+        select(DeactivationRequest).where(
+            DeactivationRequest.user_id == target.id, DeactivationRequest.status == "pending"
+        )
+    )
+    if pending is not None:
+        pending.status = "approved"
+        pending.resolved_by = admin.id
+        pending.resolved_at = now
+    await _audit(session, request, admin, "user_deactivated", target)
 
 
 @router.post("/users/{user_id}/reactivate", response_model=AdminUserItem)
@@ -221,3 +238,84 @@ async def reactivate(
     await _audit(session, request, current_user, "user_reactivated", target)
     await session.commit()
     return _item(target, practice.name)
+
+
+# --- Deactivation requests ----------------------------------------------------
+
+
+def _request_item(req: DeactivationRequest, user: User, practice_name: str):
+    return AdminDeactivationRequestItem(
+        id=req.id,
+        user=_item(user, practice_name),
+        reason=req.reason,
+        status=req.status,
+        created_at=req.created_at,
+    )
+
+
+async def _get_request(session: AsyncSession, request_id: UUID):
+    row = (
+        await session.execute(
+            select(DeactivationRequest, User, Practice.name)
+            .join(User, User.id == DeactivationRequest.user_id)
+            .join(Practice, Practice.id == User.practice_id)
+            .where(DeactivationRequest.id == request_id)
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
+    if row[0].status != "pending":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="This request was already resolved."
+        )
+    return row
+
+
+@router.get("/deactivation-requests", response_model=list[AdminDeactivationRequestItem])
+async def list_deactivation_requests(
+    current_user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_db),
+) -> list[AdminDeactivationRequestItem]:
+    rows = (
+        await session.execute(
+            select(DeactivationRequest, User, Practice.name)
+            .join(User, User.id == DeactivationRequest.user_id)
+            .join(Practice, Practice.id == User.practice_id)
+            .where(DeactivationRequest.status == "pending")
+            .order_by(DeactivationRequest.created_at)
+        )
+    ).all()
+    return [_request_item(r, u, name) for r, u, name in rows]
+
+
+@router.post("/deactivation-requests/{request_id}/approve", response_model=AdminUserItem)
+async def approve_deactivation(
+    request_id: UUID,
+    request: Request,
+    current_user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_db),
+) -> AdminUserItem:
+    req, target, practice_name = await _get_request(session, request_id)
+    if target.id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="You can't deactivate your own account."
+        )
+    await _deactivate(session, request, current_user, target)  # marks the request approved
+    await session.commit()
+    return _item(target, practice_name)
+
+
+@router.post("/deactivation-requests/{request_id}/deny", response_model=AdminUserItem)
+async def deny_deactivation(
+    request_id: UUID,
+    request: Request,
+    current_user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_db),
+) -> AdminUserItem:
+    req, target, practice_name = await _get_request(session, request_id)
+    req.status = "denied"
+    req.resolved_by = current_user.id
+    req.resolved_at = datetime.now(UTC)
+    await _audit(session, request, current_user, "deactivation_request_denied", target)
+    await session.commit()
+    return _item(target, practice_name)

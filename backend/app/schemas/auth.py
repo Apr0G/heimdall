@@ -1,3 +1,4 @@
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -90,3 +91,16 @@ class UserOut(BaseModel):
     full_name: str | None
     role: str
     practice_id: UUID
+
+
+class DeactivationRequestCreate(BaseModel):
+    reason: str | None = None
+
+
+class DeactivationRequestOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    status: str
+    reason: str | None
+    created_at: datetime

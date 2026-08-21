@@ -32,15 +32,19 @@ import {
 import {
   type AdminUser,
   type AdminUsers,
+  type DeactivationRequestItem,
   fetchAdminUsers,
+  fetchDeactivationRequests,
   inviteUser,
   resendInvite,
+  resolveDeactivationRequest,
   setUserActive,
 } from "@/lib/admin";
 import { useAuth } from "@/lib/auth-context";
 import { humanize } from "@/lib/format";
 
 const QUERY_KEY = ["admin-users"];
+const REQUESTS_KEY = ["admin-deactivation-requests"];
 const NEW_PRACTICE = "__new__";
 const ROLES = ["doctor", "office_manager", "admin"] as const;
 
@@ -104,6 +108,8 @@ export default function AdminUsersPage() {
           {notice}
         </p>
       )}
+
+      <DeactivationRequests onNotice={setNotice} />
 
       {users.isLoading && <Skeleton className="h-64 rounded-lg" />}
       {users.isError && (
@@ -454,5 +460,100 @@ function UsersTable({
         </TableBody>
       </Table>
     </div>
+  );
+}
+
+// --- Deactivation requests ------------------------------------------------------
+
+function DeactivationRequests({ onNotice }: { onNotice: (m: string) => void }) {
+  const queryClient = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const requests = useQuery({
+    queryKey: REQUESTS_KEY,
+    queryFn: fetchDeactivationRequests,
+  });
+
+  const resolve = useMutation({
+    mutationFn: ({
+      id,
+      decision,
+    }: {
+      id: string;
+      decision: "approve" | "deny";
+    }) => resolveDeactivationRequest(id, decision),
+    onSuccess: (u, vars) => {
+      setError(null);
+      onNotice(
+        vars.decision === "approve"
+          ? `${u.email} deactivated and signed out everywhere.`
+          : `Request from ${u.email} denied; their account stays active.`,
+      );
+      queryClient.invalidateQueries({ queryKey: REQUESTS_KEY });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEY });
+    },
+    onError: (err) =>
+      setError(apiErrorText(err, "Couldn't resolve the request.")),
+  });
+
+  if (!requests.data || requests.data.length === 0) return null;
+
+  return (
+    <Card className="border-amber-500/40">
+      <CardHeader>
+        <CardTitle>Deactivation requests</CardTitle>
+        <CardDescription>
+          These people asked to have their account deactivated. Approving
+          deactivates them immediately; denying leaves the account as is. Either
+          way they can see the outcome in their settings.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        {requests.data.map((r: DeactivationRequestItem) => (
+          <div
+            key={r.id}
+            data-testid={`deactivation-request-${r.user.email}`}
+            className="flex flex-wrap items-start justify-between gap-3 rounded-md border border-border p-3"
+          >
+            <div className="min-w-0 text-sm">
+              <div className="font-medium">
+                {r.user.full_name ?? r.user.email}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {r.user.email} · {r.user.practice_name} ·{" "}
+                {humanize(r.user.role)} · {formatDate(r.created_at)}
+              </div>
+              <p className="mt-1.5 text-muted-foreground">
+                {r.reason ? (
+                  <>&ldquo;{r.reason}&rdquo;</>
+                ) : (
+                  <em>No reason given</em>
+                )}
+              </p>
+            </div>
+            <div className="flex shrink-0 gap-1.5">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={resolve.isPending}
+                onClick={() => resolve.mutate({ id: r.id, decision: "deny" })}
+              >
+                Deny
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                disabled={resolve.isPending}
+                onClick={() =>
+                  resolve.mutate({ id: r.id, decision: "approve" })
+                }
+              >
+                Approve & deactivate
+              </Button>
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   );
 }

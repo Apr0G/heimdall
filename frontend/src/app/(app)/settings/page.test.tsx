@@ -1,11 +1,12 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render as rtlRender, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { httpError } from "@/test/axios-error";
 
 const { api, auth, toast } = vi.hoisted(() => ({
-  api: { post: vi.fn() },
+  api: { post: vi.fn(), get: vi.fn(), delete: vi.fn() },
   auth: {
     user: {
       id: "u1",
@@ -27,6 +28,11 @@ vi.mock("@/lib/auth-context", () => ({
 
 import SettingsPage from "./page";
 
+function render(ui: React.ReactElement) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return rtlRender(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+}
+
 const STRONG = "Correct-Horse-9!";
 
 async function fill(current: string, next = STRONG, confirm = next) {
@@ -42,6 +48,7 @@ async function fill(current: string, next = STRONG, confirm = next) {
 beforeEach(() => {
   vi.clearAllMocks();
   auth.user.role = "office_manager";
+  api.get.mockResolvedValue({ data: null }); // no pending deactivation request
 });
 
 describe("settings page", () => {
@@ -168,5 +175,56 @@ describe("settings page", () => {
     expect(toast.message).toHaveBeenCalledWith(
       expect.stringMatching(/Authenticator reset/),
     );
+  });
+
+  it("requests deactivation with a reason, then shows the pending state", async () => {
+    api.post.mockResolvedValue({ data: { id: "r1", status: "pending" } });
+    const user = userEvent.setup();
+    render(<SettingsPage />);
+    await user.click(
+      await screen.findByRole("button", { name: "Request deactivation" }),
+    );
+    await user.type(screen.getByLabelText(/Reason/), "Leaving the practice");
+    api.get.mockResolvedValue({
+      data: {
+        id: "r1",
+        status: "pending",
+        reason: "Leaving the practice",
+        created_at: "2026-08-21T00:00:00Z",
+      },
+    });
+    await user.click(screen.getByRole("button", { name: "Send request" }));
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith("/api/auth/deactivation-request", {
+        reason: "Leaving the practice",
+      }),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(/Request sent/);
+    expect(
+      screen.getByRole("button", { name: "Cancel request" }),
+    ).toBeInTheDocument();
+  });
+
+  it("cancels a pending deactivation request", async () => {
+    api.get.mockResolvedValueOnce({
+      data: {
+        id: "r1",
+        status: "pending",
+        reason: null,
+        created_at: "2026-08-21T00:00:00Z",
+      },
+    });
+    api.delete.mockResolvedValue({ data: null });
+    const user = userEvent.setup();
+    render(<SettingsPage />);
+    await user.click(
+      await screen.findByRole("button", { name: "Cancel request" }),
+    );
+    await waitFor(() =>
+      expect(api.delete).toHaveBeenCalledWith("/api/auth/deactivation-request"),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Request deactivation" }),
+    ).toBeInTheDocument();
   });
 });

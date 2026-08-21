@@ -132,3 +132,32 @@ export async function setUserActive(
   );
   return res.data;
 }
+
+// --- Deactivation requests ---------------------------------------------------
+
+export type DeactivationRequestItem = {
+  id: string;
+  user: AdminUser;
+  reason: string | null;
+  status: "pending" | "approved" | "denied";
+  created_at: string;
+};
+
+export async function fetchDeactivationRequests(): Promise<
+  DeactivationRequestItem[]
+> {
+  const res = await api.get<DeactivationRequestItem[]>(
+    "/api/admin/deactivation-requests",
+  );
+  return res.data;
+}
+
+export async function resolveDeactivationRequest(
+  id: string,
+  decision: "approve" | "deny",
+): Promise<AdminUser> {
+  const res = await api.post<AdminUser>(
+    `/api/admin/deactivation-requests/${id}/${decision}`,
+  );
+  return res.data;
+}

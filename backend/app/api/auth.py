@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from html import escape as html_escape
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials
@@ -17,9 +18,11 @@ from app.core.auth import (
 from app.core.net import client_ip
 from app.core.rate_limit import ip_key, login_allowed, register_login_failure
 from app.db.session import get_db
-from app.models import User
+from app.models import DeactivationRequest, User
 from app.schemas.auth import (
     ChangePasswordRequest,
+    DeactivationRequestCreate,
+    DeactivationRequestOut,
     ForgotPasswordRequest,
     LoginRequest,
     LoginResponse,
@@ -604,6 +607,132 @@ async def logout(
     )
     await session.commit()
     return {"detail": "signed out"}
+
+
+# --- Deactivation requests ----------------------------------------------------
+# Accounts belong to the practice: a user can ASK to be deactivated, an admin
+# decides (/api/admin/deactivation-requests). No self-service delete.
+
+
+async def _pending_request(session: AsyncSession, user: User) -> DeactivationRequest | None:
+    return await session.scalar(
+        select(DeactivationRequest).where(
+            DeactivationRequest.user_id == user.id, DeactivationRequest.status == "pending"
+        )
+    )
+
+
+async def _notify_admins_of_request(session: AsyncSession, user: User, reason: str | None) -> None:
+    """Best-effort email to every active admin. A mail failure never fails the
+    request — admins also see it on the Users page."""
+    admins = (
+        (
+            await session.execute(
+                select(User.email).where(User.role == "admin", User.is_active.is_(True))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    who = f"{user.full_name} ({user.email})" if user.full_name else user.email
+    reason_line = f"Reason given: {reason}" if reason else "No reason given."
+    text = (
+        f"{who} has asked to have their Heimdall account deactivated.\n{reason_line}\n\n"
+        f"Review it under Admin -> Users: https://heimdallclaims.com/admin/users\n\n- Heimdall"
+    )
+    # Name and reason are user-typed: escape them before they land in HTML.
+    users_url = "https://heimdallclaims.com/admin/users"
+    html = (
+        f"<p><strong>{html_escape(who)}</strong> has asked to have their Heimdall "
+        "account deactivated.</p>"
+        f"<p>{html_escape(reason_line)}</p>"
+        f'<p>Review it under <a href="{users_url}">Admin &rarr; Users</a>.</p>'
+        "<p>&mdash; Heimdall</p>"
+    )
+    for admin_email in admins:
+        try:
+            await run_in_threadpool(
+                send_email,
+                to=admin_email,
+                subject="Account deactivation request",
+                text=text,
+                html=html,
+            )
+        except MailError:
+            pass  # logged by the mailer; the request itself still stands
+
+
+@router.post(
+    "/deactivation-request",
+    response_model=DeactivationRequestOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def request_deactivation(
+    body: DeactivationRequestCreate,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> DeactivationRequest:
+    if await _pending_request(session, current_user) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="You already have a pending request.",
+        )
+    reason = (body.reason or "").strip()[:500] or None
+    req = DeactivationRequest(
+        user_id=current_user.id, practice_id=current_user.practice_id, reason=reason
+    )
+    session.add(req)
+    await session.flush()
+    await log_audit(
+        session,
+        action="deactivation_requested",
+        resource_type="user",
+        resource_id=current_user.id,
+        user_id=current_user.id,
+        practice_id=current_user.practice_id,
+        ip=safe_ip(client_ip(request)),
+        user_agent=request.headers.get("user-agent"),
+    )
+    await session.commit()
+    await _notify_admins_of_request(session, current_user, reason)
+    return req
+
+
+@router.get("/deactivation-request", response_model=DeactivationRequestOut | None)
+async def my_deactivation_request(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> DeactivationRequest | None:
+    return await _pending_request(session, current_user)
+
+
+@router.delete("/deactivation-request", status_code=status.HTTP_204_NO_CONTENT)
+async def cancel_deactivation_request(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    """Withdraw a pending request. Kept as a row (status denied, resolved by the
+    requester) so the history stays complete."""
+    req = await _pending_request(session, current_user)
+    if req is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No pending request")
+    req.status = "denied"
+    req.resolved_by = current_user.id
+    req.resolved_at = datetime.now(UTC)
+    await log_audit(
+        session,
+        action="deactivation_request_cancelled",
+        resource_type="user",
+        resource_id=current_user.id,
+        user_id=current_user.id,
+        practice_id=current_user.practice_id,
+        ip=safe_ip(client_ip(request)),
+        user_agent=request.headers.get("user-agent"),
+    )
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/me", response_model=UserOut)

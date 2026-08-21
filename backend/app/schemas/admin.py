@@ -108,3 +108,11 @@ class AdminInviteResponse(BaseModel):
     created_user: bool
     created_practice: bool
     invite_resent: bool
+
+
+class AdminDeactivationRequestItem(BaseModel):
+    id: UUID
+    user: AdminUserItem
+    reason: str | None
+    status: str
+    created_at: datetime

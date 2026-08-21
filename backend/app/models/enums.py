@@ -87,3 +87,7 @@ outcome_source = _pg_enum("user_reported", "imported", name="outcome_source")
 # The old list claimed the migration consumed it, which was false and would have led
 # anyone appending an enum here to ship a type that was never CREATEd.
 # test_enum_parity.py asserts these definitions match the live database instead.
+
+deactivation_request_status = _pg_enum(
+    "pending", "approved", "denied", name="deactivation_request_status"
+)
