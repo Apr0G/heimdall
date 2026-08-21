@@ -290,8 +290,12 @@ resource "aws_iam_role_policy" "app" {
         Effect   = "Allow"
         Action   = ["ses:SendEmail", "ses:SendRawEmail"]
         Resource = aws_ses_domain_identity.heimdall.arn
+        # ses:FromAddress carries the full header value, display name included
+        # ("Heimdall <no-reply@...>"), so match both bare and named forms.
         Condition = {
-          StringLike = { "ses:FromAddress" = "no-reply@heimdallclaims.com" }
+          StringLike = {
+            "ses:FromAddress" = ["no-reply@heimdallclaims.com", "*<no-reply@heimdallclaims.com>"]
+          }
         }
       },
       {
