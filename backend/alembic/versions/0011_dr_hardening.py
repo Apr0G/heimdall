@@ -15,7 +15,11 @@ Three small follow-ups from the 2026-08-21 codebase audit:
    default), which `session_replication_role = replica` silently disables —
    a path open to the owner/rds_superuser. ENABLE ALWAYS closes it; the app
    role was never able to set that GUC, so this hardens the owner path only.
+4. model_runs.input_truncated — whether a prompt section was length-capped
+   before the call. Previously only an in-band marker the model could see.
 """
+
+import sqlalchemy as sa
 
 from alembic import op
 
@@ -34,6 +38,10 @@ _AUDIT_TRIGGERS = (
 
 
 def upgrade() -> None:
+    op.add_column(
+        "model_runs",
+        sa.Column("input_truncated", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+    )
     op.create_index(
         "ix_deactivation_requests_resolved_by", "deactivation_requests", ["resolved_by"]
     )
@@ -43,6 +51,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_column("model_runs", "input_truncated")
     for trigger in _AUDIT_TRIGGERS:
         op.execute(f"ALTER TABLE public.audit_logs ENABLE TRIGGER {trigger}")
     op.drop_index("ix_deactivation_requests_resolved_by", table_name="deactivation_requests")

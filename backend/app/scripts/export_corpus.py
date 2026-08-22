@@ -34,6 +34,7 @@ from app.models import (
     ModelRun,
     Outcome,
 )
+from app.scripts import deidentify
 from app.scripts.deidentify import (
     SAFE_EXTRACTION_FIELDS,
     deid_year,
@@ -136,7 +137,16 @@ def _reidentification_risk(records: list[dict]) -> dict:
 
 async def main() -> None:
     include_text = os.environ.get("INCLUDE_DOC_TEXT") == "1"
-    use_ner = os.environ.get("USE_NER") == "1"
+    # NER name redaction is ON unless explicitly disabled. Names in free prose
+    # ("Jane Doe presents with…") are caught by nothing else, so an export with
+    # NER silently unavailable is an export with names in it.
+    use_ner = os.environ.get("USE_NER", "1") != "0"
+    if use_ner and deidentify._ner_engines_or_none() is None:
+        raise SystemExit(
+            "ABORTED: NER name redaction is on but Presidio/spaCy are unavailable "
+            "(install from deid.lock). Set USE_NER=0 only for a corpus you will "
+            "review by hand before use."
+        )
 
     # Preflight. hash_ref fails closed without a pepper, and it is called per
     # record — so without this the export would read the whole database, redact
@@ -308,6 +318,16 @@ async def main() -> None:
             "deidentify.py and re-run; set ALLOW_RESIDUAL_LEAKS=1 only to "
             "deliberately export a corpus you have reviewed by hand."
         )
+    # Name-shaped survivors gate the write too: with NER on, anything left is
+    # either a benign term or a missed name, and the threshold forces a look.
+    max_names = int(os.environ.get("MAX_CANDIDATE_NAMES", "25"))
+    if len(names) > max_names and os.environ.get("ALLOW_RESIDUAL_LEAKS") != "1":
+        raise SystemExit(
+            f"ABORTED: {len(names)} name-shaped strings survived redaction (limit "
+            f"{max_names}). Review them via a local dry run (DRY_RUN=1 prints them "
+            "to the terminal, never to S3); raise MAX_CANDIDATE_NAMES or set "
+            "ALLOW_RESIDUAL_LEAKS=1 only after that review."
+        )
 
     labeled = sum(1 for r in records if r["label"] is not None)
     stamp = datetime.now(UTC)
@@ -319,10 +339,13 @@ async def main() -> None:
         "labeled": labeled,
         "deidentification": "safe-harbor (best-effort; human review required)",
         "ner": use_ner,
+        # The report lands in exports/ (no lifecycle), so it must not itself be
+        # a list of the names that leaked: counts and irreversible tokens only.
+        # The plaintext review list is printed by DRY_RUN=1 and never stored.
         "residual": {
             "formatted_leaks": dict(leaks),  # expected empty — anything here is a bug
             "candidate_name_count": len(names),
-            "candidate_names": sorted(names)[:500],  # review these for missed names
+            "candidate_name_refs": sorted(hash_ref(n) for n in names)[:500],
         },
         # How many cases got EXACT-MATCH member-ID redaction (vs pattern-only). A
         # zero here across a non-empty corpus is the signature of the bug this
@@ -337,6 +360,11 @@ async def main() -> None:
         "reidentification_risk": _reidentification_risk(records),
     }
 
+    if os.environ.get("DRY_RUN") == "1":
+        print(f"DRY RUN — {len(records)} records, nothing written. Candidate names:")
+        for n in sorted(names):
+            print(f"  {n}")
+        return
     jsonl = "\n".join(json.dumps(r, ensure_ascii=False) for r in records)
     await asyncio.to_thread(s3.put_text, key, jsonl)
     await asyncio.to_thread(s3.put_text, report_key, json.dumps(report, indent=2))

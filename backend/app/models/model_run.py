@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import ForeignKey, Index, Integer, Text, text
+from sqlalchemy import Boolean, ForeignKey, Index, Integer, Text, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -31,5 +31,11 @@ class ModelRun(Base, UUIDPrimaryKey, CreatedAtMixin):
     raw_response_s3_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(model_run_status, nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # True when any prompt section was length-capped before the call (see
+    # prompts/text.prepare). A letter drafted from a partial narrative must be
+    # distinguishable from one drafted from the whole record.
+    input_truncated: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
 
     __table_args__ = (Index("ix_model_runs_case_id", "case_id"),)

@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 import uuid
 from dataclasses import dataclass
@@ -12,7 +13,10 @@ from starlette.concurrency import run_in_threadpool
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models import ModelRun
+from app.prompts.text import was_truncated
 from app.services import s3
+
+logger = logging.getLogger(__name__)
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
@@ -116,6 +120,7 @@ async def _record_model_run(
     call: _RawCall,
     status: str,
     error_message: str | None,
+    input_truncated: bool = False,
 ) -> tuple[str, str]:
     """Write the model_runs row, then archive the raw request/response to S3.
 
@@ -143,6 +148,7 @@ async def _record_model_run(
                 raw_response_s3_key=response_key,
                 status=status,
                 error_message=error_message,
+                input_truncated=input_truncated,
             )
         )
         await session.commit()
@@ -200,6 +206,15 @@ async def complete_json(
     """Force a JSON response from Claude on Bedrock, validate it against `schema`,
     retrying once with a corrective turn on parse/validation failure. Every
     Bedrock call writes a model_runs row. Raises ClaudeJSONError if both fail."""
+    # Recorded on every row this call writes (rule 9: a silently shortened
+    # clinical note must leave a trace somewhere other than inside the prompt).
+    input_truncated = was_truncated(system, user_prompt)
+    if input_truncated:
+        logger.warning(
+            "prompt input truncated",
+            extra={"context": {"case_id": str(case_id), "purpose": purpose}},
+        )
+
     messages: list[dict] = [{"role": "user", "content": user_prompt}]
 
     for _ in range(2):
@@ -231,6 +246,7 @@ async def complete_json(
                 call=call,
                 status="error",
                 error_message=f"response truncated at max_tokens={max_tokens}",
+                input_truncated=input_truncated,
             )
             raise ClaudeTruncatedError(
                 f"{purpose}: model response hit the {max_tokens}-token ceiling"
@@ -251,6 +267,7 @@ async def complete_json(
             call=call,
             status="success" if validated is not None else "error",
             error_message=error_message,
+            input_truncated=input_truncated,
         )
 
         if validated is not None:

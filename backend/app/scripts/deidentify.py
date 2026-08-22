@@ -65,9 +65,16 @@ _DATE = re.compile(
     r"|\d{4}-\d{1,2}-\d{1,2}"  # 1980-03-15
     rf"|{_MONTHS}\s+\d{{1,2}}(?:st|nd|rd|th)?,?\s+\d{{4}}"  # March 15, 1980
     rf"|\d{{1,2}}(?:st|nd|rd|th)?\s+(?:of\s+)?{_MONTHS},?\s+\d{{4}}"  # 15 March 1980
+    rf"|\d{{1,2}}-{_MONTHS}-\d{{2,4}}"  # 15-Mar-2026
+    rf"|{_MONTHS}-\d{{1,2}}-\d{{2,4}}"  # Mar-15-2026
+    r"|\d{1,2}/\d{4}"  # 03/2026 (month/year — still a date element)
+    rf"|{_MONTHS},?\s+\d{{4}}"  # May 2026
     r")\b",
     re.IGNORECASE,
 )
+# A bare five-digit ZIP with no state prefix ("ZIP: 90210"). Only used by the
+# residual scanner: redacting every 5-digit run would eat CPT codes.
+_BARE_ZIP = re.compile(r"\b(?:zip(?:\s*code)?|postal)\s*[:#]?\s*\d{5}\b", re.IGNORECASE)
 _LONGNUM = re.compile(r"(?<!\d)\d{6,}(?!\d)")  # member ids / MRNs / claim / account
 # Medicare Beneficiary Identifier (MBI): 11 chars, position-constrained, optionally
 # dash-separated as 4-3-4 — e.g. 1EG4-TE5-MK73. Never all-numeric, so it slips past
@@ -81,11 +88,12 @@ _MBI = re.compile(
 # 8+ and mixed so CPT (5 digits), ICD-10 (A00.0), HCPCS (J1234), CARC (CO-197) and
 # NPIs (caught by _LONGNUM) all survive as training signal.
 _MEMBER_ALNUM = re.compile(
-    r"\b(?=[A-Z0-9]{8,20}\b)(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{8,20}\b"
+    r"\b(?=[A-Z0-9]{8,20}\b)(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{8,20}\b",
+    re.IGNORECASE,
 )
 # Authorization / reference numbers (AUTH-555, CASE-1234). 4+ letter prefix so
 # 2-3 letter form/adjustment codes survive (CO-197, UB-04, CMS-1500).
-_AUTH = re.compile(r"\b[A-Z]{4,}-\d{2,}[A-Z0-9-]*\b")
+_AUTH = re.compile(r"\b[A-Z]{4,}-\d{2,}[A-Z0-9-]*\b", re.IGNORECASE)
 # Ages: capture the number, aggregate to "90+" only when >= 90 (Safe Harbor).
 _AGE = re.compile(
     r"\b(\d{2,3})(\s*-?\s*(?:years?|yrs?|y[/.]?o|yo)\b(?:\s*old)?)"
@@ -241,11 +249,31 @@ def redact_text(text: str | None, known: list, use_ner: bool = False) -> str | N
     return out
 
 
+# Residual detectors that are deliberately BROADER than (and independent of)
+# the redaction patterns. Scanning redacted text with the same regexes that
+# just ran can only ever find ordering bugs, never a pattern gap — so these
+# over-match on purpose; they feed a fail-closed gate and a review list, not a
+# substitution.
+_RESIDUAL_DATE = re.compile(
+    rf"\b(?:\d{{1,2}}[/.-]\d{{1,2}}[/.-]\d{{2,4}}|\d{{4}}-\d{{1,2}}-\d{{1,2}}|\d{{1,2}}/\d{{4}}"
+    rf"|{_MONTHS}[\s-]+\d{{1,2}}(?:st|nd|rd|th)?,?[\s-]+\d{{2,4}}"
+    rf"|\d{{1,2}}(?:st|nd|rd|th)?[\s-]+(?:of\s+)?{_MONTHS},?[\s-]+\d{{2,4}}"
+    rf"|{_MONTHS},?\s+\d{{4}})\b",
+    re.IGNORECASE,
+)
+_RESIDUAL_ZIP = re.compile(r"\b\d{5}(?:-\d{4})?\b(?!\.\d)")  # any 5-digit run incl. ZIP+4
+_RESIDUAL_ALNUM_ID = re.compile(
+    r"\b(?=[A-Za-z0-9-]{7,24}\b)(?=[A-Za-z0-9-]*[A-Za-z])(?=[A-Za-z0-9-]*\d)[A-Za-z0-9-]{7,24}\b"
+)
+
+
 def scan_residual(text: str | None) -> dict:
     """Flag anything that still looks like PHI after redaction — for the validation
-    report. Formatted leaks are bugs to fix; candidate names are a human review
-    list (mostly benign terms like payer names, but a missed patient name shows
-    here too)."""
+    report and the export's fail-closed gate. Formatted leaks are bugs to fix;
+    candidate names are a human review list (mostly benign terms like payer
+    names, but a missed patient name shows here too). Uses detectors that are
+    intentionally broader than the redaction patterns, so a gap in those shows
+    up here instead of passing silently."""
     if not text:
         return {}
     flags: dict = {}
@@ -258,6 +286,9 @@ def scan_residual(text: str | None) -> dict:
         ("auth_ref", _AUTH),
         ("mbi", _MBI),
         ("member_alnum", _MEMBER_ALNUM),
+        ("date", _RESIDUAL_DATE),
+        ("zip_like", _RESIDUAL_ZIP),
+        ("alnum_id_like", _RESIDUAL_ALNUM_ID),
     ):
         count = len(pat.findall(text))
         if count:

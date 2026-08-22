@@ -173,3 +173,26 @@ def test_ner_keeps_rarc_codes():
     out = redact_text("CARC CO-50 with RARC N115, M76, and MA13 denied John Roe.", [], use_ner=True)
     assert "N115" in out and "M76" in out and "MA13" in out and "CO-50" in out
     assert "John Roe" not in out
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["seen 15-Mar-2026", "seen Mar-15-2026", "since 03/2026", "since May 2026", "on 15 Mar 26"],
+)
+def test_date_variants_are_redacted_or_flagged(text):
+    """Audit MED-15: these spellings previously survived both redaction and the
+    residual scan. Whichever layer catches them, none may pass silently."""
+    out = redact_text(text, known=[])
+    assert "2026" not in out or scan_residual(out).get("date")
+
+
+def test_mixed_case_member_and_auth_ids_are_redacted():
+    out = redact_text("member w1a2b3c4d auth ref Auth-55512", known=[])
+    assert "w1a2b3c4d" not in out and "Auth-55512" not in out
+
+
+def test_residual_scanner_is_broader_than_redactor():
+    # A bare ZIP is not redacted (5-digit runs are CPT codes too) but the
+    # independent residual detector must still raise it for review.
+    out = redact_text("ZIP: 90210", known=[])
+    assert scan_residual(out).get("zip_like")
