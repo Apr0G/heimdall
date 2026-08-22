@@ -7,7 +7,7 @@ from app.services.analysis import never_appealable_codes, probability_band
 
 
 def test_prompt_version_is_pinned():
-    assert analysis_prompt.VERSION == "analyze_v5"
+    assert analysis_prompt.VERSION == "analyze_v6"
 
 
 def test_probability_band_thresholds():

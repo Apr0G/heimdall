@@ -10,6 +10,7 @@ active, from repo root:
 """
 
 import asyncio
+import os
 import sys
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -20,6 +21,34 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 from sqlalchemy import select  # noqa: E402
 
 from app.db.session import AsyncSessionLocal, engine  # noqa: E402
+
+# --- local-database guard (audit 2026-08-21 LOW-16) ---------------------------
+# Same refusal show_cases.py applies to its READ path; a WRITE path needs it
+# more. RDS is private and these scripts aren't in the image, so this is
+# belt-and-braces against a mis-pointed DATABASE_URL on a laptop that has a
+# tunnel open.
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "db", "postgres", ""}
+
+
+def _assert_local_database() -> None:
+    from urllib.parse import urlsplit
+
+    from app.core.config import settings  # noqa: E402
+
+    if os.environ.get("ALLOW_REMOTE_DB") == "1":
+        print(
+            "WARNING: ALLOW_REMOTE_DB=1 — writing to a non-local database.",
+            file=sys.stderr,
+        )
+        return
+    host = (urlsplit(settings.database_url).hostname or "").lower()
+    if host not in _LOCAL_HOSTS:
+        raise SystemExit(
+            f"Refusing to run: DATABASE_URL points at a non-local host ({host!r}). "
+            "This script WRITES seed data. Set ALLOW_REMOTE_DB=1 only if you really mean it."
+        )
+
+
 from app.models import Analysis, Case, Extraction, Outcome, Practice, User  # noqa: E402
 
 TODAY = date.today()
@@ -107,8 +136,12 @@ DEMO_CASES = [
 
 
 async def seed() -> None:
+    _assert_local_database()
     async with AsyncSessionLocal() as session:
-        practice = await session.scalar(select(Practice).order_by(Practice.created_at).limit(1))
+        # Explicit target only — "oldest practice" would be a real customer in
+        # any shared database. SEED_PRACTICE_NAME matches seed_dev.py's default.
+        practice_name = os.getenv("SEED_PRACTICE_NAME", "Test Family Practice")
+        practice = await session.scalar(select(Practice).where(Practice.name == practice_name))
         user = (
             await session.scalar(
                 select(User).where(User.practice_id == practice.id).order_by(User.created_at)

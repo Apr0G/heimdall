@@ -29,7 +29,7 @@ def _draft(**overrides) -> dict:
 
 
 def test_prompt_version_is_pinned():
-    assert letter_prompt.VERSION == "letter_v4"
+    assert letter_prompt.VERSION == "letter_v5"
 
 
 def test_unknown_appeal_type_normalized():

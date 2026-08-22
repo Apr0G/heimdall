@@ -20,6 +20,34 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 from sqlalchemy import select  # noqa: E402
 
 from app.db.session import AsyncSessionLocal, engine  # noqa: E402
+
+# --- local-database guard (audit 2026-08-21 LOW-16) ---------------------------
+# Same refusal show_cases.py applies to its READ path; a WRITE path needs it
+# more. RDS is private and these scripts aren't in the image, so this is
+# belt-and-braces against a mis-pointed DATABASE_URL on a laptop that has a
+# tunnel open.
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "db", "postgres", ""}
+
+
+def _assert_local_database() -> None:
+    from urllib.parse import urlsplit
+
+    from app.core.config import settings  # noqa: E402
+
+    if os.environ.get("ALLOW_REMOTE_DB") == "1":
+        print(
+            "WARNING: ALLOW_REMOTE_DB=1 — writing to a non-local database.",
+            file=sys.stderr,
+        )
+        return
+    host = (urlsplit(settings.database_url).hostname or "").lower()
+    if host not in _LOCAL_HOSTS:
+        raise SystemExit(
+            f"Refusing to run: DATABASE_URL points at a non-local host ({host!r}). "
+            "This script WRITES seed data. Set ALLOW_REMOTE_DB=1 only if you really mean it."
+        )
+
+
 from app.models import Practice, User  # noqa: E402
 
 SEED_USERS = [
@@ -39,6 +67,7 @@ SEED_USERS = [
 
 
 async def seed() -> None:
+    _assert_local_database()
     practice_name = os.getenv("SEED_PRACTICE_NAME", "Test Family Practice")
 
     async with AsyncSessionLocal() as session:
@@ -77,10 +106,14 @@ async def seed() -> None:
                     )
                 )
                 user_actions.append((u["email"], "created"))
+            elif existing.practice_id != practice.id:
+                # Never move a user between practices or overwrite a real
+                # Cognito identity from a seed script — that's a tenancy rebind.
+                user_actions.append((u["email"], "skipped: belongs to another practice"))
+            elif existing.cognito_sub.startswith("seed-pending"):
+                user_actions.append((u["email"], "exists"))
             else:
-                existing.practice_id = practice.id
-                existing.cognito_sub = u["cognito_sub"]
-                user_actions.append((u["email"], "updated"))
+                user_actions.append((u["email"], "exists (real cognito_sub kept)"))
 
         await session.commit()
         practice_id = practice.id

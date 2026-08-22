@@ -1,9 +1,9 @@
 import json
 
-from app.prompts.text import CLINICAL_MAX_CHARS, prepare
+from app.prompts.text import CLINICAL_MAX_CHARS, prepare, prepare_json_text
 
 # Bump VERSION on ANY change to the prompt text or schema. model_runs records it.
-VERSION = "analyze_v5"
+VERSION = "analyze_v6"
 
 SYSTEM = """You are a medical claims appeals analyst. Given structured extraction \
 data from a denied claim plus the clinical notes, you classify the denial, judge \
@@ -75,7 +75,7 @@ def build_user_prompt(
 ) -> str:
     prompt = (
         "=== EXTRACTED CLAIM DATA (JSON) ===\n"
-        f"{json.dumps(extraction_json, indent=2, default=str)}\n\n"
+        f"{json.dumps(prepare_json_text(extraction_json), indent=2, default=str)}\n\n"
         "=== CLINICAL NOTES ===\n"
         f"{prepare(clinical_text, max_chars=CLINICAL_MAX_CHARS)}\n"
     )

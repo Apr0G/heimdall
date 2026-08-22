@@ -52,6 +52,20 @@ def prepare(text: str | None, *, max_chars: int = DEFAULT_MAX_CHARS) -> str:
     return cleaned[:max_chars] + TRUNCATION_MARKER
 
 
+def prepare_json_text(value, *, max_chars: int = DEFAULT_MAX_CHARS):
+    """Recursively run `prepare` over every string inside a dict/list that is
+    about to be json.dumps'd into a prompt. Model-derived JSON (extraction,
+    analysis) carries free text the model wrote FROM an untrusted document, so
+    it gets the same fence-strip and length bound as raw document text."""
+    if isinstance(value, str):
+        return prepare(value, max_chars=max_chars)
+    if isinstance(value, dict):
+        return {k: prepare_json_text(v, max_chars=max_chars) for k, v in value.items()}
+    if isinstance(value, list):
+        return [prepare_json_text(v, max_chars=max_chars) for v in value]
+    return value
+
+
 def was_truncated(*sections: str) -> bool:
     """Whether any prepared section was shortened — recorded on the model_run."""
     return any(TRUNCATION_MARKER in section for section in sections)

@@ -102,6 +102,10 @@ async def main() -> None:
 
     # S3 first (rows carry no S3 pointers we still need after this).
     s3_deleted = s3_purge.delete_all_versions(s3, bucket, f"practices/{pid}/")
+    # Uploads that never reached create_case have no documents row and live only
+    # under the practice's tmp prefix (1-day lifecycle, but the attestation must
+    # not depend on a lifecycle rule firing).
+    s3_deleted += s3_purge.delete_all_versions(s3, bucket, f"tmp-uploads/{pid}/")
     for run_id in run_ids:
         s3_deleted += s3_purge.delete_all_versions(s3, bucket, f"model_runs/{run_id}/")
 
@@ -109,6 +113,7 @@ async def main() -> None:
     # an incomplete purge stops being fixable the moment they are gone. This is a
     # contractual destruction under a BAA; the attestation must be true.
     s3_purge.assert_prefix_empty(s3, bucket, f"practices/{pid}/")
+    s3_purge.assert_prefix_empty(s3, bucket, f"tmp-uploads/{pid}/")
     for run_id in run_ids:
         s3_purge.assert_prefix_empty(s3, bucket, f"model_runs/{run_id}/")
 

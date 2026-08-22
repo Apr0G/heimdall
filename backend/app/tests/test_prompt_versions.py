@@ -19,8 +19,8 @@ def _digest(system: str, user: str) -> str:
 PINNED = {
     # (VERSION, digest of SYSTEM + build_user_prompt on fixed inputs)
     "extraction": ("extract_v3", "54e1e3ca74c814dd"),
-    "analysis": ("analyze_v5", "9496bdb547376b9a"),
-    "letter": ("letter_v4", "d01604c786b394e1"),
+    "analysis": ("analyze_v6", "9496bdb547376b9a"),
+    "letter": ("letter_v5", "d01604c786b394e1"),
 }
 
 
@@ -37,7 +37,10 @@ def test_analysis_prompt_text_matches_version():
     version, digest = PINNED["analysis"]
     assert analysis_prompt.VERSION == version
     assert (
-        _digest(analysis_prompt.SYSTEM, analysis_prompt.build_user_prompt({"a": 1}, "N", "S"))
+        _digest(
+            analysis_prompt.SYSTEM,
+            analysis_prompt.build_user_prompt({"a": 1}, "N", "S"),
+        )
         == digest
     )
 

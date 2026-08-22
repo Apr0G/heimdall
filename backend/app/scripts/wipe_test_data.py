@@ -110,14 +110,17 @@ async def main() -> None:
     # delete could never have found.
     deleted = s3_purge.delete_all_versions(s3, bucket, "practices/")
     deleted += s3_purge.delete_all_versions(s3, bucket, "model_runs/")
-    # Belt and braces for any referenced key outside those prefixes (e.g. a
-    # document still sitting under tmp-uploads/ because the case never advanced).
+    # Uploads that never reached create_case: no documents row ever points at a
+    # tmp key (create_case moves the object first), so sweep the prefix itself.
+    deleted += s3_purge.delete_all_versions(s3, bucket, "tmp-uploads/")
+    # Belt and braces for any referenced key outside those prefixes.
     deleted += s3_purge.delete_all_versions_of_keys(s3, bucket, set(key_list))
 
     # Verify BEFORE truncating. The rows are the only index of these keys, so an
     # incomplete purge becomes unrecoverable the instant the tables are empty —
     # and the script would still print a destruction count that never happened.
     s3_purge.assert_prefix_empty(s3, bucket, "practices/")
+    s3_purge.assert_prefix_empty(s3, bucket, "tmp-uploads/")
     s3_purge.assert_prefix_empty(s3, bucket, "model_runs/")
 
     async with engine.begin() as conn:

@@ -1,9 +1,9 @@
 import json
 
-from app.prompts.text import CLINICAL_MAX_CHARS, prepare
+from app.prompts.text import CLINICAL_MAX_CHARS, prepare, prepare_json_text
 
 # Bump VERSION on ANY change to the prompt text or schema. model_runs records it.
-VERSION = "letter_v4"
+VERSION = "letter_v5"
 
 # How each appeal level should be named in the letter body. The body used to be
 # hardcoded as a "first-level internal appeal" regardless of what the analysis
@@ -89,9 +89,9 @@ def build_user_prompt(
         "=== PRACTICE & CLAIM HEADER (use for the header block) ===\n"
         f"{json.dumps(letterhead, indent=2, default=str)}\n\n"
         "=== EXTRACTED CLAIM DATA (JSON) ===\n"
-        f"{json.dumps(extraction_json, indent=2, default=str)}\n\n"
+        f"{json.dumps(prepare_json_text(extraction_json), indent=2, default=str)}\n\n"
         "=== DENIAL ANALYSIS (JSON) ===\n"
-        f"{json.dumps(analysis_json, indent=2, default=str)}\n\n"
+        f"{json.dumps(prepare_json_text(analysis_json), indent=2, default=str)}\n\n"
         "=== CLINICAL NOTES ===\n"
         f"{prepare(clinical_text, max_chars=CLINICAL_MAX_CHARS)}\n"
     )
