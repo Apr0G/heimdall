@@ -5,7 +5,8 @@
 # =============================================================================
 
 resource "aws_sns_topic" "leads" {
-  name = "heimdall-leads"
+  name              = "heimdall-leads"
+  kms_master_key_id = aws_kms_key.heimdall.arn
 }
 
 resource "aws_sns_topic_subscription" "leads_email" {

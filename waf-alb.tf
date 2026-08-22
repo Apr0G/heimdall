@@ -2,15 +2,19 @@
 # WAF on the backend load balancer (the ECS Express ALB). AWS managed rule sets
 # (common attacks, known-bad inputs, bad-IP reputation) + a per-IP rate limit.
 #
-# COUNT mode: it observes and logs matches but does NOT block, so it can't hurt
-# real users. After ~a day of clean metrics, flip each `count {}` to `none {}`
-# (managed rules) / `block {}` (rate limit) to start enforcing.
-#
-# The CLOUDFRONT-scoped WAF in security.tf is separate (for a future CDN) and
-# stays dormant; this REGIONAL one protects the live traffic path.
+# ENFORCING: the managed rule groups use `override_action { none {} }` and the
+# rate rule `action { block {} }`, and the ACL is associated with the ALB. A
+# managed-rule false positive therefore hard-blocks a real user — check the
+# WAF sampled requests before tightening further. (Flipped from COUNT after a
+# day of clean samples; a dormant CLOUDFRONT-scoped ACL that used to live in
+# security.tf was destroyed 2026-08-20.)
 # =============================================================================
 
 variable "alb_arn" {
+  # ECS Express creates the ALB inside its CloudFormation stack and exports
+  # only the endpoint, so the ARN (random suffix included) has to be supplied.
+  # If Express ever replaces the ALB this must be updated or the new ALB is
+  # unprotected — `aws elbv2 describe-load-balancers` is the check.
   description = "ARN of the ECS Express application load balancer to protect."
   type        = string
   default     = "arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/app/ecs-express-gateway-alb-00000000/0000000000000000"

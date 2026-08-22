@@ -5,8 +5,8 @@ name: check-integrity
 # (or schedule via cron). Runs on the app task def (heimdall_app, read-only).
 on:
   workflow_dispatch:
-  # schedule:
-  #   - cron: "0 6 * * 1"  # weekly, uncomment to enable
+  schedule:
+    - cron: "0 6 * * 1" # weekly — §164.312(c) needs a defined cadence, not a memory
 
 permissions:
   id-token: write

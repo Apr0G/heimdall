@@ -13,7 +13,8 @@ variable "alert_email" {
 }
 
 resource "aws_sns_topic" "alerts" {
-  name = "heimdall-alerts"
+  name              = "heimdall-alerts"
+  kms_master_key_id = aws_kms_key.heimdall.arn
 }
 
 resource "aws_sns_topic_subscription" "alerts_email" {

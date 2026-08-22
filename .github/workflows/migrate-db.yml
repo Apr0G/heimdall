@@ -5,6 +5,15 @@ name: migrate-db
 # trigger only. Keyless via GitHub OIDC.
 on:
   workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "migrate" to confirm running alembic upgrade head against production'
+        required: true
+        default: ""
+      reason:
+        description: "Why (recorded in the run + deployment record)"
+        required: true
+        default: ""
 
 permissions:
   id-token: write
@@ -13,7 +22,17 @@ permissions:
 jobs:
   migrate:
     runs-on: ubuntu-latest
+    # Deployment record for attribution; the OIDC trust policy accepts this subject.
+    environment: production-destructive
     steps:
+      - name: Check confirmation
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          REASON: ${{ inputs.reason }}
+        run: |
+          if [ "$CONFIRM" != "migrate" ]; then echo 'Type "migrate" to confirm.'; exit 1; fi
+          if [ -z "$REASON" ]; then echo "A reason is required."; exit 1; fi
+          echo "Reason: $REASON"
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::000000000000:role/heimdall-gha-deploy

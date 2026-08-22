@@ -102,21 +102,20 @@ resource "aws_iam_role" "gha_deploy" {
         #   ref:refs/heads/main            — deploy, migrate, export, integrity.
         #   environment:<destructive env>  — wipe-test-data and dispose-practice.
         #
-        # A GitHub `environment:` REPLACES the ref in the sub claim, which is why
-        # the destructive workflows could not previously have required-reviewer
-        # gates: adding one broke role assumption outright. Listing both subjects
-        # removes that forced tradeoff. This does NOT loosen the branch
-        # restriction — a workflow run from a non-main branch without the
-        # environment still matches neither pattern.
+        # A GitHub `environment:` REPLACES the ref in the sub claim, so the second
+        # subject alone would accept an environment-scoped job from ANY branch.
+        # job_workflow_ref keeps the ref even then, so pinning it to @main is what
+        # actually restricts the branch for both subjects (audit 2026-08-21 LOW-31).
         #
         # ORDERING: apply this BEFORE the workflows start requesting the
-        # environment, and create the environment (with required reviewers) in the
-        # repo settings, or the destructive workflows will fail to assume the role.
+        # environment, and create the environment in the repo settings, or the
+        # destructive workflows will fail to assume the role.
         StringLike = {
           "token.actions.githubusercontent.com:sub" = [
             "repo:${var.github_repo}:ref:refs/heads/main",
             "repo:${var.github_repo}:environment:${var.destructive_environment}",
           ]
+          "token.actions.githubusercontent.com:job_workflow_ref" = "${var.github_repo}/.github/workflows/*@refs/heads/main"
         }
       }
     }]

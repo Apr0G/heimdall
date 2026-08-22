@@ -49,3 +49,17 @@ repos:
         language: system
         files: ^frontend/.*\.(ts|tsx)$
         pass_filenames: false
+      - id: pytest
+        name: pytest (backend, unit)
+        # Same gate the frontend already has: a tenant-filter change can't be
+        # committed with the suite red. Integration tests skip without a DB.
+        entry: bash -c 'cd backend && .venv/bin/python -m pytest app/tests -q -p no:cacheprovider'
+        language: system
+        files: ^backend/.*\.py$
+        pass_filenames: false
+      - id: terraform-fmt
+        name: terraform fmt -check
+        entry: terraform fmt -check -recursive
+        language: system
+        files: \.tf$
+        pass_filenames: false

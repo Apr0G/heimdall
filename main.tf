@@ -45,6 +45,15 @@ resource "aws_kms_key" "heimdall" {
         Resource  = "*"
       },
       {
+        # Encrypted SNS topics: the services that PUBLISH to them need the key
+        # (CloudWatch alarms -> heimdall-alerts, SES notifications -> same).
+        Sid       = "AllowSnsPublishers"
+        Effect    = "Allow"
+        Principal = { Service = ["cloudwatch.amazonaws.com", "ses.amazonaws.com", "sns.amazonaws.com"] }
+        Action    = ["kms:Decrypt", "kms:GenerateDataKey*"]
+        Resource  = "*"
+      },
+      {
         Sid       = "AllowCloudWatchLogs"
         Effect    = "Allow"
         Principal = { Service = "logs.us-east-1.amazonaws.com" }
@@ -108,7 +117,7 @@ resource "aws_s3_bucket_cors_configuration" "documents" {
 
   cors_rule {
     allowed_methods = ["PUT", "GET", "HEAD"]
-    allowed_origins = distinct(["http://localhost:3000", var.frontend_url])
+    allowed_origins = distinct(concat(var.dev_cors_origins, [var.frontend_url]))
     allowed_headers = ["*"]
     expose_headers  = ["ETag"]
     max_age_seconds = 3000
@@ -142,6 +151,12 @@ resource "aws_db_instance" "heimdall" {
 }
 
 # --- Cognito: user login for your app ---
+variable "dev_cors_origins" {
+  description = "Extra browser origins allowed to PUT to the documents bucket (local dev only, e.g. [\"http://localhost:3000\"]). Empty in production."
+  type        = list(string)
+  default     = []
+}
+
 variable "cognito_mfa" {
   description = "Cognito MFA mode. TOTP is REQUIRED (ON) — users without MFA enroll via QR on next login. The login+enrollment flow is verified in prod, so ON is the default; do not weaken to OPTIONAL/OFF for a PHI system."
   type        = string
@@ -229,12 +244,22 @@ resource "aws_cognito_user_pool_client" "heimdall" {
   name         = "heimdall-app-client"
   user_pool_id = aws_cognito_user_pool.heimdall.id
 
-  # Backend brokers login via Cognito InitiateAuth (USER_PASSWORD_AUTH); refresh
-  # for token renewal. Required for Phase 3 login to work.
+  # Backend brokers login via Cognito InitiateAuth (USER_PASSWORD_AUTH). Cognito
+  # insists on ALLOW_REFRESH_TOKEN_AUTH being present, but the API never calls
+  # it and discards the refresh token — so its lifetime is pinned to the
+  # minimum instead of the 30-day default, and the access token to one hour.
   explicit_auth_flows = [
     "ALLOW_USER_PASSWORD_AUTH",
     "ALLOW_REFRESH_TOKEN_AUTH",
   ]
+  access_token_validity  = 60
+  id_token_validity      = 60
+  refresh_token_validity = 60 # minutes — unused by the app; shortest allowed
+  token_validity_units {
+    access_token  = "minutes"
+    id_token      = "minutes"
+    refresh_token = "minutes"
+  }
 
   # Unknown users get the same error as a wrong password, and ForgotPassword for
   # an unknown address succeeds silently — so login/reset can't enumerate accounts.
