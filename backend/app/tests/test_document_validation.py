@@ -23,3 +23,20 @@ def test_prompts_carry_injection_guard():
     # Uploaded document text is untrusted; each prompt must say so.
     for system in (extraction_prompt.SYSTEM, analysis_prompt.SYSTEM, letter_prompt.SYSTEM):
         assert "UNTRUSTED" in system
+
+
+def test_malformed_pdf_raises_phi_free_domain_error():
+    # A PDF whose content stream is garbage: pypdf's own error would quote bytes
+    # of the stream; ours must carry only the parser's exception type name.
+    from app.services.document_extractor import DocumentParseError, digital_text_from_bytes
+
+    bad = (
+        b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+        b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+        b"3 0 obj<</Type/Page/Parent 2 0 R/Contents 4 0 R>>endobj\n"
+        b"4 0 obj<</Length 30>>stream\nBT (Jane Doe) Tj ) ) garbage\nendstream\nendobj\n"
+        b"trailer<</Root 1 0 R>>"
+    )
+    with pytest.raises(DocumentParseError) as info:
+        digital_text_from_bytes(bad)
+    assert "Jane" not in str(info.value)

@@ -33,6 +33,14 @@ def _redact(value: object) -> object:
 # messages are the one part of a traceback that can carry arbitrary payload data.
 _MAX_EXC_MESSAGE = 200
 
+# Only exceptions from these module prefixes get their message emitted at all.
+# Our own exceptions are written to be PHI-free; AWS/HTTP client errors carry
+# service error text. Everything else — parsers in particular — may quote the
+# input it choked on (pypdf embeds 80 bytes of the decompressed content stream,
+# pydantic echoes field values, json echoes the document snippet), and for those
+# the type name plus the frame list is all a debugger gets.
+_MESSAGE_ALLOWED_MODULES = ("app.", "botocore.", "boto3.", "httpx.", "asyncio.", "builtins")
+
 
 def _safe_exception(exc_info) -> dict[str, object]:
     """Render an exception as structured, PHI-bounded fields.
@@ -51,9 +59,13 @@ def _safe_exception(exc_info) -> dict[str, object]:
     frames = [
         f"{frame.filename}:{frame.lineno} in {frame.name}" for frame in traceback.extract_tb(exc_tb)
     ]
-    message = str(exc_value) if exc_value is not None else ""
-    if len(message) > _MAX_EXC_MESSAGE:
-        message = message[:_MAX_EXC_MESSAGE] + "...[truncated]"
+    module = getattr(exc_type, "__module__", "") or ""
+    if exc_value is None or not module.startswith(_MESSAGE_ALLOWED_MODULES):
+        message = "" if exc_value is None else "[message withheld: untrusted exception source]"
+    else:
+        message = str(exc_value)
+        if len(message) > _MAX_EXC_MESSAGE:
+            message = message[:_MAX_EXC_MESSAGE] + "...[truncated]"
     return {
         "type": getattr(exc_type, "__name__", str(exc_type)),
         "message": _redact(message),

@@ -92,13 +92,24 @@ def assert_page_count(reader: PdfReader) -> int:
     return pages
 
 
+class DocumentParseError(Exception):
+    """A PDF the parser couldn't read. Deliberately carries NO detail from the
+    parser: pypdf's own messages quote bytes of the (decompressed) content
+    stream, i.e. document text, and exception messages reach the logs."""
+
+
 def digital_text_from_bytes(data: bytes) -> str | None:
     """Return embedded PDF text from raw bytes, or None if the PDF looks scanned
     (and so needs OCR). The caller downloads once and hashes the same bytes."""
     _assert_pdf(data)
-    reader = PdfReader(io.BytesIO(data))
-    assert_page_count(reader)
-    text = "\n".join((page.extract_text() or "") for page in reader.pages).strip()
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        assert_page_count(reader)
+        text = "\n".join((page.extract_text() or "") for page in reader.pages).strip()
+    except TooManyPagesError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — any parser failure; detail intentionally dropped
+        raise DocumentParseError(type(exc).__name__) from None
     return text if len(text) >= MIN_DIGITAL_CHARS else None
 
 
