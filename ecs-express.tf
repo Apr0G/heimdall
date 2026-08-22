@@ -326,7 +326,6 @@ resource "aws_cloudformation_stack" "express" {
               { Name = "APP_ENV", Value = "production" },
               { Name = "AWS_REGION", Value = "us-east-1" },
               { Name = "S3_BUCKET_NAME", Value = aws_s3_bucket.documents.bucket },
-              { Name = "KMS_KEY_ALIAS", Value = aws_kms_alias.heimdall.name },
               { Name = "COGNITO_USER_POOL_ID", Value = aws_cognito_user_pool.heimdall.id },
               { Name = "COGNITO_CLIENT_ID", Value = aws_cognito_user_pool_client.heimdall.id },
               { Name = "COGNITO_REGION", Value = "us-east-1" },

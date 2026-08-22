@@ -27,11 +27,11 @@ The practice reviews, downloads, and submits it themselves, then logs the outcom
   **only from the backend**. Every call writes a `model_runs` row (provider,
   model id, prompt version, tokens, latency).
 - **OCR** — AWS Textract for scanned PDFs (digital PDFs use `pypdf`).
-- **Auth** — AWS Cognito (login only; users are created manually in Cognito).
+- **Auth** — AWS Cognito, TOTP MFA required. No self-signup; admins invite users from `/admin/users` (temporary password by email). Self-service password reset and authenticator recovery via emailed codes.
 - **Background work** — FastAPI `BackgroundTasks` running the pipeline in
   `backend/app/services/pipeline.py`.
 
-Full design and the phased build plan live in `docs/`.
+Runbook: `DEPLOY.md`. Security posture: `SECURITY.md`, `HIPAA-READINESS.md`, `HIPAA-SERVICE-INVENTORY.md`.
 
 ---
 
@@ -39,7 +39,7 @@ Full design and the phased build plan live in `docs/`.
 
 - **Python 3.11** and **Node 20**
   (3.11 is what the Dockerfile builds and what CI runs.)
-- An **AWS account** with these already provisioned (see `docs/` for details):
+- An **AWS account** with these already provisioned (all created by the Terraform at the repo root — see `DEPLOY.md`):
   RDS PostgreSQL, an S3 bucket, a Cognito user pool + app client, Bedrock model
   access (an inference profile), Textract, and a KMS key.
 - AWS credentials available to the default boto3 chain (e.g. `aws configure`).
@@ -68,12 +68,11 @@ uvicorn app.main:app --reload   # serves http://localhost:8000
 
 Health check: `curl http://localhost:8000/healthz` → `{"status":"ok"}`.
 
-**`backend/.env.local`** (mirrors `.env.example`):
+**`.env.local` at the repo root** (mirrors `.env.example`; `core/config.py` reads the repo root, not `backend/`):
 
 ```
 AWS_REGION=us-east-1
 S3_BUCKET_NAME=
-KMS_KEY_ALIAS=alias/heimdall
 
 DATABASE_URL=postgresql+asyncpg://USER:PASSWORD@HOST:5432/DBNAME
 
@@ -105,8 +104,8 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:8000   # defaults to this if unset
 
 ### 3. Log in
 
-Open http://localhost:3000 and sign in with a user you created in your Cognito
-pool. There is no sign-up flow by design — users are provisioned manually.
+Open http://localhost:3000 and sign in with a user an admin invited (or one you
+created via the `provision-user` workflow). There is no sign-up flow by design.
 
 ---
 
@@ -161,6 +160,6 @@ heimdall/
       prompts/    # one module per prompt with a VERSION constant
       tests/
     alembic/      # migrations
-  docs/         # design docs, full spec, domain reference
+  docs/         # policies, prior audit reports, pitch deck, research
   scripts/      # seed_dev.py, seed_case.py, make_fixtures.py
 ```

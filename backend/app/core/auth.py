@@ -248,8 +248,8 @@ def role_allowed(role: str | None, allowed: tuple[str, ...]) -> bool:
 def require_role(*allowed: str):
     """Dependency factory for role-gated endpoints, e.g.
     `Depends(require_role("admin"))`. Server-side RBAC — hiding a button is not
-    security. Non-breaking: no existing route uses it; attach to new privileged
-    routes as they are introduced (roles: doctor, office_manager, admin)."""
+    security. Used by api/admin.py and api/admin_users.py; attach it to any new
+    privileged route (roles: doctor, office_manager, admin)."""
 
     async def _dep(user: User = Depends(get_current_user)) -> User:
         if not role_allowed(user.role, allowed):
