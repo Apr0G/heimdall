@@ -1,6 +1,9 @@
+# syntax=docker/dockerfile:1.7
 # Backend image for Amazon ECS Express Mode. Built by GitHub Actions and pushed
 # to ECR (no local Docker needed). Runs uvicorn on 8080; health at /healthz.
-FROM python:3.11-slim
+# Pinned by digest so the OS/interpreter layer is the same on every build of a
+# commit. Bump deliberately: `docker buildx imagetools inspect python:3.11-slim`.
+FROM python:3.11-slim@sha256:9c900dea9e8fb7e16277c179b555cc72d29a352dbc33cff48ad5a0412fd5bfc7
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -33,7 +36,11 @@ COPY deid.lock ./
 # `ADD` fetches remote files as mode 0600 owned by root; the non-root appuser (set
 # below) loads this at import time in db/session.py, so make the (public) CA bundle
 # world-readable — otherwise startup dies with PermissionError and ECS rolls back.
-ADD https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /app/rds-ca.pem
+# Checksum-verified: this file is the verify-full trust anchor for DB TLS, so a
+# substituted download must fail the build, not silently trust a foreign CA.
+# Refresh the hash when AWS rotates the bundle (the build will tell you).
+ADD --checksum=sha256:e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3 \
+    https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /app/rds-ca.pem
 RUN chmod 0644 /app/rds-ca.pem
 
 # Run as a non-root user (least privilege). The app writes nothing to disk (S3 +
