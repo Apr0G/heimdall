@@ -85,11 +85,30 @@ async def _get_target(session: AsyncSession, user_id: UUID) -> tuple[User, Pract
     return row[0], row[1]
 
 
+async def _audit_list_view(
+    session: AsyncSession, request: Request, admin: User, resource_type: str
+) -> None:
+    """Cross-practice reads are the exception to hard rule 3; like the admin
+    overview, every one leaves a row saying who enumerated what, and when."""
+    await log_audit(
+        session,
+        action="admin_list_view",
+        resource_type=resource_type,
+        user_id=admin.id,
+        practice_id=admin.practice_id,
+        ip=safe_ip(client_ip(request)),
+        user_agent=request.headers.get("user-agent"),
+    )
+    await session.commit()
+
+
 @router.get("/users", response_model=AdminUsersResponse)
 async def list_users(
+    request: Request,
     current_user: User = Depends(require_admin),
     session: AsyncSession = Depends(get_db),
 ) -> AdminUsersResponse:
+    await _audit_list_view(session, request, current_user, "user_list")
     rows = (
         await session.execute(
             select(User, Practice.name)
@@ -273,9 +292,11 @@ async def _get_request(session: AsyncSession, request_id: UUID):
 
 @router.get("/deactivation-requests", response_model=list[AdminDeactivationRequestItem])
 async def list_deactivation_requests(
+    request: Request,
     current_user: User = Depends(require_admin),
     session: AsyncSession = Depends(get_db),
 ) -> list[AdminDeactivationRequestItem]:
+    await _audit_list_view(session, request, current_user, "deactivation_request_list")
     rows = (
         await session.execute(
             select(DeactivationRequest, User, Practice.name)

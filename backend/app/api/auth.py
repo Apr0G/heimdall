@@ -41,6 +41,7 @@ from app.schemas.auth import (
 from app.services.audit import log_audit, safe_ip
 from app.services.cognito import (
     CognitoError,
+    IdentityResetIncomplete,
     InvalidCredentialsError,
     PasswordPolicyError,
     RateLimitedError,
@@ -57,6 +58,7 @@ from app.services.cognito import (
     start_mfa_setup,
 )
 from app.services.mailer import MailError, send_email
+from app.services.provisioning import RESET_PENDING_PREFIX
 from app.services.recovery_codes import issue_code, verify_code
 from app.services.users import link_user_on_login
 
@@ -420,7 +422,7 @@ async def mfa_recover_start(
     # Each start consumes an attempt: a correct password still shouldn't let
     # anyone flood a mailbox with codes.
     await run_in_threadpool(register_login_failure, throttle_key)
-    code = issue_code(email)
+    code = await run_in_threadpool(issue_code, email)
     text, html = _recovery_email(code)
     try:
         await run_in_threadpool(
@@ -472,7 +474,7 @@ async def mfa_recover_complete(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="There's no authenticator on this account yet - just sign in to set one up.",
         )
-    if not verify_code(email, body.code.strip()):
+    if not await run_in_threadpool(verify_code, email, body.code.strip()):
         await _record_auth_failure(session, request, throttle_key)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -488,6 +490,32 @@ async def mfa_recover_complete(
         )
     try:
         new_sub = await run_in_threadpool(admin_recreate_user, email, body.password)
+    except IdentityResetIncomplete as exc:
+        # The old identity is gone and the new one couldn't be finished. Mark the
+        # row so an admin re-invite is allowed to rebind it (provisioning checks
+        # for this prefix), audit it, and tell the user exactly what to do.
+        user.cognito_sub = f"{RESET_PENDING_PREFIX}{user.cognito_sub}"
+        user.sessions_revoked_at = datetime.now(UTC)
+        user.session_keep_jti = None
+        await log_audit(
+            session,
+            action="mfa_reset_failed",
+            resource_type="user",
+            resource_id=user.id,
+            user_id=user.id,
+            practice_id=user.practice_id,
+            ip=safe_ip(client_ip(request)),
+            user_agent=request.headers.get("user-agent"),
+            metadata={"email": email, "error": str(exc)},
+        )
+        await session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                "Your sign-in was reset but couldn't be re-created. "
+                "Ask your administrator to send you a new invitation."
+            ),
+        ) from exc
     except (InvalidCredentialsError, RateLimitedError, CognitoError) as exc:
         await _record_auth_error(session, request)
         raise HTTPException(

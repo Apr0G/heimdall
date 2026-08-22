@@ -1,5 +1,7 @@
 """One-time email codes for authenticator recovery.
 
+Synchronous (redis-py); call via a threadpool from async code.
+
 Codes live in Redis in production (shared across API tasks) and in-process when
 REDIS_URL is unset (single-process dev/test only — the same split as the rate
 limiter). Only a salted SHA-256 of the code is stored, it expires on its own, a

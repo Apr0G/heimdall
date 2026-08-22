@@ -1,3 +1,4 @@
+import time
 from dataclasses import dataclass
 
 import boto3
@@ -40,6 +41,12 @@ class RateLimitedError(Exception):
 
 class CognitoError(Exception):
     """Any other Cognito failure (service error, unexpected challenge)."""
+
+
+class IdentityResetIncomplete(CognitoError):
+    """admin_recreate_user deleted the old identity but could not finish the
+    replacement after retries. The account needs an admin re-invite; the
+    caller marks the users row so the next invite may rebind it."""
 
 
 @dataclass
@@ -203,25 +210,46 @@ def admin_recreate_user(email: str, password: str) -> str:
     client = _get_client()
     try:
         client.admin_delete_user(UserPoolId=settings.cognito_user_pool_id, Username=email)
-        resp = client.admin_create_user(
-            UserPoolId=settings.cognito_user_pool_id,
-            Username=email,
-            MessageAction="SUPPRESS",  # no invite email — they keep their password
-            UserAttributes=[
-                {"Name": "email", "Value": email},
-                {"Name": "email_verified", "Value": "true"},
-            ],
-        )
-        client.admin_set_user_password(
-            UserPoolId=settings.cognito_user_pool_id,
-            Username=email,
-            Password=password,
-            Permanent=True,
-        )
     except (ClientError, BotoCoreError) as exc:
         raise _client_error(exc) from exc
-    attrs = {a["Name"]: a["Value"] for a in resp["User"]["Attributes"]}
-    return attrs["sub"]
+
+    # Past this point the old identity is gone. The remaining two calls are
+    # idempotent for our purposes (re-creating an existing user is the one
+    # failure we can recognise and continue through), so retry them rather
+    # than leave the account half-built on a transient throttle.
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            try:
+                resp = client.admin_create_user(
+                    UserPoolId=settings.cognito_user_pool_id,
+                    Username=email,
+                    MessageAction="SUPPRESS",  # no invite email — they keep their password
+                    UserAttributes=[
+                        {"Name": "email", "Value": email},
+                        {"Name": "email_verified", "Value": "true"},
+                    ],
+                )
+                sub = {a["Name"]: a["Value"] for a in resp["User"]["Attributes"]}["sub"]
+            except ClientError as exc:
+                if exc.response["Error"]["Code"] != "UsernameExistsException":
+                    raise
+                # Created on a previous attempt whose response we lost.
+                sub = client.admin_get_user(
+                    UserPoolId=settings.cognito_user_pool_id, Username=email
+                )["UserAttributes"]
+                sub = {a["Name"]: a["Value"] for a in sub}["sub"]
+            client.admin_set_user_password(
+                UserPoolId=settings.cognito_user_pool_id,
+                Username=email,
+                Password=password,
+                Permanent=True,
+            )
+            return sub
+        except (ClientError, BotoCoreError) as exc:
+            last_exc = exc
+            time.sleep(0.5 * (attempt + 1))
+    raise IdentityResetIncomplete(type(last_exc).__name__) from last_exc
 
 
 def forgot_password(email: str) -> None:

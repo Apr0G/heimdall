@@ -157,3 +157,32 @@ def test_change_password_uses_access_token(monkeypatch):
         "PreviousPassword": "Old-Horse-1!",
         "ProposedPassword": "Correct-Horse-9!",
     }
+
+
+def test_recreate_retries_create_after_delete_and_continues_through_exists(monkeypatch):
+    # Delete succeeded; first create throttled; second says "already exists"
+    # (the throttled call actually landed) → fetch the sub and set the password.
+    client = _mock_client(monkeypatch)
+    monkeypatch.setattr(cognito.time, "sleep", lambda s: None)
+    throttle = ClientError(
+        {"Error": {"Code": "TooManyRequestsException", "Message": "x"}}, "AdminCreateUser"
+    )
+    exists = ClientError(
+        {"Error": {"Code": "UsernameExistsException", "Message": "x"}}, "AdminCreateUser"
+    )
+    client.admin_create_user.side_effect = [throttle, exists]
+    client.admin_get_user.return_value = {"UserAttributes": [{"Name": "sub", "Value": "s-new"}]}
+    assert cognito.admin_recreate_user("a@b.com", "Correct-Horse-9!") == "s-new"
+    client.admin_delete_user.assert_called_once()
+    client.admin_set_user_password.assert_called_once()
+
+
+def test_recreate_gives_up_with_distinct_error(monkeypatch):
+    client = _mock_client(monkeypatch)
+    monkeypatch.setattr(cognito.time, "sleep", lambda s: None)
+    client.admin_create_user.side_effect = ClientError(
+        {"Error": {"Code": "InternalErrorException", "Message": "x"}}, "AdminCreateUser"
+    )
+    with pytest.raises(cognito.IdentityResetIncomplete):
+        cognito.admin_recreate_user("a@b.com", "Correct-Horse-9!")
+    assert client.admin_create_user.call_count == 3

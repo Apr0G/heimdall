@@ -19,6 +19,11 @@ from app.services.cognito import admin_invite
 
 ROLES = ("doctor", "office_manager", "admin")
 
+# A users row whose Cognito identity was deleted mid-authenticator-reset and
+# never re-created carries this prefix on cognito_sub; it is the ONE case where
+# an invite may rebind an existing email to a new sub.
+RESET_PENDING_PREFIX = "reset-pending:"
+
 
 class ProvisioningError(Exception):
     """A caller mistake (bad practice, conflicting email) — safe to show to an admin."""
@@ -58,9 +63,12 @@ async def invite_user(
     existing = await session.scalar(select(User).where(User.email == email))
     if existing is not None:
         if existing.cognito_sub != sub:
-            raise ProvisioningError(
-                "This email is already bound to a different sign-in identity; refusing to rebind"
-            )
+            if not existing.cognito_sub.startswith(RESET_PENDING_PREFIX):
+                raise ProvisioningError(
+                    "This email is already bound to a different sign-in identity; "
+                    "refusing to rebind"
+                )
+            existing.cognito_sub = sub  # recovery from an interrupted authenticator reset
         practice = await session.get(Practice, existing.practice_id)
         return InviteResult(existing, practice, False, False, created_cognito)
 

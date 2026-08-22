@@ -140,3 +140,28 @@ async def test_existing_email_bound_to_other_identity_is_refused(cognito):
             practice_id=None,
             practice_name="Q",
         )
+
+
+async def test_reset_pending_row_may_be_rebound(cognito):
+    # The one legitimate rebind: an authenticator reset deleted the identity and
+    # couldn't re-create it; the admin's re-invite attaches the new sub.
+    from app.services.provisioning import RESET_PENDING_PREFIX
+
+    cognito.return_value = ("sub-NEW", True)
+    practice = Practice(name="P")
+    practice.id = uuid.uuid4()
+    existing = User(
+        email="a@b.com",
+        cognito_sub=f"{RESET_PENDING_PREFIX}sub-OLD",
+        role="doctor",
+        practice_id=practice.id,
+    )
+    res = await invite_user(
+        FakeSession(existing_user=existing, practice=practice),
+        email="a@b.com",
+        role="doctor",
+        full_name=None,
+        practice_id=practice.id,
+        practice_name=None,
+    )
+    assert res.user is existing and existing.cognito_sub == "sub-NEW"

@@ -1,6 +1,7 @@
 import logging
 
 import boto3
+from botocore.config import Config
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
@@ -18,7 +19,13 @@ _sns = None
 def _sns_client():
     global _sns
     if _sns is None:
-        _sns = boto3.client("sns", region_name=settings.aws_region)
+        # Tight timeouts: this runs in the shared threadpool behind a public
+        # endpoint, so a stalled SNS must not pin workers that PHI routes need.
+        _sns = boto3.client(
+            "sns",
+            region_name=settings.aws_region,
+            config=Config(connect_timeout=5, read_timeout=15, retries={"max_attempts": 2}),
+        )
     return _sns
 
 

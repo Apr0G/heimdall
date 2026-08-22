@@ -132,3 +132,19 @@ def test_complete_cognito_failure_is_502_and_row_untouched():
     resp = client.post("/api/auth/mfa/recover/complete", json=COMPLETE)
     assert resp.status_code == 502
     assert _stubs.session.found_user.cognito_sub == "old-sub"
+
+
+def test_complete_marks_row_reset_pending_when_recreate_fails_after_delete():
+    # Old identity gone, new one couldn't be finished: the row must be flagged
+    # so an admin re-invite can rebind it, and the user told what to do.
+    from app.services.cognito import IdentityResetIncomplete
+    from app.services.provisioning import RESET_PENDING_PREFIX
+
+    auth_api.admin_recreate_user.side_effect = IdentityResetIncomplete("ClientError")
+    resp = client.post("/api/auth/mfa/recover/complete", json=COMPLETE)
+    assert resp.status_code == 502
+    assert "new invitation" in resp.json()["detail"]
+    user = _stubs.session.found_user
+    assert user.cognito_sub.startswith(RESET_PENDING_PREFIX)
+    assert user.sessions_revoked_at is not None
+    assert auth_api.log_audit.await_args.kwargs["action"] == "mfa_reset_failed"
