@@ -33,7 +33,9 @@ export default function GetStartedPage() {
       await api.post("/api/leads", values);
       setSubmitted(true);
     } catch {
-      setFormError("Something went wrong — please try again, or email us directly.");
+      setFormError(
+        "Something went wrong — please try again, or email us directly.",
+      );
     }
   };
 
@@ -48,8 +50,8 @@ export default function GetStartedPage() {
             Thanks — we&rsquo;ll be in touch soon.
           </h1>
           <p className="mt-2 leading-relaxed text-muted-foreground">
-            We&rsquo;ve got your details, and someone from Heimdall will reach out shortly to get
-            your practice set up.
+            We&rsquo;ve got your details, and someone from Heimdall will reach
+            out shortly to get your practice set up.
           </p>
         </div>
       </section>
@@ -61,18 +63,32 @@ export default function GetStartedPage() {
       <div className="rounded-xl border border-border bg-card p-8 shadow-md">
         <h1 className="text-3xl font-extrabold tracking-tight">Get started</h1>
         <p className="mt-2 text-muted-foreground">
-          Tell us a bit about your practice and we&rsquo;ll set you up. No commitment.
+          Tell us a bit about your practice and we&rsquo;ll set you up. No
+          commitment.
         </p>
-        <form onSubmit={handleSubmit(onSubmit)} className="mt-6 space-y-4" noValidate>
+        <form
+          onSubmit={handleSubmit(onSubmit)}
+          className="mt-6 space-y-4"
+          noValidate
+        >
           <div className="space-y-1.5">
             <Label htmlFor="name">Your name</Label>
             <Input id="name" autoFocus {...register("name")} />
-            {errors.name && <p className="text-sm text-destructive">{errors.name.message}</p>}
+            {errors.name && (
+              <p className="text-sm text-destructive">{errors.name.message}</p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="email">Work email</Label>
-            <Input id="email" type="email" autoComplete="email" {...register("email")} />
-            {errors.email && <p className="text-sm text-destructive">{errors.email.message}</p>}
+            <Input
+              id="email"
+              type="email"
+              autoComplete="email"
+              {...register("email")}
+            />
+            {errors.email && (
+              <p className="text-sm text-destructive">{errors.email.message}</p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="practice">About your practice</Label>
@@ -84,7 +100,9 @@ export default function GetStartedPage() {
               {...register("practice")}
             />
             {errors.practice && (
-              <p className="text-sm text-destructive">{errors.practice.message}</p>
+              <p className="text-sm text-destructive">
+                {errors.practice.message}
+              </p>
             )}
           </div>
           {formError && <p className="text-sm text-destructive">{formError}</p>}

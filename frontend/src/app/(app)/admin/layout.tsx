@@ -30,7 +30,7 @@ export default function AdminLayout({
   if (user?.role !== "admin") return null;
 
   return (
-    <main className="mx-auto max-w-6xl space-y-6 px-4 py-8">
+    <div className="mx-auto max-w-6xl space-y-6 px-4 py-8">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Admin</h1>
@@ -66,6 +66,6 @@ export default function AdminLayout({
         </nav>
       </div>
       {children}
-    </main>
+    </div>
   );
 }

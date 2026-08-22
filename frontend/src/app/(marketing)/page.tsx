@@ -52,11 +52,13 @@ export default function LandingPage() {
             Built for small US practices
           </span>
           <h1 className="mx-auto mt-5 max-w-3xl text-4xl font-extrabold tracking-tight text-balance sm:text-[52px] sm:leading-[1.03]">
-            Stop writing off <span className="text-amber-600">denied claims.</span>
+            Stop writing off{" "}
+            <span className="text-amber-600">denied claims.</span>
           </h1>
           <p className="mx-auto mt-5 max-w-xl text-lg text-muted-foreground">
-            Upload the denial, the claim, and your notes. Heimdall analyzes the denial, estimates
-            your odds, and drafts a payer-ready appeal letter — in minutes.
+            Upload the denial, the claim, and your notes. Heimdall analyzes the
+            denial, estimates your odds, and drafts a payer-ready appeal letter
+            — in minutes.
           </p>
           <div className="mt-8 flex justify-center">
             <CtaLink href="/get-started" size="lg">
@@ -78,8 +80,9 @@ export default function LandingPage() {
                 The problem
               </div>
               <p className="mt-2.5 text-base leading-relaxed">
-                Each denial eats 30–60 minutes of staff time to fight. So most small practices just
-                write them off — quietly losing revenue they&rsquo;re owed on every single one.
+                Each denial eats 30–60 minutes of staff time to fight. So most
+                small practices just write them off — quietly losing revenue
+                they&rsquo;re owed on every single one.
               </p>
             </div>
           </Reveal>
@@ -89,9 +92,9 @@ export default function LandingPage() {
                 The solution
               </div>
               <p className="mt-2.5 text-base leading-relaxed">
-                Upload three documents. Heimdall reads them, classifies the denial, estimates the
-                odds of a successful appeal, and drafts the letter — ready for your staff to review
-                and send.
+                Upload three documents. Heimdall reads them, classifies the
+                denial, estimates the odds of a successful appeal, and drafts
+                the letter — ready for your staff to review and send.
               </p>
             </div>
           </Reveal>
@@ -114,13 +117,16 @@ export default function LandingPage() {
                     {i + 1}
                   </div>
                   <h3 className="mt-3.5 text-lg font-bold">{step.title}</h3>
-                  <p className="mt-1.5 text-sm text-muted-foreground">{step.body}</p>
+                  <p className="mt-1.5 text-sm text-muted-foreground">
+                    {step.body}
+                  </p>
                 </div>
               </Reveal>
             ))}
           </div>
           <p className="mt-7 text-center text-[15px] text-muted-foreground">
-            Every clinical, financial, and submission decision stays with your practice.
+            Every clinical, financial, and submission decision stays with your
+            practice.
           </p>
         </div>
       </section>

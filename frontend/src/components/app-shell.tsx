@@ -17,8 +17,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { user, loading, logout } = useAuth();
 
-  // Safety net for when the presence cookie and the stored token disagree
-  // (e.g. token cleared out-of-band): force unauthenticated users to /login.
+  // Safety net for when the hd_authed presence flag is set but /me says the
+  // httpOnly session is already gone server-side: send them to /login.
   useEffect(() => {
     if (!loading && !user) {
       router.replace("/login");
@@ -44,7 +44,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen flex-col">
       <ReadyNotifier />
       <SiteHeader />
-      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8">{children}</main>
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8">
+        {children}
+      </main>
       <footer className="border-t">
         <div className="mx-auto max-w-6xl px-4 py-4">
           <Disclaimer />

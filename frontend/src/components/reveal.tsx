@@ -23,7 +23,9 @@ export function Reveal({
     if (!el) return;
     // Under reduced-motion, reveal as soon as any part is visible (threshold 0);
     // the CSS below drops the transition, so it appears with no animation.
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const reduce = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
     const io = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) {

@@ -22,7 +22,8 @@ export function ReadyNotifier() {
     queryFn: () => fetchProcessingIds(),
     // Poll quickly while something is processing, slowly otherwise. Keep polling
     // in the background, and refetch on return so a finish is caught right away.
-    refetchInterval: (query) => ((query.state.data?.length ?? 0) > 0 ? 3000 : 12000),
+    refetchInterval: (query) =>
+      (query.state.data?.length ?? 0) > 0 ? 3000 : 12000,
     refetchIntervalInBackground: true,
     refetchOnWindowFocus: true,
   });
@@ -59,6 +60,10 @@ async function announce(id: string, router: ReturnType<typeof useRouter>) {
   if (status === "ready") {
     notifyUntilSeen("success", `Your appeal for ${who} is ready.`, open);
   } else if (status === "error") {
-    notifyUntilSeen("error", `We couldn't process the appeal for ${who}.`, open);
+    notifyUntilSeen(
+      "error",
+      `We couldn't process the appeal for ${who}.`,
+      open,
+    );
   }
 }

@@ -32,3 +32,9 @@ jobs:
         run: cd frontend && npx tsc --noEmit -p .
       - name: Test
         run: cd frontend && npm test
+      - name: Production build
+        # A dependency bump can pass tsc + vitest and still break the compile;
+        # without this the failure only surfaces on Vercel's build of main.
+        run: cd frontend && npm run build
+        env:
+          NEXT_PUBLIC_API_BASE_URL: https://api.heimdallclaims.com

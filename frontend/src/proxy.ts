@@ -1,8 +1,17 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
+import { buildCsp } from "@/lib/csp";
+
 // Public marketing + auth routes. Everything else is app and requires login.
-const PUBLIC_PATHS = ["/", "/contact", "/terms", "/privacy", "/login", "/get-started"];
+const PUBLIC_PATHS = [
+  "/",
+  "/contact",
+  "/terms",
+  "/privacy",
+  "/login",
+  "/get-started",
+];
 
 // Presence-based route gating using the `hd_authed` cookie. The real security
 // boundary is the backend, which verifies the JWT on every API call; this only
@@ -12,7 +21,8 @@ export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const authed = request.cookies.get("hd_authed")?.value === "1";
   const isPublic = PUBLIC_PATHS.some(
-    (path) => pathname === path || (path !== "/" && pathname.startsWith(`${path}/`)),
+    (path) =>
+      pathname === path || (path !== "/" && pathname.startsWith(`${path}/`)),
   );
 
   if (!authed && !isPublic) {
@@ -28,9 +38,21 @@ export function proxy(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  return NextResponse.next();
+  // Per-request CSP nonce. Sent as a REQUEST header so Next nonces its own
+  // scripts, exposed as x-nonce for the one hand-written inline script, and
+  // echoed as the RESPONSE header the browser enforces.
+  const nonce = btoa(crypto.randomUUID());
+  const csp = buildCsp(nonce);
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-nonce", nonce);
+  requestHeaders.set("Content-Security-Policy", csp);
+  const response = NextResponse.next({ request: { headers: requestHeaders } });
+  response.headers.set("Content-Security-Policy", csp);
+  return response;
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|ico)$).*)"],
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|ico)$).*)",
+  ],
 };

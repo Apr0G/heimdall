@@ -49,7 +49,9 @@ export function useIdleLogout(timeoutMs: number, onIdle: () => void) {
     // BroadcastChannel is unavailable in some older/embedded browsers; the hook
     // degrades to per-tab behaviour rather than throwing.
     const channel =
-      typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(ACTIVITY_CHANNEL) : null;
+      typeof BroadcastChannel !== "undefined"
+        ? new BroadcastChannel(ACTIVITY_CHANNEL)
+        : null;
 
     const restart = () => {
       clearTimeout(timer);
@@ -81,8 +83,16 @@ export function useIdleLogout(timeoutMs: number, onIdle: () => void) {
       channel.onmessage = () => restart();
     }
 
-    const events = ["mousemove", "mousedown", "keydown", "scroll", "touchstart"];
-    events.forEach((e) => window.addEventListener(e, onLocalActivity, { passive: true }));
+    const events = [
+      "mousemove",
+      "mousedown",
+      "keydown",
+      "scroll",
+      "touchstart",
+    ];
+    events.forEach((e) =>
+      window.addEventListener(e, onLocalActivity, { passive: true }),
+    );
     restart();
 
     return () => {

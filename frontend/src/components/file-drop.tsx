@@ -2,10 +2,16 @@
 
 import { useRef, useState } from "react";
 
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 export type SlotStatus = "idle" | "uploading" | "done" | "error";
+
+export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // mirrors backend/app/api/cases.py
 
 export function FileDrop({
   label,
@@ -29,12 +35,24 @@ export function FileDrop({
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
 
-  function handle(files: FileList | null) {
+  async function handle(files: FileList | null) {
     const f = files?.[0];
     if (!f) return;
-    const isPdf = f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
+    const isPdf =
+      f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
     if (!isPdf) {
       onSelect(null, "Only PDF files are accepted.");
+      return;
+    }
+    // Same limits the server enforces (cases.py MAX_UPLOAD_BYTES / _assert_pdf),
+    // checked here so the user learns at selection, not after a full upload.
+    if (f.size > MAX_UPLOAD_BYTES) {
+      onSelect(null, "That file is too large (25 MB max).");
+      return;
+    }
+    const head = new Uint8Array(await f.slice(0, 5).arrayBuffer());
+    if (String.fromCharCode(...head) !== "%PDF-") {
+      onSelect(null, "That file doesn't look like a PDF.");
       return;
     }
     onSelect(f, null);
@@ -75,7 +93,9 @@ export function FileDrop({
         }}
         className={cn(
           "flex w-full flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed p-6 text-center transition-colors",
-          dragging ? "border-primary bg-muted/50" : "border-input hover:bg-muted/30",
+          dragging
+            ? "border-primary bg-muted/50"
+            : "border-input hover:bg-muted/30",
           status === "error" && "border-destructive",
         )}
       >
@@ -87,9 +107,13 @@ export function FileDrop({
           </span>
         )}
         {status === "uploading" && (
-          <span className="text-xs text-muted-foreground">Uploading… {progress}%</span>
+          <span className="text-xs text-muted-foreground">
+            Uploading… {progress}%
+          </span>
         )}
-        {status === "done" && <span className="text-xs text-emerald-600">Uploaded ✓</span>}
+        {status === "done" && (
+          <span className="text-xs text-emerald-600">Uploaded ✓</span>
+        )}
       </button>
 
       {error && <p className="text-sm text-destructive">{error}</p>}

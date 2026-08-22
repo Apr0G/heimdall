@@ -34,27 +34,37 @@ export async function createCaseWithUploads(
         headers: { "Content-Type": "application/pdf" },
         onUploadProgress: (event) => {
           if (event.total) {
-            onProgress(slot.doc_type, Math.round((event.loaded / event.total) * 100));
+            onProgress(
+              slot.doc_type,
+              Math.round((event.loaded / event.total) * 100),
+            );
           }
         },
       });
     }),
   );
 
-  const { data } = await api.post<{ id: string; status: string }>("/api/cases", {
-    documents: DOC_TYPES.map((doc) => ({
-      doc_type: doc,
-      s3_key: keyByDoc[doc],
-      filename: files[doc].name,
-    })),
-  });
+  const { data } = await api.post<{ id: string; status: string }>(
+    "/api/cases",
+    {
+      documents: DOC_TYPES.map((doc) => ({
+        doc_type: doc,
+        s3_key: keyByDoc[doc],
+        filename: files[doc].name,
+      })),
+    },
+  );
   return data;
 }
 
 // Conditional documents a doctor can add after the first review (Phase 12).
 export type AdditionalDocType = "prior_auth" | "prior_treatment";
 
-type AdditionalSlot = { doc_type: AdditionalDocType; s3_key: string; upload_url: string };
+type AdditionalSlot = {
+  doc_type: AdditionalDocType;
+  s3_key: string;
+  upload_url: string;
+};
 
 /**
  * Presign + upload the conditional documents to an existing case, then trigger
@@ -86,7 +96,10 @@ export async function reanalyzeWithUploads(
         headers: { "Content-Type": "application/pdf" },
         onUploadProgress: (event) => {
           if (event.total && onProgress) {
-            onProgress(slot.doc_type, Math.round((event.loaded / event.total) * 100));
+            onProgress(
+              slot.doc_type,
+              Math.round((event.loaded / event.total) * 100),
+            );
           }
         },
       });

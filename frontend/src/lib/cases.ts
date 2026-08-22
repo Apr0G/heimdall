@@ -150,7 +150,9 @@ export async function fetchCase(id: string): Promise<CaseDetail> {
   return res.data;
 }
 
-export async function markSubmitted(id: string): Promise<{ id: string; status: string }> {
+export async function markSubmitted(
+  id: string,
+): Promise<{ id: string; status: string }> {
   const res = await api.post(`/api/cases/${id}/mark-submitted`);
   return res.data;
 }
@@ -163,13 +165,19 @@ export async function submitOutcome(
   return res.data;
 }
 
-export async function retryCase(id: string): Promise<{ id: string; status: string }> {
+export async function retryCase(
+  id: string,
+): Promise<{ id: string; status: string }> {
   const res = await api.post(`/api/cases/${id}/retry`);
   return res.data;
 }
 
-export async function fetchDocumentDownloadUrl(documentId: string): Promise<string> {
-  const res = await api.get<{ url: string }>(`/api/documents/${documentId}/download-url`);
+export async function fetchDocumentDownloadUrl(
+  documentId: string,
+): Promise<string> {
+  const res = await api.get<{ url: string }>(
+    `/api/documents/${documentId}/download-url`,
+  );
   return res.data.url;
 }
 
@@ -199,12 +207,21 @@ export async function fetchSummary(): Promise<CaseSummary> {
 }
 
 /** Fetch the server-generated letter PDF (auth header required) and save it. */
-export async function downloadLetterPdf(id: string, filename: string): Promise<void> {
-  const res = await api.get(`/api/cases/${id}/letter.pdf`, { responseType: "blob" });
+export async function downloadLetterPdf(
+  id: string,
+  filename: string,
+): Promise<void> {
+  const res = await api.get(`/api/cases/${id}/letter.pdf`, {
+    responseType: "blob",
+  });
   const url = URL.createObjectURL(res.data as Blob);
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
+  // Attached + deferred revoke: Firefox cancels a download whose blob URL is
+  // revoked on the same tick as the click on a detached anchor.
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

@@ -10,8 +10,10 @@ function tone(token: string): CSSProperties {
   };
 }
 
-const PILL = "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold";
-const LABEL = "text-[11px] font-bold uppercase tracking-wider text-muted-foreground";
+const PILL =
+  "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold";
+const LABEL =
+  "text-[11px] font-bold uppercase tracking-wider text-muted-foreground";
 
 /** A stylized in-product preview shown in the hero — built from the app's own
  * primitives so visitors see what Heimdall does without a real screenshot. */
@@ -38,10 +40,15 @@ export function HeroPreview() {
             <div>
               <div className={LABEL}>Denial reason</div>
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                <span className="rounded-md px-2 py-0.5 text-xs font-bold" style={tone("--warn")}>
+                <span
+                  className="rounded-md px-2 py-0.5 text-xs font-bold"
+                  style={tone("--warn")}
+                >
                   CO-197
                 </span>
-                <span className="text-sm font-medium">Precertification absent</span>
+                <span className="text-sm font-medium">
+                  Precertification absent
+                </span>
               </div>
               <span className={`${PILL} mt-2`} style={tone("--ok")}>
                 ✓ Appealable
@@ -73,8 +80,8 @@ export function HeroPreview() {
               <div className="h-2 w-11/12 rounded bg-muted" />
             </div>
             <p className="mt-2.5 text-[12px] leading-relaxed text-foreground/75">
-              Per the attached operative note and CPT guidance, the service was medically necessary
-              and precertification is documented on file
+              Per the attached operative note and CPT guidance, the service was
+              medically necessary and precertification is documented on file
               <span className="ml-0.5 inline-block h-3.5 w-px translate-y-[3px] animate-pulse bg-amber-600" />
             </p>
           </div>

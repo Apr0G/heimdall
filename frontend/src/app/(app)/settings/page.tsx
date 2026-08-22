@@ -49,7 +49,7 @@ export default function SettingsPage() {
   const isAdmin = user?.role === "admin";
 
   return (
-    <main className="mx-auto max-w-2xl space-y-6 px-4 py-8">
+    <div className="mx-auto max-w-2xl space-y-6 px-4 py-8">
       <Link
         href={homePath(user?.role)}
         className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
@@ -165,7 +165,7 @@ export default function SettingsPage() {
           <DeactivationRequestCard />
         </CardContent>
       </Card>
-    </main>
+    </div>
   );
 }
 

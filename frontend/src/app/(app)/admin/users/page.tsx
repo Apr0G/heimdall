@@ -84,6 +84,7 @@ export default function AdminUsersPage() {
           variant={inviting ? "outline" : "default"}
           onClick={() => setInviting((v) => !v)}
           aria-expanded={inviting}
+          disabled={users.isLoading || users.isError}
         >
           {!inviting && <UserPlusIcon aria-hidden />}
           {inviting ? "Close" : "Invite user"}

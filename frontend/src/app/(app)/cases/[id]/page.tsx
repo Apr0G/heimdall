@@ -43,7 +43,12 @@ import {
 } from "@/lib/cases";
 import { toastError } from "@/lib/errors";
 import { CONTACT_MAILTO } from "@/lib/site";
-import { formatCents, formatDate, humanize } from "@/lib/format";
+import {
+  centsToInputString,
+  formatCents,
+  formatDate,
+  humanize,
+} from "@/lib/format";
 import { type AdditionalDocType, reanalyzeWithUploads } from "@/lib/upload";
 
 const DISCLAIMER =
@@ -58,11 +63,15 @@ const DOC_LABELS: Record<string, string> = {
 };
 
 // Conditional doc types the user can upload to trigger a re-draft (Phase 12).
-const UPLOADABLE_ADDITIONAL: AdditionalDocType[] = ["prior_auth", "prior_treatment"];
+const UPLOADABLE_ADDITIONAL: AdditionalDocType[] = [
+  "prior_auth",
+  "prior_treatment",
+];
 
 const ADDITIONAL_HINTS: Record<AdditionalDocType, string> = {
   prior_auth: "The payer's prior authorization / precertification approval.",
-  prior_treatment: "Records showing prior conservative treatment (e.g. failed step therapy).",
+  prior_treatment:
+    "Records showing prior conservative treatment (e.g. failed step therapy).",
 };
 
 export default function CaseDetailPage() {
@@ -92,11 +101,16 @@ export default function CaseDetailPage() {
     retry: 3,
   });
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["case", id] });
+  const invalidate = () =>
+    queryClient.invalidateQueries({ queryKey: ["case", id] });
 
   // When the poll shows the pipeline finished, refetch the full detail once.
   useEffect(() => {
-    if (data?.status === "processing" && statusPoll && statusPoll.status !== "processing") {
+    if (
+      data?.status === "processing" &&
+      statusPoll &&
+      statusPoll.status !== "processing"
+    ) {
       invalidate();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -113,8 +127,13 @@ export default function CaseDetailPage() {
   if (isError || !data) {
     return (
       <div className="space-y-3">
-        <p className="text-sm text-destructive">Couldn&rsquo;t load this case.</p>
-        <Link href="/dashboard" className={buttonVariants({ variant: "outline" })}>
+        <p className="text-sm text-destructive">
+          Couldn&rsquo;t load this case.
+        </p>
+        <Link
+          href="/dashboard"
+          className={buttonVariants({ variant: "outline" })}
+        >
           ← Back to appeals
         </Link>
       </div>
@@ -124,7 +143,10 @@ export default function CaseDetailPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4">
-        <Link href="/dashboard" className="text-sm text-muted-foreground hover:text-foreground">
+        <Link
+          href="/dashboard"
+          className="text-sm text-muted-foreground hover:text-foreground"
+        >
           ← Appeals
         </Link>
         <StatusBadge status={data.status} />
@@ -141,7 +163,11 @@ export default function CaseDetailPage() {
           retrying={retry.isPending}
         />
       ) : data.status === "error" ? (
-        <ErrorView message={data.error_message} onRetry={() => retry.mutate()} retrying={retry.isPending} />
+        <ErrorView
+          message={data.error_message}
+          onRetry={() => retry.mutate()}
+          retrying={retry.isPending}
+        />
       ) : (
         <>
           <HeaderCard c={data} now={now} />
@@ -198,21 +224,30 @@ function ProcessingView({
       <div className="flex flex-col items-center rounded-lg border border-border bg-card px-6 py-24 text-center shadow-sm">
         <span
           className="mb-5 flex size-[52px] items-center justify-center rounded-full text-2xl font-bold"
-          style={{ background: "color-mix(in oklab, var(--warn) 16%, var(--card))", color: "var(--warn)" }}
+          style={{
+            background: "color-mix(in oklab, var(--warn) 16%, var(--card))",
+            color: "var(--warn)",
+          }}
           aria-hidden
         >
           ⏱
         </span>
-        <div className="mb-2 text-xl font-extrabold tracking-tight">This is taking longer than expected</div>
+        <div className="mb-2 text-xl font-extrabold tracking-tight">
+          This is taking longer than expected
+        </div>
         <p className="max-w-md text-[15px] leading-relaxed text-muted-foreground">
-          Your documents are safe — nothing was lost. The analysis didn&rsquo;t finish, which can
-          happen after a system update. Retry to pick it back up.
+          Your documents are safe — nothing was lost. The analysis didn&rsquo;t
+          finish, which can happen after a system update. Retry to pick it back
+          up.
         </p>
         <div className="mt-6 flex gap-2.5">
           <Button onClick={onRetry} disabled={retrying}>
             {retrying ? "Retrying…" : "Retry"}
           </Button>
-          <a href={CONTACT_MAILTO} className={buttonVariants({ variant: "outline" })}>
+          <a
+            href={CONTACT_MAILTO}
+            className={buttonVariants({ variant: "outline" })}
+          >
             Contact support
           </a>
         </div>
@@ -222,10 +257,12 @@ function ProcessingView({
   return (
     <div className="flex flex-col items-center rounded-lg border border-border bg-card px-6 py-24 text-center shadow-sm">
       <span className="mb-6 size-11 animate-spin rounded-full border-[3px] border-border border-t-primary" />
-      <div className="mb-2 text-xl font-extrabold tracking-tight">Reading your documents…</div>
+      <div className="mb-2 text-xl font-extrabold tracking-tight">
+        Reading your documents…
+      </div>
       <p className="max-w-md text-[15px] leading-relaxed text-muted-foreground">
-        Analyzing the denial, matching CARC/RARC codes, and drafting your appeal letter. This
-        usually takes under a minute.
+        Analyzing the denial, matching CARC/RARC codes, and drafting your appeal
+        letter. This usually takes under a minute.
       </p>
       <div className="mt-6 flex flex-wrap justify-center gap-3 text-[12.5px]">
         <span className="text-ok inline-flex items-center gap-1.5">
@@ -258,7 +295,10 @@ function ErrorView({
     <div className="flex flex-col items-center rounded-lg border border-border bg-card px-6 py-24 text-center shadow-sm">
       <span
         className="mb-5 flex size-[52px] items-center justify-center rounded-full text-2xl font-bold"
-        style={{ background: "color-mix(in oklab, var(--danger) 16%, var(--card))", color: "var(--danger)" }}
+        style={{
+          background: "color-mix(in oklab, var(--danger) 16%, var(--card))",
+          color: "var(--danger)",
+        }}
         aria-hidden
       >
         !
@@ -274,7 +314,10 @@ function ErrorView({
         <Button onClick={onRetry} disabled={retrying}>
           {retrying ? "Retrying…" : "Retry"}
         </Button>
-        <a href={CONTACT_MAILTO} className={buttonVariants({ variant: "outline" })}>
+        <a
+          href={CONTACT_MAILTO}
+          className={buttonVariants({ variant: "outline" })}
+        >
           Contact support
         </a>
       </div>
@@ -282,7 +325,13 @@ function ErrorView({
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
     <div>
       <div className="text-xs text-muted-foreground">{label}</div>
@@ -316,17 +365,24 @@ function HeaderCard({ c, now }: { c: CaseDetail; now: number }) {
         </div>
         <div className="flex items-center gap-2">
           <DeadlineBadge deadline={c.appeal_deadline} now={now} />
-          <span className="text-sm text-muted-foreground">{formatDate(c.appeal_deadline)}</span>
+          <span className="text-sm text-muted-foreground">
+            {formatDate(c.appeal_deadline)}
+          </span>
         </div>
       </div>
       <div className="mt-5 grid grid-cols-2 gap-4 border-t border-border pt-[18px] sm:grid-cols-4">
         <Field label="Date of service">{formatDate(c.date_of_service)}</Field>
         <Field label="Denial date">{formatDate(c.denial_date)}</Field>
         <Field label="Billed">
-          <span className="font-mono">{formatCents(c.billed_amount_cents, c.currency)}</span>
+          <span className="font-mono">
+            {formatCents(c.billed_amount_cents, c.currency)}
+          </span>
         </Field>
         <Field label="Denied">
-          <span className="font-mono font-bold" style={{ color: "var(--danger)" }}>
+          <span
+            className="font-mono font-bold"
+            style={{ color: "var(--danger)" }}
+          >
             {formatCents(c.denied_amount_cents, c.currency)}
           </span>
         </Field>
@@ -364,7 +420,9 @@ function DenialCard({ c }: { c: CaseDetail }) {
                   <Badge variant="outline" className="mr-2">
                     {code}
                   </Badge>
-                  <span className="text-muted-foreground">{carcMeaning(code)}</span>
+                  <span className="text-muted-foreground">
+                    {carcMeaning(code)}
+                  </span>
                 </div>
               ))
             )}
@@ -373,7 +431,9 @@ function DenialCard({ c }: { c: CaseDetail }) {
         <div className="grid grid-cols-2 gap-3">
           <Field label="RARC codes">{ext.rarc_codes.join(", ") || "—"}</Field>
           <Field label="Group codes">{ext.group_codes.join(", ") || "—"}</Field>
-          <Field label="Denial category">{humanize(ana?.denial_category)}</Field>
+          <Field label="Denial category">
+            {humanize(ana?.denial_category)}
+          </Field>
           <Field label="Appealable">
             {ana == null ? "—" : ana.is_appealable ? "Yes" : "No"}
           </Field>
@@ -393,7 +453,9 @@ function AnalysisCard({ c }: { c: CaseDetail }) {
   const ana = c.analysis;
   if (!ana) return null;
   const pct =
-    ana.success_probability != null ? `${Math.round(ana.success_probability * 100)}%` : "—";
+    ana.success_probability != null
+      ? `${Math.round(ana.success_probability * 100)}%`
+      : "—";
   const pctToken =
     ana.probability_band === "high"
       ? "--ok"
@@ -417,14 +479,20 @@ function AnalysisCard({ c }: { c: CaseDetail }) {
             >
               {pct}
             </div>
-            <div className="text-xs text-muted-foreground">estimated chance of overturning</div>
+            <div className="text-xs text-muted-foreground">
+              estimated chance of overturning
+            </div>
           </div>
         </div>
-        {ana.appealability_reason && <p className="text-sm">{ana.appealability_reason}</p>}
+        {ana.appealability_reason && (
+          <p className="text-sm">{ana.appealability_reason}</p>
+        )}
         {ana.reasoning_text && (
           <p className="text-sm text-muted-foreground">{ana.reasoning_text}</p>
         )}
-        <p className="rounded-md bg-muted p-2 text-xs text-muted-foreground">{DISCLAIMER}</p>
+        <p className="rounded-md bg-muted p-2 text-xs text-muted-foreground">
+          {DISCLAIMER}
+        </p>
       </CardContent>
     </Card>
   );
@@ -455,14 +523,24 @@ function DocumentsCard({ c }: { c: CaseDetail }) {
           <p className="text-sm text-muted-foreground">No documents.</p>
         ) : (
           c.documents.map((d) => (
-            <div key={d.id} className="flex items-center justify-between py-2 first:pt-0 last:pb-0">
+            <div
+              key={d.id}
+              className="flex items-center justify-between py-2 first:pt-0 last:pb-0"
+            >
               <div>
-                <div className="text-sm font-medium">{DOC_LABELS[d.doc_type] ?? humanize(d.doc_type)}</div>
+                <div className="text-sm font-medium">
+                  {DOC_LABELS[d.doc_type] ?? humanize(d.doc_type)}
+                </div>
                 <div className="text-xs text-muted-foreground">
                   {d.original_filename ?? "document.pdf"}
                 </div>
               </div>
-              <Button variant="outline" size="sm" onClick={() => open(d.id)} disabled={opening === d.id}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => open(d.id)}
+                disabled={opening === d.id}
+              >
                 {opening === d.id ? "Opening…" : "View"}
               </Button>
             </div>
@@ -473,7 +551,13 @@ function DocumentsCard({ c }: { c: CaseDetail }) {
   );
 }
 
-function AdditionalDocsCard({ c, onChanged }: { c: CaseDetail; onChanged: () => void }) {
+function AdditionalDocsCard({
+  c,
+  onChanged,
+}: {
+  c: CaseDetail;
+  onChanged: () => void;
+}) {
   const requested = c.analysis?.additional_documents_needed ?? [];
   const uploaded = new Set(c.documents.map((d) => d.doc_type));
   const pending = UPLOADABLE_ADDITIONAL.filter(
@@ -530,8 +614,8 @@ function AdditionalDocsCard({ c, onChanged }: { c: CaseDetail; onChanged: () => 
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">
-          These documents would strengthen the appeal. Upload what you have and we&rsquo;ll
-          re-draft the letter with them.
+          These documents would strengthen the appeal. Upload what you have and
+          we&rsquo;ll re-draft the letter with them.
         </p>
         {pending.map((t) => (
           <FileDrop
@@ -546,7 +630,10 @@ function AdditionalDocsCard({ c, onChanged }: { c: CaseDetail; onChanged: () => 
             onSelect={(file, error) => select(t, file, error)}
           />
         ))}
-        <Button onClick={onSubmit} disabled={selected.length === 0 || submitting}>
+        <Button
+          onClick={onSubmit}
+          disabled={selected.length === 0 || submitting}
+        >
           {submitting ? "Re-analyzing…" : "Re-run with these documents"}
         </Button>
       </CardContent>
@@ -554,7 +641,13 @@ function AdditionalDocsCard({ c, onChanged }: { c: CaseDetail; onChanged: () => 
   );
 }
 
-function LetterCard({ c, onChanged }: { c: CaseDetail; onChanged: () => void }) {
+function LetterCard({
+  c,
+  onChanged,
+}: {
+  c: CaseDetail;
+  onChanged: () => void;
+}) {
   const [copied, setCopied] = useState(false);
   const submit = useMutation({
     mutationFn: () => markSubmitted(c.id),
@@ -604,7 +697,8 @@ function LetterCard({ c, onChanged }: { c: CaseDetail; onChanged: () => void }) 
         <CardTitle className="flex flex-wrap items-center gap-2">
           Appeal letter
           <span className="text-xs font-normal text-muted-foreground">
-            v{letter.version} · {humanize(letter.appeal_type)} · {humanize(letter.status)}
+            v{letter.version} · {humanize(letter.appeal_type)} ·{" "}
+            {humanize(letter.status)}
           </span>
         </CardTitle>
       </CardHeader>
@@ -613,9 +707,10 @@ function LetterCard({ c, onChanged }: { c: CaseDetail; onChanged: () => void }) 
           className="rounded-md bg-muted p-2.5 text-xs leading-relaxed text-muted-foreground"
           style={{ borderLeft: "2px solid var(--warn)" }}
         >
-          AI-drafted. Review the whole letter — codes, dates, amounts, and every policy
-          citation — and edit as needed before submitting. The practice is responsible for
-          the final letter, its accuracy, and meeting the filing deadline.
+          AI-drafted. Review the whole letter — codes, dates, amounts, and every
+          policy citation — and edit as needed before submitting. The practice
+          is responsible for the final letter, its accuracy, and meeting the
+          filing deadline.
         </p>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" size="sm" onClick={copy}>
@@ -625,13 +720,20 @@ function LetterCard({ c, onChanged }: { c: CaseDetail; onChanged: () => void }) 
             variant="outline"
             size="sm"
             onClick={() =>
-              downloadLetterPdf(c.id, `appeal-${c.patient_initials ?? "case"}-${c.id.slice(0, 8)}.pdf`)
+              downloadLetterPdf(
+                c.id,
+                `appeal-${c.patient_initials ?? "case"}-${c.id.slice(0, 8)}.pdf`,
+              )
             }
           >
             Download PDF
           </Button>
           {c.status === "ready" && (
-            <Button size="sm" onClick={() => submit.mutate()} disabled={submit.isPending}>
+            <Button
+              size="sm"
+              onClick={() => submit.mutate()}
+              disabled={submit.isPending}
+            >
               {submit.isPending ? "Marking…" : "Mark as submitted"}
             </Button>
           )}
@@ -682,7 +784,13 @@ function LetterHistory({ letters }: { letters: LetterDetail[] }) {
   );
 }
 
-const RESULT_OPTIONS = ["overturned", "upheld", "partial", "pending", "withdrawn"];
+const RESULT_OPTIONS = [
+  "overturned",
+  "upheld",
+  "partial",
+  "pending",
+  "withdrawn",
+];
 
 // Strict money parse: "" -> null (not reported), a valid dollar amount -> integer
 // cents, anything else -> "invalid" (block submit). parseFloat silently turned
@@ -696,13 +804,21 @@ function parseAmountToCents(raw: string): number | null | "invalid" {
   return Number.isSafeInteger(cents) && cents >= 0 ? cents : "invalid";
 }
 
-function OutcomeCard({ c, onChanged }: { c: CaseDetail; onChanged: () => void }) {
+function OutcomeCard({
+  c,
+  onChanged,
+}: {
+  c: CaseDetail;
+  onChanged: () => void;
+}) {
   const existing = c.outcome;
   const [result, setResult] = useState(existing?.result ?? "overturned");
   const [amount, setAmount] = useState(
-    existing?.amount_recovered_cents != null ? String(existing.amount_recovered_cents / 100) : "",
+    centsToInputString(existing?.amount_recovered_cents),
   );
-  const [resolutionDate, setResolutionDate] = useState(existing?.resolution_date ?? "");
+  const [resolutionDate, setResolutionDate] = useState(
+    existing?.resolution_date ?? "",
+  );
   const [notes, setNotes] = useState(existing?.notes ?? "");
 
   const amountCents = parseAmountToCents(amount);
@@ -739,8 +855,12 @@ function OutcomeCard({ c, onChanged }: { c: CaseDetail; onChanged: () => void })
               <OutcomeBadge result={existing.result} />
             </div>
           </div>
-          <Field label="Recovered">{formatCents(existing.amount_recovered_cents, c.currency)}</Field>
-          <Field label="Resolved on">{formatDate(existing.resolution_date)}</Field>
+          <Field label="Recovered">
+            {formatCents(existing.amount_recovered_cents, c.currency)}
+          </Field>
+          <Field label="Resolved on">
+            {formatDate(existing.resolution_date)}
+          </Field>
           <Field label="Notes">{existing.notes ?? "—"}</Field>
         </CardContent>
       </Card>
@@ -754,12 +874,16 @@ function OutcomeCard({ c, onChanged }: { c: CaseDetail; onChanged: () => void })
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">
-          Once you hear back from the payer, record what happened — it sharpens future estimates.
+          Once you hear back from the payer, record what happened — it sharpens
+          future estimates.
         </p>
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label>Result</Label>
-            <Select value={result} onValueChange={(v) => setResult(v ?? "overturned")}>
+            <Select
+              value={result}
+              onValueChange={(v) => setResult(v ?? "overturned")}
+            >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -785,7 +909,9 @@ function OutcomeCard({ c, onChanged }: { c: CaseDetail; onChanged: () => void })
               onChange={(e) => setAmount(e.target.value)}
             />
             {amountInvalid && (
-              <p className="text-xs text-destructive">Enter a dollar amount like 1234.50.</p>
+              <p className="text-xs text-destructive">
+                Enter a dollar amount like 1234.50.
+              </p>
             )}
           </div>
           <div className="space-y-1.5">
@@ -798,11 +924,22 @@ function OutcomeCard({ c, onChanged }: { c: CaseDetail; onChanged: () => void })
           </div>
           <div className="space-y-1.5 sm:col-span-2">
             <Label>Notes</Label>
-            <Textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
+            <Textarea
+              rows={3}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
           </div>
         </div>
-        <Button onClick={() => save.mutate()} disabled={save.isPending || amountInvalid}>
-          {save.isPending ? "Saving…" : existing?.result ? "Update outcome" : "Save outcome"}
+        <Button
+          onClick={() => save.mutate()}
+          disabled={save.isPending || amountInvalid}
+        >
+          {save.isPending
+            ? "Saving…"
+            : existing?.result
+              ? "Update outcome"
+              : "Save outcome"}
         </Button>
       </CardContent>
     </Card>
