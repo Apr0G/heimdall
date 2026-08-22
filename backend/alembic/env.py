@@ -40,6 +40,13 @@ async def run_async_migrations() -> None:
 
 
 def run_migrations_offline() -> None:
+    # Offline (`--sql`) compiles with literal_binds, which would inline the
+    # heimdall_app password 0007 binds as a parameter. Refuse rather than emit
+    # a credential into a script or CI log; review migrations online.
+    raise SystemExit(
+        "Offline (--sql) migrations are disabled: 0007 binds the app DB password and "
+        "literal_binds would print it. Run `alembic upgrade head` online instead."
+    )
     context.configure(
         url=settings.database_url,
         target_metadata=target_metadata,

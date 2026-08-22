@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import TIMESTAMP, ForeignKey, Text, text
+from sqlalchemy import TIMESTAMP, ForeignKey, Index, Text, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -29,3 +29,17 @@ class DeactivationRequest(Base, UUIDPrimaryKey, TimestampMixin):
         PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
     )
     resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+    # Mirrors 0010/0011 so autogenerate never proposes dropping them — the
+    # partial unique index is the only guard on "one open request per user".
+    __table_args__ = (
+        Index("ix_deactivation_requests_user_id", "user_id"),
+        Index("ix_deactivation_requests_practice_id", "practice_id"),
+        Index("ix_deactivation_requests_resolved_by", "resolved_by"),
+        Index(
+            "uq_deactivation_requests_pending",
+            "user_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )

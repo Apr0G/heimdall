@@ -3,7 +3,7 @@ import json
 from app.prompts.text import CLINICAL_MAX_CHARS, prepare
 
 # Bump VERSION on ANY change to the prompt text or schema. model_runs records it.
-VERSION = "analyze_v4"
+VERSION = "analyze_v5"
 
 SYSTEM = """You are a medical claims appeals analyst. Given structured extraction \
 data from a denied claim plus the clinical notes, you classify the denial, judge \
@@ -30,8 +30,9 @@ calibration disclaimer: "This is an AI-generated estimate based on case \
 characteristics, not a guarantee."
 - recommended_appeal_level: one of "level_1_internal","peer_to_peer",\
 "level_2_internal","external_review". Default to "level_1_internal".
-- additional_documents_needed: array; any of "prior_auth","prior_treatment",\
-"imaging", or [] if none.
+- additional_documents_needed: array; any of "prior_auth","prior_treatment", \
+or [] if none. (Imaging reports cannot be uploaded yet — if the argument depends on \
+one, say so in reasoning_text instead of requesting it.)
 
 Triage rules (apply strictly):
 - APPEALABLE (CO group, payer obligation): CO-50 (not medically necessary), \
@@ -57,7 +58,6 @@ Conditional documents:
 - If the denial is CO-197 or CO-15 (auth), request "prior_auth".
 - If the denial is CO-50 (medical necessity) and the policy implies step therapy, \
 request "prior_treatment".
-- Request "imaging" if the clinical narrative depends on an imaging report not in hand.
 - Do NOT request a document that is already present in the SUPPLEMENTAL DOCUMENTS \
 section below. If a previously-requested document is now provided, factor it into \
 your assessment and raise success_probability accordingly.

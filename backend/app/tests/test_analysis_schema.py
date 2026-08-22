@@ -7,7 +7,7 @@ from app.services.analysis import never_appealable_codes, probability_band
 
 
 def test_prompt_version_is_pinned():
-    assert analysis_prompt.VERSION == "analyze_v4"
+    assert analysis_prompt.VERSION == "analyze_v5"
 
 
 def test_probability_band_thresholds():
@@ -124,3 +124,17 @@ def test_well_formed_analysis_parses():
     assert result.is_appealable is True
     assert result.success_probability == 0.55
     assert probability_band(result.success_probability) == "moderate"
+
+
+def test_prompt_document_requests_match_whitelist():
+    """Every document type the prompt offers the model must survive _filter_docs,
+    or a clinically meaningful ask is silently discarded (MED-11 — "imaging")."""
+    import re
+
+    from app.schemas.analysis import DOC_NEEDS
+
+    offered = set(
+        re.findall(r'"(prior_auth|prior_treatment|imaging|[a-z_]+)"', analysis_prompt.SYSTEM)
+    )
+    candidates = {"prior_auth", "prior_treatment", "imaging"}
+    assert (offered & candidates) <= DOC_NEEDS

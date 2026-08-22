@@ -49,9 +49,11 @@ def upgrade() -> None:
     pw = _app_password()
     # Create-or-update the login role (idempotent).
     #
-    # The password never appears in DDL text. It was never injectable (the regex
-    # above constrains it to alphanumerics), but an inlined literal is logged
-    # verbatim by Postgres if the statement errors.
+    # The password never appears in DDL text in ONLINE mode. It was never
+    # injectable (the regex above constrains it to alphanumerics), but an
+    # inlined literal is logged verbatim by Postgres if the statement errors.
+    # Offline `--sql` mode would inline it via literal_binds, so env.py refuses
+    # to run offline at all.
     #
     # set_config() is an ordinary function call, so the value travels as a real
     # protocol-level bind parameter — unlike anything inside a `DO $$ ... $$`
