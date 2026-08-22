@@ -586,10 +586,15 @@ async def logout(
     creds: HTTPAuthorizationCredentials | None = Depends(security),
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    """Sign out: clear the session cookie + best-effort Cognito global sign-out
-    (revokes refresh tokens so the session can't be renewed) + an audit row."""
+    """Sign out: clear the session cookie, revoke every app session (tokens are
+    verified locally, so Cognito's sign-out alone can't end one already open),
+    best-effort Cognito global sign-out (stops refresh), and an audit row."""
     token = request.cookies.get(AUTH_COOKIE) or (creds.credentials if creds else None)
     clear_auth_cookie(response)
+    # Global by design: with one keep-slot there is no "this device only". A
+    # token captured before sign-out must not outlive it.
+    current_user.sessions_revoked_at = datetime.now(UTC)
+    current_user.session_keep_jti = None
     if token:
         try:
             await run_in_threadpool(global_sign_out, token)

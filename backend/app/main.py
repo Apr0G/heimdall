@@ -46,12 +46,13 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(BodySizeLimitMiddleware)
 
 # Exact frontend origin only; explicit methods/headers (no wildcards). Presigned
-# S3 uploads go browser->S3 directly, so the API only needs GET/POST/OPTIONS.
+# S3 uploads go browser->S3 directly. Every method a router registers must be
+# listed here or the browser's preflight fails — test_cors_methods pins that.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_url],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
     max_age=600,
 )

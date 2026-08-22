@@ -1,4 +1,5 @@
 import logging
+import re
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -43,22 +44,42 @@ _NEVER_APPEAL_EXACT = {"CO-45"}
 _NEVER_APPEAL_PREFIXES = ("PR-",)
 
 
-def _normalize_carc(code: str) -> str:
-    return code.strip().upper().replace("_", "-").replace(" ", "")
+_CARC_RE = re.compile(r"^\s*(?:([A-Z]{2})\s*[-_ ]?\s*)?(\d{1,3})\s*$")
 
 
-def never_appealable_codes(carc_codes: list[str] | None) -> list[str]:
-    """The subset of `carc_codes` that are categorically not appealable. Pure, so
-    it is unit-testable without a database or a model call."""
+def _canonical_carcs(raw: str, group_codes: list[str]) -> list[str]:
+    """Every GROUP-REASON spelling a raw code could mean, in the form the guard
+    matches ("CO-45"). Accepts "CO-45", "co 45", "CO45", "CO_45"; a bare reason
+    code ("45") is combined with each supplied group code, since extraction may
+    split the pair across `carc_codes` / `group_codes`. Unparseable → []."""
+    m = _CARC_RE.match(raw.upper())
+    if not m:
+        return []
+    group, reason = m.group(1), m.group(2)
+    if group:
+        return [f"{group}-{reason}"]
+    groups = [g.strip().upper() for g in group_codes if isinstance(g, str) and g.strip()]
+    return [f"{g}-{reason}" for g in groups]
+
+
+def never_appealable_codes(
+    carc_codes: list[str] | None, group_codes: list[str] | None = None
+) -> list[str]:
+    """The subset of `carc_codes` that are categorically not appealable, in
+    canonical form. Pure, so it is unit-testable without a database or a model
+    call. Spelling-tolerant on purpose: this is the control and the prompt is
+    the request, and a guard that recognises one spelling fails open."""
     if not carc_codes:
         return []
-    hits = []
+    hits: list[str] = []
     for raw in carc_codes:
         if not isinstance(raw, str):
             continue
-        code = _normalize_carc(raw)
-        if code in _NEVER_APPEAL_EXACT or code.startswith(_NEVER_APPEAL_PREFIXES):
-            hits.append(code)
+        for code in _canonical_carcs(raw, group_codes or []):
+            if code in hits:
+                continue
+            if code in _NEVER_APPEAL_EXACT or code.startswith(_NEVER_APPEAL_PREFIXES):
+                hits.append(code)
     return hits
 
 
@@ -135,7 +156,10 @@ async def run_ai_analysis(session: AsyncSession, case: Case) -> Analysis:
     # appealable would otherwise draft an appeal for a balance the patient owes.
     # The CARC codes are already on the extraction, so this is checkable without
     # trusting the model. Same pattern as probability_band: derive, don't accept.
-    blocking_codes = never_appealable_codes(extraction.carc_codes if extraction else [])
+    blocking_codes = never_appealable_codes(
+        extraction.carc_codes if extraction else [],
+        extraction.group_codes if extraction else [],
+    )
     is_appealable = result.is_appealable and not blocking_codes
     appealability_reason = result.appealability_reason
     if blocking_codes and result.is_appealable:

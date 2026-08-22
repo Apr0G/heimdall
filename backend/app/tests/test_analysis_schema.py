@@ -33,9 +33,36 @@ def test_success_probability_out_of_range_is_rejected(value):
         AnalysisResult.model_validate({"is_appealable": True, "success_probability": value})
 
 
-@pytest.mark.parametrize("codes", [["CO-45"], ["PR-1"], ["PR-204"], ["co-45"], ["CO-50", "PR-2"]])
+@pytest.mark.parametrize(
+    "codes",
+    [
+        ["CO-45"],
+        ["PR-1"],
+        ["PR-204"],
+        ["co-45"],
+        ["CO-50", "PR-2"],
+        ["CO 45"],
+        ["CO45"],
+        ["CO_45"],
+        ["PR1"],
+    ],
+)
 def test_never_appealable_codes_detected(codes):
+    """Every spelling the extraction model might emit. A guard that recognises
+    only the hyphenated form fails open — it is the control, not the prompt."""
     assert never_appealable_codes(codes)
+
+
+def test_never_appealable_codes_are_canonical():
+    assert never_appealable_codes(["co 45", "CO45"]) == ["CO-45"]
+
+
+def test_bare_reason_code_uses_group_codes():
+    # Extraction may split "CO-45" into carc_codes=["45"], group_codes=["CO"].
+    assert never_appealable_codes(["45"], ["CO"]) == ["CO-45"]
+    assert never_appealable_codes(["1"], ["PR", "CO"]) == ["PR-1"]
+    assert never_appealable_codes(["45"]) == []  # no group: can't decide, don't guess
+    assert never_appealable_codes(["N/A", "", "CO-450"]) == []
 
 
 @pytest.mark.parametrize("codes", [[], None, ["CO-50"], ["CO-97"], ["CO-151"], ["CO-16"]])
