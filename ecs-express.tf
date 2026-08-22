@@ -34,10 +34,12 @@ variable "github_repo" {
 variable "destructive_environment" {
   description = <<-EOT
     GitHub Environment name that the irreversible workflows (wipe-test-data,
-    dispose-practice) run under, so they can carry required reviewers. Must be
-    created by hand in the repo settings with at least one required reviewer —
-    Terraform only widens the OIDC trust policy to accept its `sub` claim; it
-    cannot create the environment or its protection rules.
+    dispose-practice, provision-user) run under. It provides an ATTRIBUTION
+    record in the Environments tab only: required reviewers / wait timers are
+    not available on GitHub Pro for a private repo (verified 2026-07-30, see
+    wipe-test-data.yml), so there is NO second-person approval gate today.
+    The real remediation is a Team-plan org. Terraform only widens the OIDC
+    trust policy to accept the environment's `sub` claim.
   EOT
   type        = string
   default     = "production-destructive"

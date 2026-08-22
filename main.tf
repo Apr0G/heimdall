@@ -270,6 +270,12 @@ resource "aws_iam_role_policy" "app" {
         #    password + emailed code the identity is recreated with the same
         #    password (AdminDeleteUser + AdminCreateUser + AdminSetUserPassword).
         #    Audited as mfa_reset; every session revoked.
+        #  ACCEPTED RISK (audit 2026-08-21 MED-20): a code-execution foothold in
+        #  the API container could set any user's password. Cognito IAM has no
+        #  per-user condition for these actions, and moving recovery to a
+        #  one-off task would not change what a foothold could invoke.
+        #  Compensating controls: no API parameter reaches AdminSetUserPassword
+        #  except through the password+email-code proof, and every call audits.
         Sid    = "CognitoUserAdmin"
         Effect = "Allow"
         Action = [
@@ -295,6 +301,16 @@ resource "aws_iam_role_policy" "app" {
         # too. Every identity in this account is ours, so account-scoped `*`
         # is the honest boundary; the From address is fixed in the app config.
         Resource = "arn:aws:ses:us-east-1:${data.aws_caller_identity.current.account_id}:identity/*"
+        # Pin the sender so a foothold can't mail as anything else. SESv2 can
+        # present ses:FromAddress as the FULL header value when a display name
+        # is used, hence both forms. Re-tested 2026-08-21 against the corrected
+        # Resource (the earlier denial was the missing address identity, not
+        # this condition).
+        Condition = {
+          StringLike = {
+            "ses:FromAddress" = ["no-reply@heimdallclaims.com", "*<no-reply@heimdallclaims.com>"]
+          }
+        }
       },
       {
         Effect = "Allow"

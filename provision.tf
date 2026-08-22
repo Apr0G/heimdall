@@ -1,9 +1,12 @@
 # =============================================================================
 # User provisioning. Runs app/scripts/provision_user.py as a one-off in-VPC ECS
 # task: creates the Cognito account (Cognito emails the temporary password) and
-# the matching `users` row. Its own task role so AdminCreateUser — the power to
-# invite someone into a practice — lives only in this deliberately-invoked task,
-# never in the always-on app role.
+# the matching `users` row. This is the fallback path when no admin can sign in;
+# the primary path is the in-app admin UI, whose task role (main.tf
+# CognitoUserAdmin) holds the same AdminCreateUser plus the delete/set-password
+# pair the authenticator-recovery flow needs. That grant is an accepted risk:
+# Cognito IAM cannot scope admin actions per user, and the API gates every use
+# behind require_role("admin") or the password + emailed-code proof.
 # =============================================================================
 
 resource "aws_cloudwatch_log_group" "provision" {

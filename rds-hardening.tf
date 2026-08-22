@@ -1,14 +1,14 @@
 # =============================================================================
 # RDS PHI-readiness — backups, deletion protection, final snapshot, and enforced
-# TLS. All gated behind rds_production so you flip them on together during a
-# maintenance window (attaching the parameter group needs one reboot). Applying
-# with the default (false) changes nothing.
+# TLS. All gated behind rds_production. The SAFE posture is the default: an
+# apply that omits the variable gets backups, deletion protection, a final
+# snapshot and force_ssl. Set it to false only for a throwaway environment.
 # =============================================================================
 
 variable "rds_production" {
-  description = "true = enable backups/PITR, deletion protection, final snapshot, and rds.force_ssl (attaching the parameter group requires a one-time reboot)."
+  description = "true (default) = backups/PITR, deletion protection, final snapshot, rds.force_ssl. false only for disposable environments — a PHI database must never be applied without these by omission."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "rds_parameter_group_family" {
