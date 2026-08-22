@@ -27,11 +27,15 @@ def test_wrong_guesses_are_capped(monkeypatch):
     assert rc.verify_code("a@b.com", code) is False
 
 
-def test_new_request_replaces_old_code():
+def test_new_request_replaces_old_code(monkeypatch):
+    # Deterministic, distinct codes so the replacement property is asserted
+    # unconditionally (a cached-code regression would previously have passed).
+    draws = iter([111111, 222222])
+    monkeypatch.setattr(rc.secrets, "randbelow", lambda n: next(draws))
     first = rc.issue_code("a@b.com")
     second = rc.issue_code("a@b.com")
-    if first != second:
-        assert rc.verify_code("a@b.com", first) is False
+    assert (first, second) == ("111111", "222222")
+    assert rc.verify_code("a@b.com", first) is False
     assert rc.verify_code("a@b.com", second) is True
 
 

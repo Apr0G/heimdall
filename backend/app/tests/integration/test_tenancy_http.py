@@ -611,3 +611,109 @@ async def test_login_resets_the_idle_clock(sessions, owner):
         assert (datetime.now(UTC) - u.last_seen_at) < timedelta(minutes=1)
     finally:
         auth_api.verify_access_token = original
+
+
+# --- app-side session revocation (audit 2026-08-21 MED-31) -------------------
+#
+# The predicate is unit-tested in core/test_session_revocation.py; this proves
+# get_current_user actually ENFORCES it, with the one-session-kept carve-out.
+
+
+def _revocation_client(sessions, user, *, iat: int, jti: str):
+    async def _override_db():
+        async with sessions() as s:
+            yield s
+
+    app.dependency_overrides.clear()
+    app.dependency_overrides[get_db] = _override_db
+
+    async def _fake_verify(token: str) -> dict:
+        return {"sub": user.cognito_sub, "token_use": "access", "iat": iat, "jti": jti}
+
+    auth_module.verify_access_token = _fake_verify
+    c = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+    c.cookies.set("hd_session", "any-token")
+    return c
+
+
+async def test_revoked_sessions_are_rejected_except_the_kept_one(sessions, owner, owned_case):
+    original = auth_module.verify_access_token
+    old_iat = int((datetime.now(UTC) - timedelta(minutes=10)).timestamp())
+    try:
+        async with sessions() as s:
+            u = await s.get(User, owner.id)
+            u.sessions_revoked_at = datetime.now(UTC) - timedelta(minutes=5)
+            u.session_keep_jti = "the-one-that-changed-the-password"
+            await s.commit()
+
+        # An old token with a different jti: revoked.
+        async with _revocation_client(sessions, owner, iat=old_iat, jti="stolen") as c:
+            assert (await c.get(f"/api/cases/{owned_case['case_id']}")).status_code == 401
+        # The same-age token that performed the change: kept.
+        async with _revocation_client(
+            sessions, owner, iat=old_iat, jti="the-one-that-changed-the-password"
+        ) as c:
+            assert (await c.get(f"/api/cases/{owned_case['case_id']}")).status_code == 200
+        # A token issued after the revocation: fine.
+        now_iat = int(datetime.now(UTC).timestamp()) + 1
+        async with _revocation_client(sessions, owner, iat=now_iat, jti="fresh") as c:
+            assert (await c.get(f"/api/cases/{owned_case['case_id']}")).status_code == 200
+    finally:
+        auth_module.verify_access_token = original
+        app.dependency_overrides.clear()
+
+
+# --- upload-key prefix guard (audit 2026-08-21 MED-32) ------------------------
+#
+# The temp key a caller submits must sit under THEIR practice prefix; otherwise
+# a leaked temp key would let one practice attach another's uploaded PDF.
+
+
+async def test_create_case_refuses_another_practices_upload_key(
+    sessions, owner, outsider, monkeypatch
+):
+    moved: list = []
+    monkeypatch.setattr("app.api.cases.move_object", lambda src, dst: moved.append((src, dst)))
+    monkeypatch.setattr("app.api.cases.head_object", lambda key: {"ContentLength": 10})
+    body = {
+        "documents": [
+            {
+                "doc_type": t,
+                "s3_key": f"tmp-uploads/{owner.practice_id}/{uuid.uuid4()}.pdf",
+                "filename": f"{t}.pdf",
+            }
+            for t in ("denial", "claim", "clinical")
+        ]
+    }
+    async with _client(sessions, outsider) as client:
+        resp = await client.post("/api/cases", json=body)
+    assert resp.status_code == 400, resp.text
+    assert moved == []
+    async with sessions() as s:
+        assert (
+            await s.scalar(select(Document).where(Document.s3_key.like(f"%{owner.practice_id}%")))
+        ) is None
+
+
+# --- audit_logs append-only at the grant level (audit 2026-08-21 MED-34) ------
+
+
+async def test_app_role_cannot_update_delete_or_truncate_audit_logs(sessions):
+    from sqlalchemy import text
+
+    async with sessions() as s:
+        rows = (
+            await s.execute(
+                text(
+                    "SELECT privilege_type FROM information_schema.role_table_grants "
+                    "WHERE grantee = 'heimdall_app' AND table_name = 'audit_logs'"
+                )
+            )
+        ).scalars()
+        assert set(rows) == {"INSERT", "SELECT"}
+        enabled = (
+            await s.execute(
+                text("SELECT tgenabled FROM pg_trigger WHERE tgname LIKE 'trg_audit_logs_no_%'")
+            )
+        ).scalars()
+        assert {e.decode() if isinstance(e, bytes) else e for e in enabled} == {"A"}  # ALWAYS
