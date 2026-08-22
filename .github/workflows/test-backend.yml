@@ -46,7 +46,10 @@ jobs:
         working-directory: backend
         # Editable so the installed `app` points at the source tree — otherwise a
         # second copy lands in site-packages and pytest hits an import-file mismatch.
-        run: pip install -e '.[dev]'
+        run: |
+          pip install --require-hashes --no-deps -r requirements.lock
+          pip install --no-deps -e '.[dev]'
+          pip install pytest pytest-asyncio ruff black
       - name: Lint, format check, tests
         working-directory: backend
         env:

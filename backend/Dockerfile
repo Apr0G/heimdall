@@ -8,12 +8,19 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Project metadata + source, then install (pulls deps from pyproject).
+# Dependencies come from the hash-pinned lock (uv pip compile, py3.11/linux), so
+# two builds of one commit install byte-identical wheels and a compromised or
+# yanked release can't slip in at build time. --no-deps + --require-hashes
+# means nothing outside the lock is ever resolved. Dependabot bumps the lock.
+COPY requirements.lock ./
+RUN pip install --require-hashes --no-deps --only-binary=:all: -r requirements.lock
+
+# Then the application itself, with its deps already satisfied.
 COPY pyproject.toml ./
 COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini ./
-RUN pip install .
+RUN pip install --no-deps .
 
 # Pinned + hash-verified dependency set for the one-off corpus-export NER task.
 # NOT installed here — the API image must not carry a 382 MB NLP model, and
