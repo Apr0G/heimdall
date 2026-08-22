@@ -32,3 +32,21 @@ def test_empty_body_flows_through():
     r = _client(1000).post("/echo", content=b"")
     assert r.status_code == 200
     assert r.text == "got 0"
+
+
+def test_oversize_rejection_carries_security_headers():
+    # SecurityHeaders must wrap the body guard (LOW-07): a 413 is still a
+    # response the browser caches and frames unless told otherwise.
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+    resp = client.post(
+        "/api/leads",
+        content=b"x" * (2 * 1024 * 1024),
+        headers={"content-type": "application/json"},
+    )
+    assert resp.status_code == 413
+    assert resp.headers.get("x-content-type-options") == "nosniff"
+    assert "no-store" in resp.headers.get("cache-control", "")

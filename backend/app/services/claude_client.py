@@ -153,8 +153,23 @@ async def _record_model_run(
         )
         await session.commit()
 
-    await run_in_threadpool(s3.put_text, request_key, json.dumps(call.request_body))
-    await run_in_threadpool(s3.put_text, response_key, json.dumps(call.response_body))
+    # The row is committed; the archive is best-effort. Failing the case here
+    # would throw away a validated, billed result over a raw-payload copy.
+    try:
+        await run_in_threadpool(s3.put_text, request_key, json.dumps(call.request_body))
+        await run_in_threadpool(s3.put_text, response_key, json.dumps(call.response_body))
+    except Exception as exc:  # noqa: BLE001 — any S3 failure; logged, never fatal
+        logger.warning(
+            "model_run archive upload failed",
+            extra={"context": {"model_run_id": str(run_id), "error": type(exc).__name__}},
+        )
+        async with AsyncSessionLocal() as session:
+            row = await session.get(ModelRun, run_id)
+            if row is not None:
+                row.error_message = (
+                    row.error_message + "; " if row.error_message else ""
+                ) + f"archive upload failed ({type(exc).__name__})"
+                await session.commit()
     return request_key, response_key
 
 

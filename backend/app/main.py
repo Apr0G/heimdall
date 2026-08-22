@@ -40,10 +40,12 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
-# Security response headers, then the streamed-body-size guard (counts chunked
-# bodies too, so a public endpoint can't be memory-exhausted).
-app.add_middleware(SecurityHeadersMiddleware)
+# Streamed-body-size guard (counts chunked bodies too, so a public endpoint
+# can't be memory-exhausted), wrapped by the security-headers middleware.
+# add_middleware PREPENDS, so the later call is the outer layer — headers must
+# be added after the body guard or its 413s ship without them.
 app.add_middleware(BodySizeLimitMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 # Exact frontend origin only; explicit methods/headers (no wildcards). Presigned
 # S3 uploads go browser->S3 directly. Every method a router registers must be

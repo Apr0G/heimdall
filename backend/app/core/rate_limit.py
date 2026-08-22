@@ -76,7 +76,19 @@ limiter = Limiter(
     storage_uri=settings.redis_dsn() or "memory://",
     strategy="moving-window",
     headers_enabled=True,  # emit X-RateLimit-* and Retry-After
-    swallow_errors=True,  # fail-open on storage errors
+    swallow_errors=True,  # fail-open on storage errors (availability of PHI care)
+)
+
+# The model-invoking routes get their own limiter that FAILS CLOSED. Their
+# daily cap is the only bound on Bedrock/Textract spend; a Redis outage must not
+# quietly remove it. A storage error here surfaces as a 5xx on those three
+# routes only — reads of existing cases keep working through `limiter`.
+ai_limiter = Limiter(
+    key_func=rate_key,
+    storage_uri=settings.redis_dsn() or "memory://",
+    strategy="moving-window",
+    headers_enabled=True,
+    swallow_errors=False,
 )
 
 # Login throttle: fail-CLOSED (a Redis outage must NOT reopen the brute-force

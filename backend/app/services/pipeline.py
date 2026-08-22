@@ -91,6 +91,7 @@ async def run_full_pipeline(case_id: UUID, run_id: UUID) -> None:
     )
     try:
         for phase, kwargs in phases:
+            await _touch_if_owner(case_id=case_id, run_id=run_id)
             if not await _run_phase(case_id, run_id, phase, **kwargs):
                 return
     except Exception as exc:
@@ -112,6 +113,7 @@ async def run_reanalysis(case_id: UUID, run_id: UUID) -> None:
     )
     try:
         for phase, kwargs in phases:
+            await _touch_if_owner(case_id=case_id, run_id=run_id)
             if not await _run_phase(case_id, run_id, phase, **kwargs):
                 return
     except Exception as exc:
@@ -122,7 +124,7 @@ class DocumentTamperedError(RuntimeError):
     """A document's bytes no longer match the content_hash recorded at first read."""
 
 
-async def _extract_one(session: AsyncSession, doc: Document) -> None:
+async def _extract_one(session: AsyncSession, doc: Document, *, case_id, run_id) -> None:
     # Read the PDF once: hash it for an integrity anchor (§164.312(c)(1)) and reuse
     # the same bytes for digital-text extraction (no second S3 read).
     data = await run_in_threadpool(s3.get_bytes, doc.s3_key)
@@ -139,9 +141,13 @@ async def _extract_one(session: AsyncSession, doc: Document) -> None:
         )
     text = await run_in_threadpool(document_extractor.digital_text_from_bytes, data)
     if text is None:
-        # Scanned PDF -> OCR. Mark pending so the state is observable.
-        doc.ocr_status = "pending"
-        await session.commit()
+        # Scanned PDF -> OCR. Mark pending so the state is observable — via a
+        # guarded UPDATE in its own session, never a commit of THIS session,
+        # which would bypass _run_phase's ownership re-check (a superseded run
+        # must not write anything into the newer run's case).
+        await _touch_if_owner(
+            case_id=case_id, run_id=run_id, document_id=doc.id, ocr_status="pending"
+        )
         text = await run_in_threadpool(document_extractor.run_textract, doc.s3_key)
         await run_in_threadpool(document_extractor.store_extracted_text, doc.s3_key, text)
         doc.ocr_status = "completed"
@@ -178,7 +184,7 @@ async def _extract_documents(
             existing = await run_in_threadpool(s3.head_object, s3.extracted_text_key(doc.s3_key))
             if existing is not None:
                 continue
-        await _extract_one(session, doc)
+        await _extract_one(session, doc, case_id=case.id, run_id=case.pipeline_run_id)
         # Heartbeat. A case whose row hasn't advanced in STALE_PROCESSING minutes is
         # treated as stalled and eligible for a concurrent retry — but a healthy
         # multi-document Textract run can legitimately exceed that window. Touching
@@ -186,6 +192,27 @@ async def _extract_documents(
         # declared dead and duplicated.
         case.updated_at = datetime.now(UTC)
         await session.flush()
+
+
+async def _touch_if_owner(
+    *, case_id: UUID, run_id: UUID, document_id: UUID | None = None, ocr_status: str | None = None
+) -> None:
+    """Heartbeat the case row (and optionally one document's ocr_status) in a
+    separate short transaction, only if this run still owns the case. Used
+    mid-phase so a long Textract or Bedrock stretch doesn't trip the stall
+    detector (STALE_PROCESSING) and trigger a duplicate, paid-for run."""
+    async with AsyncSessionLocal() as session:
+        owned = await session.scalar(
+            update(Case)
+            .where(Case.id == case_id, Case.pipeline_run_id == run_id)
+            .values(updated_at=datetime.now(UTC))
+            .returning(Case.id)
+        )
+        if owned is not None and document_id is not None and ocr_status is not None:
+            await session.execute(
+                update(Document).where(Document.id == document_id).values(ocr_status=ocr_status)
+            )
+        await session.commit()
 
 
 async def _mark_error(case_id: UUID, run_id: UUID, exc: Exception) -> None:

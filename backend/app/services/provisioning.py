@@ -50,6 +50,8 @@ async def invite_user(
     """Idempotent on the email. Does NOT commit — the caller owns the transaction
     (so it can add its audit row to the same one)."""
     email = email.strip().lower()
+    practice_name = (practice_name or "").strip() or None
+    full_name = (full_name or "").strip() or None
     if not email or "@" not in email:
         raise ProvisioningError("A valid email is required")
     if role not in ROLES:
@@ -78,7 +80,7 @@ async def invite_user(
         if practice is None:
             raise ProvisioningError("That practice doesn't exist")
     else:
-        practice = Practice(name=practice_name.strip())
+        practice = Practice(name=practice_name)
         session.add(practice)
         await session.flush()
         created_practice = True
@@ -88,7 +90,7 @@ async def invite_user(
         email=email,
         cognito_sub=sub,
         role=role,
-        full_name=(full_name or "").strip() or None,
+        full_name=full_name,
     )
     session.add(user)
     await session.flush()

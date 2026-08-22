@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 from urllib.parse import quote
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -49,7 +50,9 @@ class Settings(BaseSettings):
     bedrock_model_id: str = ""
 
     # App
-    app_env: str = "development"
+    # Two security controls key off this (cookie `secure`, docs gating), so a
+    # typo must fail at boot instead of silently taking the development branch.
+    app_env: Literal["development", "test", "production"] = "development"
     frontend_url: str = "http://localhost:3000"
     log_level: str = "INFO"
     # Number of trusted proxies in front of the app (the ECS Express ALB = 1). The

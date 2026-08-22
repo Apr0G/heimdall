@@ -2,7 +2,7 @@ from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt
 
 # These mirror the Postgres `outcome_result`, `outcome_action` and `case_status`
 # enums. Typed as Literal so Pydantic rejects a bad value with a 422 AT THE
@@ -191,7 +191,9 @@ class OutcomeRequest(BaseModel):
     result: OutcomeResult
     action_taken: OutcomeAction = "appealed"
     # Non-negative integer cents (defense in depth over the client-side check).
-    amount_recovered_cents: int | None = Field(default=None, ge=0)
+    # Strict: lax `int` would truncate 450.0 (dollars) to 450 cents silently —
+    # the same 100x unit error the extraction schema rejects.
+    amount_recovered_cents: StrictInt | None = Field(default=None, ge=0)
     resolution_date: date | None = None
     notes: str | None = None
 

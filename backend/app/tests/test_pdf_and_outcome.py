@@ -1,3 +1,5 @@
+import pytest
+
 from app.api.cases import case_status_after_outcome
 from app.services import pdf_gen
 
@@ -38,3 +40,19 @@ def test_case_status_after_outcome():
     assert case_status_after_outcome("partial") == "resolved"
     assert case_status_after_outcome("withdrawn") == "resolved"
     assert case_status_after_outcome("pending") == "submitted"
+
+
+def test_outcome_amount_rejects_dollar_valued_float():
+    # 450.0 must not be silently truncated into 450 cents (LOW-10).
+    from pydantic import ValidationError
+
+    from app.schemas.case import OutcomeRequest
+
+    with pytest.raises(ValidationError):
+        OutcomeRequest.model_validate({"result": "overturned", "amount_recovered_cents": 450.0})
+    assert (
+        OutcomeRequest.model_validate(
+            {"result": "overturned", "amount_recovered_cents": 45000}
+        ).amount_recovered_cents
+        == 45000
+    )

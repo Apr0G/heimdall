@@ -20,10 +20,9 @@ class MfaChallenge(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    # Exactly one of these is populated: tokens when login is complete, or `mfa`
-    # when a TOTP challenge must be answered next. id_token is intentionally omitted
-    # (the frontend never uses it — minimum-necessary).
-    access_token: str | None = None
+    # Either the login is complete (`expires_in` set; the access token went into
+    # the httpOnly hd_session cookie and is never in a body) or `mfa` carries the
+    # next challenge. No token field on purpose.
     token_type: str = "Bearer"
     expires_in: int | None = None
     mfa: MfaChallenge | None = None

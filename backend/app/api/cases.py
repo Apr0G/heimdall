@@ -21,7 +21,7 @@ from starlette.concurrency import run_in_threadpool
 from app.core.auth import get_current_user
 from app.core.config import settings as _settings
 from app.core.net import client_ip
-from app.core.rate_limit import limiter
+from app.core.rate_limit import ai_limiter
 from app.db.session import get_db
 from app.models import (
     Analysis,
@@ -381,7 +381,7 @@ async def create_upload_urls(
 
 
 @router.post("", response_model=CreateCaseResponse, status_code=status.HTTP_201_CREATED)
-@limiter.limit(_settings.rate_limit_ai)
+@ai_limiter.limit(_settings.rate_limit_ai)
 async def create_case(
     body: CreateCaseRequest,
     request: Request,
@@ -741,7 +741,7 @@ async def upsert_outcome(
 # pipeline, which is three Bedrock calls. The atomic claim gate bounds concurrent
 # retries, but spend was otherwise bounded only by the failure rate, not by any
 # request-rate cap. `response` is the parameter slowapi requires to inject headers.
-@limiter.limit(_settings.rate_limit_ai)
+@ai_limiter.limit(_settings.rate_limit_ai)
 async def retry_case(
     case_id: UUID,
     request: Request,
@@ -887,7 +887,7 @@ async def create_additional_upload_urls(
 
 
 @router.post("/{case_id}/reanalyze", response_model=CaseStatusResponse)
-@limiter.limit(_settings.rate_limit_ai)
+@ai_limiter.limit(_settings.rate_limit_ai)
 async def reanalyze_case(
     case_id: UUID,
     body: ReanalyzeRequest,

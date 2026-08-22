@@ -1,10 +1,12 @@
-from sqlalchemy import Enum as SAEnum
+from sqlalchemy.dialects.postgresql import ENUM as PGEnum
 
 
-def _pg_enum(*values: str, name: str) -> SAEnum:
+def _pg_enum(*values: str, name: str) -> PGEnum:
     """A native Postgres enum. create_type=False because the Alembic migration
-    owns CREATE TYPE / DROP TYPE; the ORM only references the existing type."""
-    return SAEnum(*values, name=name, native_enum=True, create_type=False)
+    owns CREATE TYPE / DROP TYPE; the ORM only references the existing type.
+    (The generic sqlalchemy.Enum silently ignores create_type — only the
+    postgresql dialect type honours it.)"""
+    return PGEnum(*values, name=name, create_type=False)
 
 
 user_role = _pg_enum("doctor", "office_manager", "admin", name="user_role")
