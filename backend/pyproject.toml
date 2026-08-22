@@ -18,6 +18,7 @@ dependencies = [
     "pypdf>=6.13.3",                   # detect digital vs scanned PDFs; 6.13.3 fixes GHSA-jm82-fx9c-mx94
     "slowapi>=0.1.9",                  # layered rate limiting (security hardening)
     "redis>=5.0",                      # rate-limit storage backend (prod; in-memory in dev)
+    "setuptools>=83",                  # not imported; floors the interpreter's copy past PYSEC-2026-3447 so the lock (and pip-audit) cover it
 ]
 
 [project.optional-dependencies]
