@@ -219,3 +219,44 @@ async def test_tampered_payload_is_rejected(signing_key):
     with pytest.raises(HTTPException) as exc:
         await auth_module.verify_access_token(f"{header}.{tampered_payload}.{signature}")
     assert exc.value.status_code == 401
+
+
+async def test_forced_jwks_refresh_is_rate_bounded(monkeypatch, signing_key):
+    """An unverified header can name any `kid`, so an attacker could force one
+    outbound JWKS fetch per request. Within the refresh window the cache is
+    served instead — N unknown-kid tokens cost at most one fetch (MED-04)."""
+    private_jwk, public_jwk = signing_key
+    fetches = 0
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"keys": [public_jwk]}
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url):
+            nonlocal fetches
+            fetches += 1
+            return _Resp()
+
+    monkeypatch.setattr(auth_module.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(auth_module, "_jwks_by_kid", {public_jwk["kid"]: public_jwk})
+    monkeypatch.setattr(auth_module, "_jwks_last_refresh", auth_module.time.monotonic())
+    for _ in range(25):
+        token = jwt.encode(
+            _claims(), private_jwk, algorithm="RS256", headers={"kid": "never-seen-kid"}
+        )
+        with pytest.raises(HTTPException):
+            await auth_module.verify_access_token(token)
+    assert fetches == 0  # inside the window: served from cache, no outbound call

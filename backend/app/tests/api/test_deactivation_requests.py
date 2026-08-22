@@ -54,7 +54,9 @@ def _request(user, status="pending"):
 
 
 class UserSession:
-    """Fake for the auth-router endpoints."""
+    """Fake for the auth-router endpoints. Models the atomic insert: `scalar`
+    on an INSERT returns the new id unless a pending row exists (the partial
+    unique index), and on a SELECT returns the pending row."""
 
     def __init__(self, pending=None, admin_emails=()):
         self.pending = pending
@@ -63,18 +65,28 @@ class UserSession:
         self.committed = False
 
     async def scalar(self, stmt):
+        if getattr(stmt, "is_insert", False) or type(stmt).__name__ == "Insert":
+            if self.pending is not None:
+                return None  # ON CONFLICT DO NOTHING → no row returned
+            req = MagicMock()
+            req.id = uuid.uuid4()
+            req.status = "pending"
+            req.created_at = datetime(2026, 8, 21, tzinfo=UTC)
+            params = stmt.compile().params
+            req.user_id = params.get("user_id")
+            req.practice_id = params.get("practice_id")
+            req.reason = params.get("reason")
+            self.added.append(req)
+            return req.id
         return self.pending
+
+    async def get(self, model, pk):
+        return next((r for r in self.added if r.id == pk), None)
 
     async def execute(self, stmt):
         res = MagicMock()
         res.scalars.return_value.all.return_value = self.admin_emails
         return res
-
-    def add(self, obj):
-        self.added.append(obj)
-        obj.id = uuid.uuid4()
-        obj.status = "pending"
-        obj.created_at = datetime(2026, 8, 21, tzinfo=UTC)
 
     async def flush(self):
         pass

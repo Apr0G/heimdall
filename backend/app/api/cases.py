@@ -91,6 +91,11 @@ STALE_PROCESSING = timedelta(minutes=15)
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB
 
 
+def _assert_within_upload_cap(head: dict | None, doc_type: str) -> None:
+    if head is not None and (head.get("ContentLength") or 0) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"{doc_type} file is too large (25 MB max).")
+
+
 def _is_stalled(case: Case) -> bool:
     """True when a `processing` case's row hasn't advanced within STALE_PROCESSING
     — i.e. the background pipeline died and the case is safe to retry."""
@@ -418,6 +423,10 @@ async def create_case(
         final_key = case_document_key(current_user.practice_id, case.id, doc.doc_type)
         await run_in_threadpool(move_object, doc.s3_key, final_key)
         head = await run_in_threadpool(head_object, final_key)
+        # The cap was checked on the temp key, but the presigned PUT stays
+        # writable until the move — re-check the object that actually landed,
+        # before the pipeline reads the whole body into memory.
+        _assert_within_upload_cap(head, doc.doc_type)
         session.add(
             Document(
                 case_id=case.id,
@@ -926,6 +935,10 @@ async def reanalyze_case(
         final_key = case_document_key(current_user.practice_id, case.id, doc.doc_type)
         await run_in_threadpool(move_object, doc.s3_key, final_key)
         head = await run_in_threadpool(head_object, final_key)
+        # The cap was checked on the temp key, but the presigned PUT stays
+        # writable until the move — re-check the object that actually landed,
+        # before the pipeline reads the whole body into memory.
+        _assert_within_upload_cap(head, doc.doc_type)
         session.add(
             Document(
                 case_id=case.id,

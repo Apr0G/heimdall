@@ -3,7 +3,8 @@ from html import escape as html_escape
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
@@ -678,17 +679,23 @@ async def request_deactivation(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> DeactivationRequest:
-    if await _pending_request(session, current_user) is not None:
+    reason = (body.reason or "").strip()[:500] or None
+    # One open request per user is enforced by the partial unique index; insert
+    # atomically against it rather than check-then-act, so a double submit is
+    # a clean 409 instead of an IntegrityError at commit (same shape as
+    # upsert_outcome).
+    inserted = await session.scalar(
+        pg_insert(DeactivationRequest)
+        .values(user_id=current_user.id, practice_id=current_user.practice_id, reason=reason)
+        .on_conflict_do_nothing(index_elements=["user_id"], index_where=text("status = 'pending'"))
+        .returning(DeactivationRequest.id)
+    )
+    if inserted is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="You already have a pending request.",
         )
-    reason = (body.reason or "").strip()[:500] or None
-    req = DeactivationRequest(
-        user_id=current_user.id, practice_id=current_user.practice_id, reason=reason
-    )
-    session.add(req)
-    await session.flush()
+    req = await session.get(DeactivationRequest, inserted)
     await log_audit(
         session,
         action="deactivation_requested",
