@@ -1,6 +1,12 @@
 import pytest
 
-from app.prompts import analysis_prompt, extraction_prompt, letter_prompt
+from app.prompts import (
+    analysis_prompt,
+    extraction_prompt,
+    letter_prompt,
+    precheck_extraction_prompt,
+    precheck_review_prompt,
+)
 from app.services.document_extractor import NotAPdfError, _assert_pdf
 
 
@@ -21,7 +27,14 @@ def test_assert_pdf_rejects_non_pdf():
 
 def test_prompts_carry_injection_guard():
     # Uploaded document text is untrusted; each prompt must say so.
-    for system in (extraction_prompt.SYSTEM, analysis_prompt.SYSTEM, letter_prompt.SYSTEM):
+    prompts = (
+        extraction_prompt.SYSTEM,
+        analysis_prompt.SYSTEM,
+        letter_prompt.SYSTEM,
+        precheck_extraction_prompt.SYSTEM,
+        precheck_review_prompt.SYSTEM,
+    )
+    for system in prompts:
         assert "UNTRUSTED" in system
 
 

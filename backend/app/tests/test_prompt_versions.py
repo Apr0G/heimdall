@@ -9,7 +9,13 @@ the digest here — deliberately, in the same commit.
 
 import hashlib
 
-from app.prompts import analysis_prompt, extraction_prompt, letter_prompt
+from app.prompts import (
+    analysis_prompt,
+    extraction_prompt,
+    letter_prompt,
+    precheck_extraction_prompt,
+    precheck_review_prompt,
+)
 
 
 def _digest(system: str, user: str) -> str:
@@ -21,6 +27,8 @@ PINNED = {
     "extraction": ("extract_v3", "54e1e3ca74c814dd"),
     "analysis": ("analyze_v6", "9496bdb547376b9a"),
     "letter": ("letter_v5", "d01604c786b394e1"),
+    "precheck_extraction": ("pc_extract_v1", "d2e1350122b298e4"),
+    "precheck_review": ("pc_review_v1", "16c7e4672b47c29f"),
 }
 
 
@@ -52,3 +60,27 @@ def test_letter_prompt_text_matches_version():
         {"p": 1}, {"a": 1}, {"b": 1}, "N", "S", "level_1_internal"
     )
     assert _digest(letter_prompt.SYSTEM, rendered) == digest
+
+
+def test_precheck_extraction_prompt_text_matches_version():
+    version, digest = PINNED["precheck_extraction"]
+    assert precheck_extraction_prompt.VERSION == version
+    assert (
+        _digest(
+            precheck_extraction_prompt.SYSTEM,
+            precheck_extraction_prompt.build_user_prompt("C", "N"),
+        )
+        == digest
+    )
+
+
+def test_precheck_review_prompt_text_matches_version():
+    version, digest = PINNED["precheck_review"]
+    assert precheck_review_prompt.VERSION == version
+    assert (
+        _digest(
+            precheck_review_prompt.SYSTEM,
+            precheck_review_prompt.build_user_prompt({"a": 1}, [{"b": 2}], "N"),
+        )
+        == digest
+    )

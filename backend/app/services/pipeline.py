@@ -13,6 +13,7 @@ from app.services import document_extractor, s3
 from app.services.analysis import run_ai_analysis
 from app.services.extraction import run_ai_extraction
 from app.services.letter import run_appeal_letter
+from app.services.precheck import run_precheck_extraction, run_risk_report
 
 logger = logging.getLogger(__name__)
 
@@ -99,17 +100,29 @@ async def run_full_pipeline(case_id: UUID, run_id: UUID) -> None:
 
 
 async def run_precheck_pipeline(case_id: UUID, run_id: UUID) -> None:
-    """Pre-check orchestrator (draft claim + clinical notes → risk report).
+    """Pre-check orchestrator (draft claim + clinical notes → risk report):
+    document extraction -> claim-line extraction (Bedrock) -> deterministic
+    NCCI pass + documentation review (Bedrock) -> risk_reports row and the
+    final transition to `ready` (run_risk_report sets it — the pre-check
+    pipeline has no letter phase, and a pipeline that never sets `ready`
+    strands every case at the stall detector).
 
-    The extraction/review phases land in the next commit of this feature series
-    (pre-check phase 3); until then a pre-check case fails cleanly — a typed
-    error and a retryable `error` status — rather than stranding in
-    `processing` or pretending to succeed (hard rule 9). Nothing user-facing
-    can create a pre-check yet; the API default is `appeal`.
-    """
+    Same session/ownership/error discipline as run_full_pipeline."""
     if not await _owns_case(case_id, run_id):
         return
-    await _mark_error(case_id, run_id, NotImplementedError("pre-check pipeline pending"))
+
+    phases = (
+        (_extract_documents, {"only_missing_text": True}),
+        (run_precheck_extraction, {}),
+        (run_risk_report, {}),
+    )
+    try:
+        for phase, kwargs in phases:
+            await _touch_if_owner(case_id=case_id, run_id=run_id)
+            if not await _run_phase(case_id, run_id, phase, **kwargs):
+                return
+    except Exception as exc:
+        await _mark_error(case_id, run_id, exc)
 
 
 async def run_reanalysis(case_id: UUID, run_id: UUID) -> None:
