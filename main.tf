@@ -188,11 +188,26 @@ resource "aws_cognito_user_pool" "heimdall" {
   # Who the invite / reset-code emails come from. COGNITO_DEFAULT is AWS's
   # no-reply@verificationemail.com; DEVELOPER sends through our SES identity
   # (ses.tf) as no-reply@heimdallclaims.com. Gated — see ses.tf for why.
+  # (When the custom email sender below is attached, Cognito invokes the Lambda
+  # instead of sending; this block then only remains as the fallback config.)
   email_configuration {
     email_sending_account  = var.cognito_email_from_ses ? "DEVELOPER" : "COGNITO_DEFAULT"
     source_arn             = var.cognito_email_from_ses ? aws_ses_domain_identity.heimdall.arn : null
     from_email_address     = var.cognito_email_from_ses ? local.mail_from : null
     reply_to_email_address = var.cognito_email_from_ses ? local.mail_reply_to : null
+  }
+
+  # SMTP2GO path: every pool email is handed (KMS-encrypted) to the sender
+  # Lambda instead. Gated + rollout/rollback order in cognito-email-sender.tf.
+  dynamic "lambda_config" {
+    for_each = var.cognito_custom_email_sender ? [1] : []
+    content {
+      kms_key_id = aws_kms_key.cognito_email.arn
+      custom_email_sender {
+        lambda_arn     = aws_lambda_function.cognito_email_sender.arn
+        lambda_version = "V1_0"
+      }
+    }
   }
 
   # Self-service "forgot password" goes through the verified email only — never

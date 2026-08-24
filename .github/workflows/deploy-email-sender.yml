@@ -1,0 +1,66 @@
+name: deploy-email-sender
+
+# Build + upload the Cognito custom email sender Lambda bundle
+# (lambda/cognito-email-sender). Terraform owns the function resource but only
+# ever supplies a failing stub; this workflow uploads the real bundle. Tests
+# gate the upload. Rollout/rollback order lives in cognito-email-sender.tf.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "deploy" to confirm uploading the email-sender bundle'
+        required: true
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: lambda/cognito-email-sender
+    steps:
+      - name: Require an explicit confirmation
+        if: inputs.confirm != 'deploy'
+        run: |
+          echo 'Refusing to run: set the "confirm" input to "deploy".'
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install (with dev deps) and test
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+
+      - name: Rebuild production-only node_modules for the bundle
+        # The Secrets Manager SDK is provided by the Lambda runtime; shipping
+        # dev deps would only bloat the zip.
+        run: |
+          rm -rf node_modules
+          npm ci --omit=dev --no-audit --no-fund
+          zip -qr bundle.zip index.mjs node_modules package.json
+          ls -la bundle.zip
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::000000000000:role/heimdall-gha-deploy
+          aws-region: us-east-1
+
+      - name: Upload the bundle
+        run: |
+          set -euo pipefail
+          aws lambda update-function-code \
+            --function-name heimdall-cognito-email-sender \
+            --zip-file fileb://bundle.zip \
+            --query '{CodeSha256: CodeSha256, LastModified: LastModified}' \
+            --output table
+          aws lambda wait function-updated --function-name heimdall-cognito-email-sender
+          echo "Bundle live. If the trigger isn't attached yet, continue the rollout order in cognito-email-sender.tf."

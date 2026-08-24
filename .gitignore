@@ -66,3 +66,4 @@ Thumbs.db
 # only redacts at DISPLAY time — so a committed plan can leak a generated
 # password. Regenerate with `terraform plan -out=...` instead of sharing one.
 *.tfplan
+lambda/cognito-email-sender/stub.zip

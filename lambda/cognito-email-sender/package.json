@@ -1,0 +1,16 @@
+{
+  "name": "cognito-email-sender",
+  "private": true,
+  "type": "module",
+  "description": "Cognito Custom Email Sender: decrypts the Encryption-SDK envelope and sends via SMTP2GO. Built and deployed by .github/workflows/deploy-email-sender.yml.",
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@aws-crypto/decrypt-node": "^4.2.1",
+    "@aws-crypto/kms-keyring-node": "^4.2.1"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.600.0"
+  }
+}
