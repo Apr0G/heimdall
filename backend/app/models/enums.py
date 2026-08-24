@@ -15,6 +15,11 @@ case_status = _pg_enum(
     "draft", "processing", "ready", "submitted", "resolved", "error", name="case_status"
 )
 
+# What kind of work a case is: a denial appeal (the original flow) or a
+# pre-submission risk check on a draft claim. Pre-checks reuse the same
+# statuses but only ever occupy processing/ready/error (enforced in code).
+case_type = _pg_enum("appeal", "pre_check", name="case_type")
+
 plan_type = _pg_enum(
     "commercial",
     "medicare",
@@ -70,7 +75,12 @@ appeal_level = _pg_enum(
 letter_status = _pg_enum("draft", "finalized", "downloaded", "archived", name="letter_status")
 
 model_run_purpose = _pg_enum(
-    "extraction", "analysis", "letter_draft", "classification", name="model_run_purpose"
+    "extraction",
+    "analysis",
+    "letter_draft",
+    "classification",
+    "pre_check_review",
+    name="model_run_purpose",
 )
 
 model_run_status = _pg_enum("success", "error", name="model_run_status")

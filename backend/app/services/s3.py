@@ -11,8 +11,10 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# The three documents every case requires.
-REQUIRED_DOC_TYPES = ("denial", "claim", "clinical")
+# Required document sets by case type. Pre-checks screen a claim that hasn't
+# been submitted yet, so there is no denial document.
+REQUIRED_DOC_TYPES = ("denial", "claim", "clinical")  # appeal
+PRECHECK_DOC_TYPES = ("claim", "clinical")  # pre_check
 
 _client = None
 

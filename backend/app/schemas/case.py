@@ -12,11 +12,13 @@ from pydantic import BaseModel, Field, StrictInt
 OutcomeResult = Literal["overturned", "upheld", "partial", "pending", "withdrawn"]
 OutcomeAction = Literal["appealed", "not_appealed", "pending"]
 CaseStatusFilter = Literal["draft", "processing", "ready", "submitted", "resolved", "error"]
+CaseType = Literal["appeal", "pre_check"]
 
 
 class CaseListItem(BaseModel):
     id: UUID
     status: str
+    case_type: str = "appeal"
     patient_initials: str | None
     payer_name: str | None
     plan_type: str
@@ -38,6 +40,9 @@ class CaseListItem(BaseModel):
     outcome_result: str | None
     amount_recovered_cents: int | None
 
+    # Pre-check cases only: the latest risk report's headline band.
+    overall_risk_band: str | None = None
+
 
 class CaseListResponse(BaseModel):
     items: list[CaseListItem]
@@ -54,6 +59,9 @@ class UploadSlotRequest(BaseModel):
 
 class UploadUrlsRequest(BaseModel):
     documents: list[UploadSlotRequest]
+    # Which document set is required: appeal = denial+claim+clinical,
+    # pre_check = claim+clinical. Ignored by the supplemental-upload endpoint.
+    case_type: CaseType = "appeal"
 
 
 class UploadSlot(BaseModel):
@@ -74,6 +82,7 @@ class NewCaseDocument(BaseModel):
 
 class CreateCaseRequest(BaseModel):
     documents: list[NewCaseDocument]
+    case_type: CaseType = "appeal"
 
 
 class CreateCaseResponse(BaseModel):
@@ -125,6 +134,30 @@ class AnalysisDetail(BaseModel):
     additional_documents_needed: list[str]
 
 
+class RiskFindingDetail(BaseModel):
+    """One flag in a pre-check risk report. Stored as JSONB on risk_reports;
+    validated strictly at write time (schemas/precheck.py), leniently here."""
+
+    check_id: str
+    severity: str  # high | medium | low | info
+    title: str
+    predicted_carc: str | None = None
+    explanation: str | None = None
+    suggested_fix: str | None = None
+    source: str  # "ncci" (deterministic) | "model" (documentation review)
+
+
+class RiskReportDetail(BaseModel):
+    overall_risk_band: str | None
+    findings: list[RiskFindingDetail]
+    deterministic_count: int
+    model_count: int
+    # Which NCCI load served the deterministic pass; None = tables not loaded,
+    # NCCI checks skipped (the report says so via an info finding).
+    ncci_version_tag: str | None
+    created_at: datetime
+
+
 class LetterDetail(BaseModel):
     id: UUID
     version: int
@@ -146,6 +179,7 @@ class OutcomeDetail(BaseModel):
 class CaseDetailResponse(BaseModel):
     id: UUID
     status: str
+    case_type: str = "appeal"
     # True when a `processing` case has stalled (pipeline killed) and can be retried.
     stalled: bool = False
     error_message: str | None
@@ -168,6 +202,8 @@ class CaseDetailResponse(BaseModel):
     letter: LetterDetail | None  # latest version (convenience)
     letters: list[LetterDetail]  # all versions, newest first
     outcome: OutcomeDetail | None
+    # Pre-check cases only: the latest risk report. Always None for appeals.
+    risk_report: RiskReportDetail | None = None
 
 
 class CaseStatusResponse(BaseModel):
@@ -182,9 +218,18 @@ class CaseStatusPollResponse(BaseModel):
     stalled: bool = False
 
 
+class ProcessingItem(BaseModel):
+    id: UUID
+    case_type: str
+
+
 class ProcessingIdsResponse(BaseModel):
     # PHI-free feed for the background "is anything done yet?" poll.
+    # `ids` is the original shape and MUST stay — the deployed notifier reads
+    # it, and dropping it during a deploy window would silently kill ready-
+    # toasts. `items` is the additive, typed shape the notifier migrates to.
     ids: list[UUID]
+    items: list[ProcessingItem] = []
 
 
 class OutcomeRequest(BaseModel):
@@ -215,7 +260,10 @@ class PendingOutcomeItem(BaseModel):
 
 
 class CaseSummaryResponse(BaseModel):
+    # Appeal cases only — pre-checks are counted separately so the recovery
+    # stats keep meaning "appeals" (win rate over pre-checks is nonsense).
     month_case_count: int
+    month_pre_check_count: int = 0
     resolved_count: int
     win_count: int
     win_rate: float | None

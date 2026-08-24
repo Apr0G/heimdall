@@ -31,7 +31,7 @@ from app.models import AuditLog, Case, ModelRun, Outcome, Practice, User
 pytestmark = pytest.mark.asyncio
 
 CASE_STATUSES = {"draft", "processing", "ready", "submitted", "resolved", "error"}
-RUN_PURPOSES = {"extraction", "analysis", "letter_draft", "classification"}
+RUN_PURPOSES = {"extraction", "analysis", "letter_draft", "classification", "pre_check_review"}
 OUTCOME_RESULTS = {"overturned", "upheld", "partial", "pending", "withdrawn"}
 
 

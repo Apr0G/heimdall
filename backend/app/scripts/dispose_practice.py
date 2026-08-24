@@ -34,6 +34,8 @@ _DELETE_ORDER = [
     "outcomes",
     "appeal_letters",
     "analyses",
+    # Before model_runs: risk_reports.model_run_id is ON DELETE RESTRICT.
+    "risk_reports",
     "extractions",
     "documents",
     "model_runs",

@@ -9,6 +9,7 @@ from app.models.model_run import ModelRun
 from app.models.ncci import NcciLoad, NcciMue, NcciPtpEdit
 from app.models.outcome import Outcome
 from app.models.practice import Practice
+from app.models.risk_report import RiskReport
 from app.models.user import User
 
 __all__ = [
@@ -25,5 +26,6 @@ __all__ = [
     "NcciPtpEdit",
     "Outcome",
     "Practice",
+    "RiskReport",
     "User",
 ]

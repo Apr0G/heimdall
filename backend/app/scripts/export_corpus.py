@@ -164,7 +164,10 @@ async def main() -> None:
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     async with session_factory() as session:
-        cases = (await session.scalars(select(Case))).all()
+        # Appeals only: the corpus is (denial, appeal, outcome) triples, and a
+        # pre-check case has no denial and no outcome — including one would emit
+        # a hollow record that poisons the training labels.
+        cases = (await session.scalars(select(Case).where(Case.case_type == "appeal"))).all()
         extractions = _group((await session.scalars(select(Extraction))).all())
         analyses = _group((await session.scalars(select(Analysis))).all())
         letters = _group((await session.scalars(select(AppealLetter))).all())

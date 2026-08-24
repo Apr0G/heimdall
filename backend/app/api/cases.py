@@ -30,6 +30,7 @@ from app.models import (
     Document,
     Extraction,
     Outcome,
+    RiskReport,
     User,
 )
 from app.schemas.case import (
@@ -41,6 +42,7 @@ from app.schemas.case import (
     CaseStatusPollResponse,
     CaseStatusResponse,
     CaseSummaryResponse,
+    CaseType,
     CreateCaseRequest,
     CreateCaseResponse,
     DocumentDetail,
@@ -50,7 +52,10 @@ from app.schemas.case import (
     OutcomeRequest,
     PendingOutcomeItem,
     ProcessingIdsResponse,
+    ProcessingItem,
     ReanalyzeRequest,
+    RiskFindingDetail,
+    RiskReportDetail,
     UploadSlot,
     UploadUrlsRequest,
     UploadUrlsResponse,
@@ -59,8 +64,9 @@ from app.services import pdf_gen
 from app.services.analysis import SUPPLEMENTAL_DOC_TYPES
 from app.services.audit import log_audit, log_read, safe_ip
 from app.services.extraction import deadline_note
-from app.services.pipeline import run_full_pipeline, run_reanalysis
+from app.services.pipeline import run_full_pipeline, run_precheck_pipeline, run_reanalysis
 from app.services.s3 import (
+    PRECHECK_DOC_TYPES,
     REQUIRED_DOC_TYPES,
     case_document_key,
     head_object,
@@ -137,10 +143,13 @@ async def list_cases(
     # raises DataError -> 500. `?status=Ready` is a client bug deserving a 422.
     status: CaseStatusFilter | None = Query(None, description="Filter by case status"),
     payer: str | None = Query(None, description="Case-insensitive payer name search"),
+    # Defaults to appeals so the pre-existing dashboard keeps its exact shape;
+    # pre-check cases (NULL deadlines, no outcomes) never leak into it.
+    case_type: CaseType = Query("appeal", description="Which kind of cases to list"),
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
 ) -> CaseListResponse:
-    filters = [Case.practice_id == current_user.practice_id]
+    filters = [Case.practice_id == current_user.practice_id, Case.case_type == case_type]
     if status:
         filters.append(Case.status == status)
     if payer:
@@ -190,10 +199,24 @@ async def list_cases(
         ).all()
         outcomes = {o.case_id: o for o in out_rows}
 
+    risk_bands: dict = {}
+    if case_ids and case_type == "pre_check":
+        rr_rows = (
+            await session.scalars(
+                select(RiskReport)
+                .where(RiskReport.case_id.in_(case_ids))
+                .order_by(RiskReport.case_id, RiskReport.created_at.desc())
+                .distinct(RiskReport.case_id)
+            )
+        ).all()
+        risk_bands = {r.case_id: r.overall_risk_band for r in rr_rows}
+
     items = [
         CaseListItem(
             id=c.id,
             status=c.status,
+            case_type=c.case_type,
+            overall_risk_band=risk_bands.get(c.id),
             patient_initials=c.patient_initials,
             payer_name=c.payer_name,
             plan_type=c.plan_type,
@@ -251,7 +274,20 @@ async def case_summary(
     month_case_count = await session.scalar(
         select(func.count())
         .select_from(Case)
-        .where(Case.practice_id == pid, Case.created_at >= month_start)
+        .where(
+            Case.practice_id == pid,
+            Case.case_type == "appeal",
+            Case.created_at >= month_start,
+        )
+    )
+    month_pre_check_count = await session.scalar(
+        select(func.count())
+        .select_from(Case)
+        .where(
+            Case.practice_id == pid,
+            Case.case_type == "pre_check",
+            Case.created_at >= month_start,
+        )
     )
 
     def _outcome_count(results: set[str]):
@@ -310,6 +346,7 @@ async def case_summary(
 
     return CaseSummaryResponse(
         month_case_count=month_case_count or 0,
+        month_pre_check_count=month_pre_check_count or 0,
         resolved_count=resolved_count,
         win_count=win_count,
         win_rate=win_rate(win_count, resolved_count),
@@ -336,15 +373,18 @@ async def processing_case_ids(
     """IDs of the practice's in-flight cases — a PHI-free feed for the background
     'is anything done yet?' poll, so the full (PHI-bearing) list isn't fetched
     (or audited) every few seconds."""
-    ids = (
-        await session.scalars(
-            select(Case.id).where(
+    rows = (
+        await session.execute(
+            select(Case.id, Case.case_type).where(
                 Case.practice_id == current_user.practice_id,
                 Case.status == "processing",
             )
         )
     ).all()
-    return ProcessingIdsResponse(ids=list(ids))
+    return ProcessingIdsResponse(
+        ids=[r.id for r in rows],
+        items=[ProcessingItem(id=r.id, case_type=r.case_type) for r in rows],
+    )
 
 
 def _reject_duplicate_keys(documents: list) -> None:
@@ -356,12 +396,33 @@ def _reject_duplicate_keys(documents: list) -> None:
         raise HTTPException(status_code=400, detail="Duplicate upload key in request")
 
 
-def _require_three_docs(doc_types: list[str]) -> None:
-    if sorted(doc_types) != sorted(REQUIRED_DOC_TYPES):
+# Exact document set per case type; the sorted-exact-match also rejects
+# duplicate types (which would silently overwrite each other in the pipeline's
+# doc_type-keyed text map).
+_DOCS_BY_CASE_TYPE = {"appeal": REQUIRED_DOC_TYPES, "pre_check": PRECHECK_DOC_TYPES}
+
+# Endpoints that only make sense for an appeal (supplemental docs, submission,
+# outcomes). A `ready` pre-check deliberately has no re-run path in v1 — a
+# corrected claim is a new pre-check (decision D8 in the plan).
+_APPEAL_ONLY = "This action is not available for pre-check cases"
+
+
+def _require_docs(case_type: str, doc_types: list[str]) -> None:
+    required = _DOCS_BY_CASE_TYPE[case_type]
+    if sorted(doc_types) != sorted(required):
         raise HTTPException(
             status_code=400,
-            detail=f"Exactly these documents are required: {', '.join(REQUIRED_DOC_TYPES)}",
+            detail=f"Exactly these documents are required: {', '.join(required)}",
         )
+
+
+def _require_appeal_case(case: Case) -> None:
+    if case.case_type != "appeal":
+        raise HTTPException(status_code=400, detail=_APPEAL_ONLY)
+
+
+def _pipeline_for(case_type: str):
+    return run_precheck_pipeline if case_type == "pre_check" else run_full_pipeline
 
 
 @router.post("/upload-urls", response_model=UploadUrlsResponse)
@@ -369,7 +430,7 @@ async def create_upload_urls(
     body: UploadUrlsRequest,
     current_user: User = Depends(get_current_user),
 ) -> UploadUrlsResponse:
-    _require_three_docs([d.doc_type for d in body.documents])
+    _require_docs(body.case_type, [d.doc_type for d in body.documents])
     uploads: list[UploadSlot] = []
     for doc in body.documents:
         if doc.content_type != "application/pdf":
@@ -390,7 +451,7 @@ async def create_case(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> CreateCaseResponse:
-    _require_three_docs([d.doc_type for d in body.documents])
+    _require_docs(body.case_type, [d.doc_type for d in body.documents])
     _reject_duplicate_keys(body.documents)
 
     # Only accept uploads this practice just presigned, and confirm they landed.
@@ -411,6 +472,7 @@ async def create_case(
         practice_id=current_user.practice_id,
         created_by=current_user.id,
         status="processing",
+        case_type=body.case_type,
         pipeline_run_id=run_id,
     )
     session.add(case)
@@ -459,12 +521,12 @@ async def create_case(
         practice_id=current_user.practice_id,
         ip=ip,
         user_agent=user_agent,
-        metadata={"document_count": len(body.documents)},
+        metadata={"document_count": len(body.documents), "case_type": body.case_type},
     )
     await session.commit()
 
     # Kick off the pipeline after the response is sent (claimed by run_id).
-    background_tasks.add_task(run_full_pipeline, case.id, run_id)
+    background_tasks.add_task(_pipeline_for(body.case_type), case.id, run_id)
 
     return CreateCaseResponse(id=case.id, status=case.status)
 
@@ -538,6 +600,11 @@ async def get_case(
         )
     ).all()
     outcome = await session.scalar(select(Outcome).where(Outcome.case_id == case_id))
+    risk_report = (
+        await _latest(session, RiskReport, case_id, RiskReport.created_at.desc())
+        if case.case_type == "pre_check"
+        else None
+    )
 
     letter_details = [
         LetterDetail(
@@ -554,6 +621,7 @@ async def get_case(
     return CaseDetailResponse(
         id=case.id,
         status=case.status,
+        case_type=case.case_type,
         stalled=_is_stalled(case),
         error_message=case.error_message,
         patient_initials=case.patient_initials,
@@ -630,6 +698,18 @@ async def get_case(
             if outcome
             else None
         ),
+        risk_report=(
+            RiskReportDetail(
+                overall_risk_band=risk_report.overall_risk_band,
+                findings=[RiskFindingDetail(**f) for f in risk_report.findings],
+                deterministic_count=risk_report.deterministic_count,
+                model_count=risk_report.model_count,
+                ncci_version_tag=risk_report.ncci_version_tag,
+                created_at=risk_report.created_at,
+            )
+            if risk_report
+            else None
+        ),
     )
 
 
@@ -654,6 +734,7 @@ async def mark_submitted(
     session: AsyncSession = Depends(get_db),
 ) -> CaseStatusResponse:
     case = await _get_owned_case(session, case_id, current_user)
+    _require_appeal_case(case)
     if case.status not in {"ready", "submitted"}:
         raise HTTPException(status_code=409, detail="Only a ready case can be marked submitted")
     case.status = "submitted"
@@ -696,6 +777,7 @@ async def upsert_outcome(
     # `result` and `action_taken` are Literal-typed on OutcomeRequest, so an invalid
     # value is already a 422 before this handler runs.
     case = await _get_owned_case(session, case_id, current_user)
+    _require_appeal_case(case)
     if case.status not in {"submitted", "resolved"}:
         raise HTTPException(
             status_code=409, detail="Mark the case submitted before logging an outcome"
@@ -751,7 +833,7 @@ async def retry_case(
     session: AsyncSession = Depends(get_db),
 ) -> CaseStatusResponse:
     # 404 (not 409) for a case outside the caller's practice — see _get_owned_case.
-    await _get_owned_case(session, case_id, current_user)
+    case = await _get_owned_case(session, case_id, current_user)
     # Claim atomically: the eligibility test lives in the UPDATE's WHERE, so two
     # concurrent retries cannot both pass it. The fresh token also makes any
     # still-running stalled pipeline abort at its next ownership check.
@@ -773,7 +855,8 @@ async def retry_case(
         user_agent=request.headers.get("user-agent"),
     )
     await session.commit()
-    background_tasks.add_task(run_full_pipeline, case_id, run_id)
+    # Dispatch by case type — retrying a pre-check must not run the appeal pipeline.
+    background_tasks.add_task(_pipeline_for(case.case_type), case_id, run_id)
     # The claim wrote status via Core UPDATE (synchronize_session=False), so the
     # ORM copy is stale — report the value the claim just committed.
     return CaseStatusResponse(id=case_id, status="processing")
@@ -874,7 +957,10 @@ async def create_additional_upload_urls(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> UploadUrlsResponse:
-    await _get_owned_case(session, case_id, current_user)
+    case = await _get_owned_case(session, case_id, current_user)
+    # Supplemental docs feed reanalysis, which is appeal-only — presigning for a
+    # pre-check would only create orphaned uploads that can never attach.
+    _require_appeal_case(case)
     _require_supplemental_types([d.doc_type for d in body.documents])
     uploads: list[UploadSlot] = []
     for doc in body.documents:
@@ -900,6 +986,7 @@ async def reanalyze_case(
     """Attach conditional documents to a ready case, then re-run analysis + letter
     (drafting the next letter version) in the background."""
     case = await _get_owned_case(session, case_id, current_user)
+    _require_appeal_case(case)
     if case.status != "ready":
         raise HTTPException(status_code=409, detail="Only a ready case can be reanalyzed")
     _require_supplemental_types([d.doc_type for d in body.documents])

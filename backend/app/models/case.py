@@ -6,7 +6,7 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKey
-from app.models.enums import case_status, plan_type
+from app.models.enums import case_status, case_type, plan_type
 
 
 class Case(Base, UUIDPrimaryKey, TimestampMixin):
@@ -23,6 +23,12 @@ class Case(Base, UUIDPrimaryKey, TimestampMixin):
         nullable=False,
     )
     status: Mapped[str] = mapped_column(case_status, nullable=False, server_default=text("'draft'"))
+    # 'appeal' (denial + claim + clinical → appeal letter) or 'pre_check'
+    # (draft claim + clinical → risk report). Discriminates pipelines, document
+    # requirements, and which endpoints apply.
+    case_type: Mapped[str] = mapped_column(
+        case_type, nullable=False, server_default=text("'appeal'")
+    )
     payer_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     plan_type: Mapped[str] = mapped_column(
         plan_type, nullable=False, server_default=text("'unknown'")
@@ -47,6 +53,8 @@ class Case(Base, UUIDPrimaryKey, TimestampMixin):
 
     __table_args__ = (
         Index("ix_cases_practice_status", "practice_id", "status"),
+        # The case list filters practice + case_type (+ optional status).
+        Index("ix_cases_practice_type_status", "practice_id", "case_type", "status"),
         Index("ix_cases_appeal_deadline", "appeal_deadline"),
         Index("ix_cases_created_by", "created_by"),
     )

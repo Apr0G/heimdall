@@ -42,6 +42,7 @@ from app.scripts import s3_purge
 CASE_TABLES = [
     "extractions",
     "analyses",
+    "risk_reports",
     "appeal_letters",
     "outcomes",
     "documents",

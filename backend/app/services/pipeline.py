@@ -98,6 +98,20 @@ async def run_full_pipeline(case_id: UUID, run_id: UUID) -> None:
         await _mark_error(case_id, run_id, exc)
 
 
+async def run_precheck_pipeline(case_id: UUID, run_id: UUID) -> None:
+    """Pre-check orchestrator (draft claim + clinical notes → risk report).
+
+    The extraction/review phases land in the next commit of this feature series
+    (pre-check phase 3); until then a pre-check case fails cleanly — a typed
+    error and a retryable `error` status — rather than stranding in
+    `processing` or pretending to succeed (hard rule 9). Nothing user-facing
+    can create a pre-check yet; the API default is `appeal`.
+    """
+    if not await _owns_case(case_id, run_id):
+        return
+    await _mark_error(case_id, run_id, NotImplementedError("pre-check pipeline pending"))
+
+
 async def run_reanalysis(case_id: UUID, run_id: UUID) -> None:
     """Re-run analysis + letter after the doctor adds conditional documents
     (Phase 12). Extracts text from the newly added docs, re-analyzes with the
