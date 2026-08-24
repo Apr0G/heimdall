@@ -115,3 +115,34 @@ export function ProbabilityBadge({ band }: { band: string | null }) {
     </span>
   );
 }
+
+// Denial RISK — the polarity is the inverse of ProbabilityBadge: high appeal
+// probability is good (green), high denial risk is bad (red). Never share maps.
+const RISK: Record<string, string> = {
+  low: "--ok",
+  moderate: "--warn",
+  high: "--danger",
+};
+
+export function RiskBadge({
+  band,
+  size = "sm",
+}: {
+  band: string | null | undefined;
+  size?: "sm" | "lg";
+}) {
+  if (!band)
+    return <span className="text-sm text-muted-foreground">No flags</span>;
+  return (
+    <span
+      className={cn(
+        size === "lg"
+          ? "inline-flex items-center rounded-md px-4 py-2 text-[15px] font-extrabold capitalize"
+          : cn(PILL, "font-bold capitalize"),
+      )}
+      style={tone(RISK[band] ?? "--neutral")}
+    >
+      {band} risk
+    </span>
+  );
+}

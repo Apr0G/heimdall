@@ -18,9 +18,45 @@ export function SiteHeader() {
   return (
     <header className="border-b">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
-        <Link href={homePath(user?.role)} aria-label="Heimdall home">
-          <Wordmark />
-        </Link>
+        <div className="flex items-center gap-5">
+          <Link href={homePath(user?.role)} aria-label="Heimdall home">
+            <Wordmark />
+          </Link>
+          {user && user.role !== "admin" && (
+            <nav className="flex items-center gap-4 text-sm">
+              <Link
+                href="/dashboard"
+                aria-current={
+                  pathname.startsWith("/dashboard") ||
+                  pathname.startsWith("/cases")
+                    ? "page"
+                    : undefined
+                }
+                className={cn(
+                  "text-muted-foreground hover:text-foreground",
+                  (pathname.startsWith("/dashboard") ||
+                    pathname.startsWith("/cases")) &&
+                    "font-semibold text-foreground",
+                )}
+              >
+                Appeals
+              </Link>
+              <Link
+                href="/pre-checks"
+                aria-current={
+                  pathname.startsWith("/pre-checks") ? "page" : undefined
+                }
+                className={cn(
+                  "text-muted-foreground hover:text-foreground",
+                  pathname.startsWith("/pre-checks") &&
+                    "font-semibold text-foreground",
+                )}
+              >
+                Pre-checks
+              </Link>
+            </nav>
+          )}
+        </div>
         <div className="flex items-center gap-2 text-sm">
           {user?.role === "admin" && (
             <Link

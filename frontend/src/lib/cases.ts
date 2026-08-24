@@ -3,6 +3,7 @@ import { api } from "@/lib/api";
 export type CaseListItem = {
   id: string;
   status: string;
+  case_type?: string;
   patient_initials: string | null;
   payer_name: string | null;
   plan_type: string;
@@ -20,6 +21,8 @@ export type CaseListItem = {
   probability_band: string | null;
   outcome_result: string | null;
   amount_recovered_cents: number | null;
+  // Pre-check cases only: the latest risk report's headline band.
+  overall_risk_band?: string | null;
 };
 
 export type CaseListResponse = {
@@ -32,6 +35,8 @@ export type CaseListResponse = {
 export type CaseFilters = {
   status?: string;
   payer?: string;
+  // Server defaults to "appeal"; pass "pre_check" for the pre-checks list.
+  case_type?: string;
 };
 
 export async function fetchCases(
@@ -41,15 +46,24 @@ export async function fetchCases(
   const params: Record<string, string> = { page: String(page) };
   if (filters.status) params.status = filters.status;
   if (filters.payer) params.payer = filters.payer;
+  if (filters.case_type) params.case_type = filters.case_type;
   const res = await api.get<CaseListResponse>("/api/cases", { params });
   return res.data;
 }
 
-// PHI-free feed of in-flight case ids, for the background "is it done yet?" poll
+// PHI-free feed of in-flight cases, for the background "is it done yet?" poll
 // (so the full PHI-bearing list isn't fetched/audited every few seconds).
-export async function fetchProcessingIds(): Promise<string[]> {
-  const res = await api.get<{ ids: string[] }>("/api/cases/processing-ids");
-  return res.data.ids;
+export type ProcessingItem = { id: string; case_type: string };
+export async function fetchProcessingItems(): Promise<ProcessingItem[]> {
+  const res = await api.get<{ ids: string[]; items?: ProcessingItem[] }>(
+    "/api/cases/processing-ids",
+  );
+  // `items` is the typed shape; fall back to bare ids (treated as appeals)
+  // during a deploy window where the backend predates it.
+  return (
+    res.data.items ??
+    res.data.ids.map((id) => ({ id, case_type: "appeal" as const }))
+  );
 }
 
 // PHI-free status for the detail page's processing poll (no audit row per poll).
@@ -114,9 +128,29 @@ export type OutcomeDetail = {
   reported_at: string;
 };
 
+export type RiskFinding = {
+  check_id: string;
+  severity: string; // high | medium | low | info
+  title: string;
+  predicted_carc: string | null;
+  explanation: string | null;
+  suggested_fix: string | null;
+  source: string; // "ncci" (deterministic) | "model" (documentation review)
+};
+
+export type RiskReportDetail = {
+  overall_risk_band: string | null;
+  findings: RiskFinding[];
+  deterministic_count: number;
+  model_count: number;
+  ncci_version_tag: string | null;
+  created_at: string;
+};
+
 export type CaseDetail = {
   id: string;
   status: string;
+  case_type?: string;
   stalled?: boolean;
   error_message: string | null;
   patient_initials: string | null;
@@ -136,6 +170,8 @@ export type CaseDetail = {
   letter: LetterDetail | null;
   letters: LetterDetail[];
   outcome: OutcomeDetail | null;
+  // Pre-check cases only; always null for appeals.
+  risk_report?: RiskReportDetail | null;
 };
 
 export type OutcomePayload = {
@@ -194,6 +230,7 @@ export type PendingOutcomeItem = {
 
 export type CaseSummary = {
   month_case_count: number;
+  month_pre_check_count?: number;
   resolved_count: number;
   win_count: number;
   win_rate: number | null;

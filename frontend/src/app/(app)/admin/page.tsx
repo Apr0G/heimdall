@@ -29,6 +29,7 @@ const RUN_PURPOSES = [
   "analysis",
   "letter_draft",
   "classification",
+  "pre_check_review",
 ];
 const OUTCOME_RESULTS = [
   "overturned",

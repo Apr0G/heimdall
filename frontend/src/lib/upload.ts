@@ -57,6 +57,67 @@ export async function createCaseWithUploads(
   return data;
 }
 
+// ---- Pre-checks (draft claim + clinical notes, no denial) ----
+
+export type PreCheckDocType = "claim" | "clinical";
+export const PRECHECK_DOC_TYPES: PreCheckDocType[] = ["claim", "clinical"];
+
+/**
+ * Presign two uploads, PUT each PDF directly to S3 (with progress), then create
+ * the pre-check case. Same flow as createCaseWithUploads with the pre_check
+ * document set and case_type.
+ */
+export async function createPreCheckWithUploads(
+  files: Record<PreCheckDocType, File>,
+  onProgress: (doc: PreCheckDocType, pct: number) => void,
+): Promise<{ id: string; status: string }> {
+  const { data: presigned } = await api.post<{
+    uploads: {
+      doc_type: PreCheckDocType;
+      s3_key: string;
+      upload_url: string;
+    }[];
+  }>("/api/cases/upload-urls", {
+    case_type: "pre_check",
+    documents: PRECHECK_DOC_TYPES.map((doc) => ({
+      doc_type: doc,
+      filename: files[doc].name,
+      content_type: "application/pdf",
+    })),
+  });
+
+  const keyByDoc = {} as Record<PreCheckDocType, string>;
+  await Promise.all(
+    presigned.uploads.map(async (slot) => {
+      keyByDoc[slot.doc_type] = slot.s3_key;
+      await axios.put(slot.upload_url, files[slot.doc_type], {
+        headers: { "Content-Type": "application/pdf" },
+        onUploadProgress: (event) => {
+          if (event.total) {
+            onProgress(
+              slot.doc_type,
+              Math.round((event.loaded / event.total) * 100),
+            );
+          }
+        },
+      });
+    }),
+  );
+
+  const { data } = await api.post<{ id: string; status: string }>(
+    "/api/cases",
+    {
+      case_type: "pre_check",
+      documents: PRECHECK_DOC_TYPES.map((doc) => ({
+        doc_type: doc,
+        s3_key: keyByDoc[doc],
+        filename: files[doc].name,
+      })),
+    },
+  );
+  return data;
+}
+
 // Conditional documents a doctor can add after the first review (Phase 12).
 export type AdditionalDocType = "prior_auth" | "prior_treatment";
 
