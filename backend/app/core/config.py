@@ -67,9 +67,16 @@ class Settings(BaseSettings):
     # REDIS_URL so the credential never sits in the task definition's plaintext
     # environment; `redis_dsn` splices it in at connect time.
     redis_auth_token: str = ""
-    # Transactional email the API sends itself (authenticator-recovery codes) via
-    # SES. The sender must be a verified SES identity (ses.tf); the pool's own
-    # invite/reset emails are configured on the Cognito side, not here.
+    # Transactional email the API sends itself (authenticator-recovery codes).
+    # Provider-switched: "ses" (default; sender must be a verified SES identity,
+    # ses.tf) or "smtp2go" (HTTPS API; sender domain verified in SMTP2GO via
+    # CNAMEs — added while the SES account is stuck in the sandbox, which
+    # refuses mail to unverified recipients). The pool's own invite/reset emails
+    # are configured on the Cognito side, not here. These emails carry auth
+    # codes to practice staff — NEVER PHI; that rule is what makes a non-BAA
+    # provider acceptable for them.
+    mail_provider: Literal["ses", "smtp2go"] = "ses"
+    smtp2go_api_key: str = ""
     mail_from: str = "Heimdall <no-reply@heimdallclaims.com>"
     mail_reply_to: str = "info@heimdallclaims.com"
     # Authenticator-recovery email codes: lifetime and attempts before a new code

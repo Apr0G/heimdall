@@ -224,12 +224,12 @@ resource "aws_iam_role_policy" "ecs_execution_secrets" {
       Action = ["secretsmanager:GetSecretValue", "kms:Decrypt"]
       # When the least-privilege role is active the app may read ONLY its limited
       # URL — never the admin URL (which migrations use).
-      Resource = [
+      Resource = concat([
         var.app_db_role_active ? aws_secretsmanager_secret.app_database_url.arn : aws_secretsmanager_secret.database_url.arn,
         aws_secretsmanager_secret.redis_auth.arn,
         aws_secretsmanager_secret.phi_hash_pepper.arn,
         aws_kms_key.heimdall.arn,
-      ]
+      ], var.mail_provider == "smtp2go" ? [aws_secretsmanager_secret.smtp2go_api_key.arn] : [])
     }]
   })
 }
@@ -321,7 +321,7 @@ resource "aws_cloudformation_stack" "express" {
               LogGroup        = aws_cloudwatch_log_group.api.name
               LogStreamPrefix = "api"
             }
-            Environment = [
+            Environment = concat([
               { Name = "APP_ENV", Value = "production" },
               { Name = "AWS_REGION", Value = "us-east-1" },
               { Name = "S3_BUCKET_NAME", Value = aws_s3_bucket.documents.bucket },
@@ -340,8 +340,12 @@ resource "aws_cloudformation_stack" "express" {
               # global CA bundle baked into the image. Verified to connect via a
               # one-off in-VPC task (2026-07-11) before enabling. §164.312(e)(1).
               { Name = "DB_SSL_CA_BUNDLE", Value = "/app/rds-ca.pem" },
-            ]
-            Secrets = [
+              # mail_provider only when non-default, so flipping the var is the
+              # entire rollout (and rollback) for the SMTP2GO fallback.
+              ], var.mail_provider == "smtp2go" ? [
+              { Name = "MAIL_PROVIDER", Value = "smtp2go" },
+            ] : [])
+            Secrets = concat([
               # heimdall_app (limited) once cut over; heimdall_admin until then.
               { Name = "DATABASE_URL", ValueFrom = var.app_db_role_active ? aws_secretsmanager_secret.app_database_url.arn : aws_secretsmanager_secret.database_url.arn },
               { Name = "REDIS_AUTH_TOKEN", ValueFrom = aws_secretsmanager_secret.redis_auth.arn },
@@ -349,7 +353,12 @@ resource "aws_cloudformation_stack" "express" {
               # claim_ref). Without it those degrade to omitted/failing rather
               # than writing an offline-brute-forceable digest.
               { Name = "PHI_HASH_PEPPER", ValueFrom = aws_secretsmanager_secret.phi_hash_pepper.arn },
-            ]
+              # Injected only when the provider is active: referencing a secret
+              # with no value set fails task startup, so the ARN must not appear
+              # until the operator has stored the key.
+              ], var.mail_provider == "smtp2go" ? [
+              { Name = "SMTP2GO_API_KEY", ValueFrom = aws_secretsmanager_secret.smtp2go_api_key.arn },
+            ] : [])
           }
         }
       }

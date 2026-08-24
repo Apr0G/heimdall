@@ -78,3 +78,37 @@ resource "aws_ses_identity_notification_topic" "complaint" {
   topic_arn                = aws_sns_topic.alerts.arn
   include_original_headers = false
 }
+
+# =============================================================================
+# SMTP2GO fallback for the API's own transactional mail (mailer.py) — added
+# because the SES account is stuck in the sandbox (production-access request
+# denied 2026-08-24) and sandbox SES refuses mail to unverified recipients,
+# which breaks authenticator-recovery codes for real users.
+#
+# Scope: mailer.py ONLY (auth codes to practice staff — never PHI, which is
+# what makes a non-BAA provider acceptable). Cognito's invite/reset mail is
+# unaffected; it keeps using COGNITO_DEFAULT until the SES sandbox exit.
+#
+# Rollout: (1) verify heimdallclaims.com in SMTP2GO (three CNAMEs at Wix — no
+# MX record, which is why SMTP2GO fits where Resend didn't), (2) terraform
+# apply, (3) put the API key into heimdall/smtp2go-api-key in Secrets Manager,
+# (4) set mail_provider = "smtp2go" in the tfvars file and apply again.
+# Flipping back to SES later is the same var change in reverse.
+# =============================================================================
+
+variable "mail_provider" {
+  description = "Transactional-email provider for mailer.py: \"ses\" (default) or \"smtp2go\". Flip to smtp2go only after the domain is verified in SMTP2GO and the API key secret has a value — the task fails to start if the referenced secret is empty."
+  type        = string
+  default     = "ses"
+  validation {
+    condition     = contains(["ses", "smtp2go"], var.mail_provider)
+    error_message = "mail_provider must be \"ses\" or \"smtp2go\"."
+  }
+}
+
+resource "aws_secretsmanager_secret" "smtp2go_api_key" {
+  name       = "heimdall/smtp2go-api-key"
+  kms_key_id = aws_kms_key.heimdall.arn
+  # No secret_version resource: the value is set by hand in the console/CLI so
+  # the API key never touches Terraform state.
+}
