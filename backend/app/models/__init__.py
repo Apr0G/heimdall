@@ -6,6 +6,7 @@ from app.models.deactivation_request import DeactivationRequest
 from app.models.document import Document
 from app.models.extraction import Extraction
 from app.models.model_run import ModelRun
+from app.models.ncci import NcciLoad, NcciMue, NcciPtpEdit
 from app.models.outcome import Outcome
 from app.models.practice import Practice
 from app.models.user import User
@@ -19,6 +20,9 @@ __all__ = [
     "Document",
     "Extraction",
     "ModelRun",
+    "NcciLoad",
+    "NcciMue",
+    "NcciPtpEdit",
     "Outcome",
     "Practice",
     "User",

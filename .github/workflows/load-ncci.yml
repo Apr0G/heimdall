@@ -1,0 +1,71 @@
+name: load-ncci
+
+# Refresh the CMS NCCI reference tables (practitioner PTP + MUE) in RDS.
+# Monthly rather than quarterly: files post ~1 month before each quarter's
+# effective date, and CMS occasionally posts mid-quarter replacement files
+# (vNNrN revision bumps) — a monthly poll catches both. The loader is
+# idempotent per version, so most months are a fast no-op. Runs on the app
+# task def (heimdall_app; 0012 grants it DELETE on the two NCCI data tables).
+# A failure here means the edit data is going stale — treat as fix-this-week.
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Reload even if this version is already recorded (FORCE=1)"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "0 7 3 * *" # 3rd of every month, 07:00 UTC
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::000000000000:role/heimdall-gha-deploy
+          aws-region: us-east-1
+
+      - name: Run the NCCI loader as a one-off ECS task
+        run: |
+          set -euo pipefail
+          CLUSTER=default
+          TASKDEF=default-heimdall-api
+          FORCE_ENV=""
+          if [ "${{ inputs.force }}" = "true" ]; then
+            FORCE_ENV=',"environment":[{"name":"FORCE","value":"1"}]'
+          fi
+
+          CONTAINER=$(aws ecs describe-task-definition --task-definition "$TASKDEF" \
+            --query 'taskDefinition.containerDefinitions[0].name' --output text)
+          VPC=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true \
+            --query 'Vpcs[0].VpcId' --output text)
+          SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC" \
+            --query 'Subnets[].SubnetId' --output text | tr '\t' ',')
+          SG=$(aws ec2 describe-security-groups \
+            --filters "Name=group-name,Values=default-heimdall-api-$VPC" "Name=vpc-id,Values=$VPC" \
+            --query 'SecurityGroups[0].GroupId' --output text)
+
+          TASK_ARN=$(aws ecs run-task --cluster "$CLUSTER" --task-definition "$TASKDEF" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=ENABLED}" \
+            --overrides "{\"containerOverrides\":[{\"name\":\"$CONTAINER\",\"command\":[\"python\",\"-m\",\"app.scripts.load_ncci\"]$FORCE_ENV}]}" \
+            --query 'tasks[0].taskArn' --output text)
+          echo "Started NCCI load task: $TASK_ARN"
+
+          # `ecs wait` gives up after ~10 min; the 2.6M-row insert can take longer.
+          for _ in 1 2 3 4 5 6; do
+            if aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN"; then
+              break
+            fi
+          done
+          EXIT=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+          REASON=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].stoppedReason' --output text)
+          echo "ncci loader exit code: $EXIT ($REASON)"
+          test "$EXIT" = "0"

@@ -9,7 +9,7 @@ from starlette.concurrency import run_in_threadpool
 from app.models import Analysis, Case, Document, Extraction
 from app.prompts import analysis_prompt
 from app.schemas.analysis import AnalysisResult
-from app.services import claude_client, s3
+from app.services import claude_client, ncci, s3
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +81,61 @@ def never_appealable_codes(
             if code in _NEVER_APPEAL_EXACT or code.startswith(_NEVER_APPEAL_PREFIXES):
                 hits.append(code)
     return hits
+
+
+def has_co97(carc_codes: list[str] | None, group_codes: list[str] | None = None) -> bool:
+    """True when the denial carries CO-97 in any spelling extraction produces."""
+    for raw in carc_codes or []:
+        if isinstance(raw, str) and "CO-97" in _canonical_carcs(raw, group_codes or []):
+            return True
+    return False
+
+
+def co97_note(findings: list[ncci.PtpFinding]) -> str | None:
+    """Deterministic NCCI annotation appended to the analysis reasoning for
+    CO-97 denials. Server-derived from the PTP tables — not model output. None
+    when no edit was found (empty tables or unknown pair), in which case the
+    prompt's existing manual-verification wording stands."""
+    if not findings:
+        return None
+    lines = []
+    for f in findings:
+        if f.modifier_indicator == 1:
+            lines.append(
+                f"{f.column2} bundled into {f.column1} is an OVERRIDABLE edit "
+                "(PTP modifier indicator 1): the appeal can argue an appropriate "
+                "NCCI-associated modifier applied to the distinct service."
+            )
+        else:
+            lines.append(
+                f"{f.column2} bundled into {f.column1} is NOT overridable "
+                "(PTP modifier indicator 0): an appeal on bundling grounds is "
+                "unlikely to succeed."
+            )
+    return "NCCI PTP check (CMS edit tables, deterministic): " + " ".join(lines)
+
+
+async def _co97_ptp_findings(
+    session: AsyncSession, case: Case, extraction: Extraction | None
+) -> list[ncci.PtpFinding]:
+    """Active PTP edits among the denied claim's CPT codes, for CO-97 denials.
+    Caps the pair scan at the first 10 codes — beyond that a CMS-1500 extraction
+    is noise, and the scan is quadratic."""
+    if extraction is None or not has_co97(extraction.carc_codes, extraction.group_codes):
+        return []
+    codes = [c for c in (extraction.cpt_codes or []) if isinstance(c, str) and c.strip()][:10]
+    if len(codes) < 2:
+        return []
+    dos = extraction.date_of_service or case.date_of_service
+    findings: list[ncci.PtpFinding] = []
+    seen: set[tuple[str, str]] = set()
+    for i, a in enumerate(codes):
+        for b in codes[i + 1 :]:
+            hit = await ncci.ptp_indicator_for_pair(session, a, b, dos)
+            if hit is not None and (hit.column1, hit.column2) not in seen:
+                seen.add((hit.column1, hit.column2))
+                findings.append(hit)
+    return findings
 
 
 async def _read_doc_text(session: AsyncSession, doc: Document) -> str:
@@ -179,6 +234,15 @@ async def run_ai_analysis(session: AsyncSession, case: Case) -> Analysis:
             "applies. The AI assessment disagreed and was overridden."
         )
 
+    # CO-97 denials: resolve the PTP modifier indicator from the CMS tables
+    # (unknowable from the EOB alone). Appended server-side to the reasoning;
+    # when the lookup finds nothing the prompt's manual-verification wording
+    # stands untouched.
+    reasoning_text = result.reasoning_text
+    ptp_note = co97_note(await _co97_ptp_findings(session, case, extraction))
+    if ptp_note:
+        reasoning_text = f"{reasoning_text or ''}\n\n{ptp_note}".strip()
+
     analysis = Analysis(
         case_id=case.id,
         denial_category=result.denial_category,
@@ -186,7 +250,7 @@ async def run_ai_analysis(session: AsyncSession, case: Case) -> Analysis:
         appealability_reason=appealability_reason,
         success_probability=success_probability,
         probability_band=probability_band(result.success_probability),
-        reasoning_text=result.reasoning_text,
+        reasoning_text=reasoning_text,
         recommended_appeal_level=result.recommended_appeal_level,
         additional_documents_needed=[d for d in result.additional_documents_needed if d != "none"],
         model_run_id=outcome.model_run_id,
