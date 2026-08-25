@@ -53,6 +53,7 @@ from app.schemas.case import (
     PendingOutcomeItem,
     ProcessingIdsResponse,
     ProcessingItem,
+    ProposedEditDetail,
     ReanalyzeRequest,
     RiskFindingDetail,
     RiskReportDetail,
@@ -702,6 +703,9 @@ async def get_case(
             RiskReportDetail(
                 overall_risk_band=risk_report.overall_risk_band,
                 findings=[RiskFindingDetail(**f) for f in risk_report.findings],
+                proposed_edits=[
+                    ProposedEditDetail(**e) for e in (risk_report.proposed_edits or [])
+                ],
                 deterministic_count=risk_report.deterministic_count,
                 model_count=risk_report.model_count,
                 ncci_version_tag=risk_report.ncci_version_tag,

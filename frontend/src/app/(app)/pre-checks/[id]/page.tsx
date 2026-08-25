@@ -21,6 +21,7 @@ import {
   type CaseDetail,
   fetchCase,
   fetchCaseStatus,
+  type ProposedEdit,
   retryCase,
   type RiskFinding,
 } from "@/lib/cases";
@@ -149,6 +150,7 @@ export default function PreCheckDetailPage() {
         <>
           <HeaderCard c={data} />
           <RiskSummaryCard c={data} />
+          <ProposedChangesCard c={data} />
           <FindingsCard c={data} />
           <DocumentsCard documents={data.documents} />
           <ReportFooter c={data} />
@@ -231,6 +233,59 @@ function RiskSummaryCard({ c }: { c: CaseDetail }) {
   );
 }
 
+// Diff-style glyphs: removals read as deletions, tweaks as modifications,
+// note tasks as writing work.
+const EDIT_GLYPH: Record<string, { glyph: string; token: string }> = {
+  remove_line: { glyph: "−", token: "--danger" },
+  add_modifier: { glyph: "±", token: "--warn" },
+  change_units: { glyph: "±", token: "--warn" },
+  change_code: { glyph: "±", token: "--warn" },
+  documentation: { glyph: "✎", token: "--info" },
+};
+
+function ProposedChangesCard({ c }: { c: CaseDetail }) {
+  const edits = c.risk_report?.proposed_edits ?? [];
+  if (edits.length === 0) return null;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Proposed changes</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-1.5">
+        {edits.map((edit, i) => (
+          <EditLine key={`${edit.kind}-${edit.target}-${i}`} edit={edit} />
+        ))}
+        <p className="pt-1.5 text-xs text-muted-foreground">
+          Apply what fits in your billing system — you decide what&rsquo;s
+          clinically right. Details for each change are in the findings below.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function EditLine({ edit }: { edit: ProposedEdit }) {
+  const meta = EDIT_GLYPH[edit.kind] ?? { glyph: "±", token: "--neutral" };
+  return (
+    <div className="flex items-start gap-2.5 rounded-md border border-border bg-background px-3 py-2">
+      <span
+        aria-hidden
+        className="flex size-5 shrink-0 items-center justify-center rounded font-mono text-sm font-bold"
+        style={{
+          background: `color-mix(in oklab, var(${meta.token}) 16%, var(--card))`,
+          color: `var(${meta.token})`,
+        }}
+      >
+        {meta.glyph}
+      </span>
+      <span className="text-sm leading-snug">{edit.instruction}</span>
+      <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+        {edit.source === "ncci" ? "CMS tables" : "AI review"}
+      </span>
+    </div>
+  );
+}
+
 function FindingsCard({ c }: { c: CaseDetail }) {
   const report = c.risk_report;
   if (!report || report.findings.length === 0) return null;
@@ -270,13 +325,28 @@ function FindingsCard({ c }: { c: CaseDetail }) {
 
 function Finding({ f }: { f: RiskFinding }) {
   const token = SEVERITY_META[f.severity]?.token ?? "--neutral";
+  const hasDetail = Boolean(f.explanation || f.suggested_fix);
   return (
-    <div
-      className="rounded-md border border-border bg-card p-3.5"
+    <details
+      className="group rounded-md border border-border bg-card"
       style={{ borderLeft: `3px solid var(${token})` }}
     >
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="text-sm font-semibold">{f.title}</div>
+      <summary
+        className={`flex flex-wrap items-start justify-between gap-2 p-3.5 marker:content-none [&::-webkit-details-marker]:hidden ${
+          hasDetail ? "cursor-pointer select-none" : "pointer-events-none"
+        }`}
+      >
+        <div className="flex items-start gap-2">
+          {hasDetail && (
+            <span
+              aria-hidden
+              className="mt-0.5 text-xs text-muted-foreground transition-transform group-open:rotate-90"
+            >
+              ▸
+            </span>
+          )}
+          <span className="text-sm font-semibold">{f.title}</span>
+        </div>
         <div className="flex shrink-0 items-center gap-1.5">
           {f.predicted_carc && (
             <Badge variant="outline" title={carcMeaning(f.predicted_carc)}>
@@ -287,17 +357,21 @@ function Finding({ f }: { f: RiskFinding }) {
             {f.source === "ncci" ? "CMS edit tables" : "AI review"}
           </span>
         </div>
-      </div>
-      {f.explanation && (
-        <p className="mt-1.5 text-sm text-muted-foreground">{f.explanation}</p>
+      </summary>
+      {hasDetail && (
+        <div className="px-3.5 pb-3.5">
+          {f.explanation && (
+            <p className="text-sm text-muted-foreground">{f.explanation}</p>
+          )}
+          {f.suggested_fix && (
+            <p className="mt-2 text-sm">
+              <span className="font-medium">Fix: </span>
+              {f.suggested_fix}
+            </p>
+          )}
+        </div>
       )}
-      {f.suggested_fix && (
-        <p className="mt-2 text-sm">
-          <span className="font-medium">Suggested fix: </span>
-          {f.suggested_fix}
-        </p>
-      )}
-    </div>
+    </details>
   );
 }
 

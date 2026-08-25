@@ -32,6 +32,9 @@ class RiskReport(Base, UUIDPrimaryKey, CreatedAtMixin):
     # explanation, suggested_fix, source}. Contains claim/clinical detail —
     # treat as PHI-adjacent: fine in the DB (tenant-scoped), never in logs.
     findings: Mapped[list] = mapped_column(JSONB, nullable=False, server_default=text("'[]'"))
+    # Diff-style changes: {kind, target, instruction, source} — deterministic
+    # NCCI edits first, then the model's (schemas/precheck.py::ProposedEdit).
+    proposed_edits: Mapped[list] = mapped_column(JSONB, nullable=False, server_default=text("'[]'"))
     deterministic_count: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )

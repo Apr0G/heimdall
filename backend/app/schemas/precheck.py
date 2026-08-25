@@ -131,16 +131,35 @@ class PrecheckExtractionResult(BaseModel):
         return value if value in PLAN_TYPES else "unknown"
 
 
+# Proposed-edit vocabulary. remove_line / add_modifier / change_units /
+# change_code are claim edits a biller applies in the PM system; documentation
+# is a task for the clinician (edit the note, not the claim).
+EDIT_KINDS = ("remove_line", "add_modifier", "change_units", "change_code", "documentation")
+MAX_EDITS = 10
+
+
+def _clip(value: object, limit: int) -> str | None:
+    """Truncate over-long model text instead of failing validation — burning
+    the one retry on verbosity would be a worse outcome than a clipped line."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text[: limit - 1] + "…" if len(text) > limit else text
+
+
 class RiskFinding(BaseModel):
     """One flag. `source` is stamped server-side ('ncci' or 'model'), never
-    taken from model output."""
+    taken from model output. Text fields are clipped, not rejected — the
+    report leads with titles; prose is collapsed detail."""
 
     check_id: str
     severity: Literal["high", "medium", "low", "info"] = "low"
-    title: str = Field(min_length=1, max_length=200)
+    title: str = Field(min_length=1)
     predicted_carc: str | None = Field(default=None, max_length=16)
-    explanation: str | None = Field(default=None, max_length=2000)
-    suggested_fix: str | None = Field(default=None, max_length=2000)
+    explanation: str | None = None
+    suggested_fix: str | None = None
     source: str = "model"
 
     @field_validator("severity", mode="before")
@@ -151,13 +170,41 @@ class RiskFinding(BaseModel):
         normalized = str(value).strip().lower() if value is not None else ""
         return normalized if normalized in SEVERITIES else "low"
 
+    @field_validator("title", mode="before")
+    @classmethod
+    def _clip_title(cls, value: object) -> object:
+        return _clip(value, 120) or value
+
+    @field_validator("explanation", "suggested_fix", mode="before")
+    @classmethod
+    def _clip_prose(cls, value: object) -> str | None:
+        return _clip(value, 500)
+
+
+class ProposedEdit(BaseModel):
+    """One concrete change, stated as a diff line — apply-in-the-PM brief.
+    `source` is stamped server-side; the deterministic engine's edits merge
+    ahead of the model's and can never be displaced by them."""
+
+    kind: Literal["remove_line", "add_modifier", "change_units", "change_code", "documentation"]
+    # The code/line the edit applies to (e.g. "20610"); None for note tasks.
+    target: str | None = Field(default=None, max_length=16)
+    instruction: str = Field(min_length=1)
+    source: str = "model"
+
+    @field_validator("instruction", mode="before")
+    @classmethod
+    def _clip_instruction(cls, value: object) -> object:
+        return _clip(value, 160) or value
+
 
 class RiskReviewResult(BaseModel):
     """Structured output of the documentation-review prompt. Findings with a
-    check_id outside the model's fixed vocabulary are dropped (counted, never
-    trusted), and the list is capped at MAX_FINDINGS."""
+    check_id outside the model's fixed vocabulary — and edits with an unknown
+    kind — are dropped (counted, never trusted); both lists are capped."""
 
     findings: list[RiskFinding] = []
+    proposed_edits: list[ProposedEdit] = []
     dropped_count: int = 0  # populated by the validator, not the model
 
     @model_validator(mode="before")
@@ -176,4 +223,18 @@ class RiskReviewResult(BaseModel):
                 kept.append(item)
             else:
                 dropped += 1
-        return {**data, "findings": kept[:MAX_FINDINGS], "dropped_count": dropped}
+        raw_edits = data.get("proposed_edits") or []
+        if not isinstance(raw_edits, list):
+            raw_edits = []
+        kept_edits: list = []
+        for item in raw_edits:
+            if isinstance(item, dict) and item.get("kind") in EDIT_KINDS:
+                kept_edits.append({**item, "source": "model"})
+            else:
+                dropped += 1
+        return {
+            **data,
+            "findings": kept[:MAX_FINDINGS],
+            "proposed_edits": kept_edits[:MAX_EDITS],
+            "dropped_count": dropped,
+        }

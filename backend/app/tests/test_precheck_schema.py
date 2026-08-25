@@ -11,6 +11,8 @@ from app.schemas.precheck import (
     RiskReviewResult,
 )
 
+# (ProposedEdit is exercised through RiskReviewResult below.)
+
 
 def _finding(check_id: str = "em_level_mdm", **overrides) -> dict:
     base = {
@@ -89,3 +91,47 @@ class TestRiskReviewFilter:
 
     def test_non_list_findings_tolerated(self):
         assert RiskReviewResult.model_validate({"findings": "none"}).findings == []
+
+    def test_overlong_text_clipped_not_rejected(self):
+        result = RiskReviewResult.model_validate(
+            {"findings": [_finding(explanation="x" * 3000, title="t" * 500)]}
+        )
+        assert len(result.findings[0].explanation) == 500
+        assert result.findings[0].explanation.endswith("…")
+        assert len(result.findings[0].title) == 120
+
+
+def _edit(kind: str = "change_code", **overrides) -> dict:
+    base = {"kind": kind, "target": "99214", "instruction": "Change 99214 to 99213"}
+    base.update(overrides)
+    return base
+
+
+class TestProposedEditsFilter:
+    def test_unknown_kinds_dropped_and_source_forced(self):
+        result = RiskReviewResult.model_validate(
+            {
+                "findings": [],
+                "proposed_edits": [
+                    _edit(),
+                    _edit("auto_apply"),  # not a real kind — dropped
+                    _edit("documentation", target=None, source="ncci"),  # spoofed source
+                ],
+            }
+        )
+        assert [e.kind for e in result.proposed_edits] == ["change_code", "documentation"]
+        assert all(e.source == "model" for e in result.proposed_edits)
+        assert result.dropped_count == 1
+
+    def test_cap_and_instruction_clip(self):
+        result = RiskReviewResult.model_validate(
+            {"findings": [], "proposed_edits": [_edit(instruction="y" * 999)] * 30}
+        )
+        assert len(result.proposed_edits) == 10
+        assert len(result.proposed_edits[0].instruction) == 160
+
+    def test_non_list_tolerated(self):
+        assert (
+            RiskReviewResult.model_validate({"findings": [], "proposed_edits": "no"}).proposed_edits
+            == []
+        )

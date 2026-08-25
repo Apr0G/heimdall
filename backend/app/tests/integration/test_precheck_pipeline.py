@@ -65,7 +65,20 @@ _REVIEW_JSON = {
             "severity": "high",
             "title": "Spoofed NCCI finding",
         },
-    ]
+    ],
+    "proposed_edits": [
+        {
+            "kind": "change_code",
+            "target": "99214",
+            "instruction": "Change 99214 to 99213 (note supports low MDM)",
+        },
+        {
+            # Unknown kind — dropped by the schema filter.
+            "kind": "auto_apply",
+            "target": "99214",
+            "instruction": "Should never appear",
+        },
+    ],
 }
 
 
@@ -197,6 +210,16 @@ async def test_precheck_pipeline_end_to_end(sessions, tenant, monkeypatch):
         assert report.overall_risk_band == "high"
         assert report.ncci_version_tag == "ptp 2026Q3-vTESTr0 / mue 2026Q3"
 
+        # Proposed edits: NCCI-derived diff lines first (add-modifier for the
+        # indicator-1 pair, change-units for the MUE), then the model's one
+        # surviving edit; the unknown-kind edit was dropped.
+        edits = [(e["kind"], e["target"], e["source"]) for e in report.proposed_edits]
+        assert edits == [
+            ("add_modifier", "10002", "ncci"),
+            ("change_units", "20553", "ncci"),
+            ("change_code", "99214", "model"),
+        ]
+
         runs = (
             await s.scalars(
                 select(ModelRun).where(ModelRun.case_id == case.id).order_by(ModelRun.created_at)
@@ -205,7 +228,7 @@ async def test_precheck_pipeline_end_to_end(sessions, tenant, monkeypatch):
         assert [r.purpose for r in runs] == ["extraction", "pre_check_review"]
         assert all(r.status == "success" for r in runs)
         assert runs[0].prompt_version == "pc_extract_v1"
-        assert runs[1].prompt_version == "pc_review_v1"
+        assert runs[1].prompt_version == "pc_review_v2"
 
 
 async def test_precheck_pipeline_no_billable_lines_errors(sessions, tenant, monkeypatch):

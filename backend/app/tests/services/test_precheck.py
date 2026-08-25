@@ -8,6 +8,7 @@ from app.services.ncci import MueFinding, NcciResult, PtpFinding
 from app.services.precheck import (
     claim_lines_from_extraction,
     derive_band,
+    deterministic_edits,
     deterministic_findings,
 )
 
@@ -64,6 +65,31 @@ class TestDeterministicFindings:
             for f in deterministic_findings(result, dos_missing=False)
         }
         assert severities == {"55555": "high", "66666": "medium", "77777": "medium"}
+
+
+class TestDeterministicEdits:
+    def test_ptp_dispositions_map_to_diff_lines(self):
+        result = NcciResult(
+            ptp=(
+                PtpFinding("11111", "22222", 1, None, bypassed=True),  # no edit needed
+                PtpFinding("11111", "33333", 1, None, bypassed=False),  # add modifier
+                PtpFinding("11111", "44444", 0, None, bypassed=False),  # remove line
+            ),
+            mue=(MueFinding("55555", 4, 2, 3, None),),
+            version_tag="v",
+            data_available=True,
+        )
+        edits = deterministic_edits(result)
+        assert [(e["kind"], e["target"]) for e in edits] == [
+            ("add_modifier", "33333"),
+            ("remove_line", "44444"),
+            ("change_units", "55555"),
+        ]
+        assert all(e["source"] == "ncci" for e in edits)
+        assert "≤2 units/day" in edits[2]["instruction"]
+
+    def test_no_data_no_edits(self):
+        assert deterministic_edits(NcciResult()) == []
 
 
 class TestClaimLineBridge:

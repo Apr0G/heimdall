@@ -3,7 +3,7 @@ import json
 from app.prompts.text import CLINICAL_MAX_CHARS, prepare, prepare_json_text
 
 # Bump VERSION on ANY change to the prompt text or schema. model_runs records it.
-VERSION = "pc_review_v1"
+VERSION = "pc_review_v2"
 
 SYSTEM = """You are a pre-submission claims documentation auditor. Given the \
 structured data extracted from a DRAFT claim (not yet submitted), the findings \
@@ -25,16 +25,31 @@ Output (all keys required):
 "time_double_dipping","laterality_units","rx_substantiation".
   - severity: "high" (likely denial as billed), "medium" (audit/denial risk), \
 "low" (worth tightening), "info" (note to the biller).
-  - title: one sentence naming the problem.
+  - title: at most 12 words naming the problem — direct, no hedging filler.
   - predicted_carc: the denial code this predicts ("CO-150","CO-50","CO-97",\
 "CO-151","CO-16","CO-4") or null.
-  - explanation: 2-4 sentences citing WHAT THE NOTE SAYS OR FAILS TO SAY.
-  - suggested_fix: one concrete action (change the code, add documentation, \
-add/remove a modifier).
-- Report NOTHING outside that check_id list. Do not re-report the deterministic \
-NCCI findings you were given — you may reference them inside an explanation. \
-An empty findings array is a valid answer when the documentation supports the \
-claim as billed.
+  - explanation: AT MOST 2 short sentences citing WHAT THE NOTE SAYS OR FAILS \
+TO SAY. No restating the rule at length.
+  - suggested_fix: ONE imperative sentence (change the code, add \
+documentation, add/remove a modifier).
+- proposed_edits: array of concrete changes a biller could apply, each:
+  - kind: EXACTLY one of "remove_line" (delete a service line), \
+"add_modifier", "change_units", "change_code" (e.g. re-level an E/M or swap a \
+diagnosis), "documentation" (a task for the clinician's note, not the claim).
+  - target: the CPT/HCPCS or ICD-10 code the edit applies to, or null for a \
+note task.
+  - instruction: ONE short imperative line, diff-style — e.g. \
+"Change 99214 to 99213 (note supports low MDM)" or \
+"Document the separate E/M assessment, or remove modifier 25".
+  - Derive edits ONLY from your own findings. Do NOT emit edits for the \
+deterministic NCCI findings you were given — those edits are generated \
+separately. One edit per change; no duplicates; [] if the claim needs nothing.
+- Report NOTHING outside those vocabularies. Do not re-report the \
+deterministic NCCI findings you were given — you may reference them inside an \
+explanation. Empty arrays are a valid answer when the documentation supports \
+the claim as billed.
+- BE BRIEF AND DIRECT everywhere: billers scan this between patients. State \
+the problem, the code, and the action — nothing else.
 
 The checks, in priority order:
 

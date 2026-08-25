@@ -138,9 +138,17 @@ export type RiskFinding = {
   source: string; // "ncci" (deterministic) | "model" (documentation review)
 };
 
+export type ProposedEdit = {
+  kind: string; // remove_line | add_modifier | change_units | change_code | documentation
+  target: string | null;
+  instruction: string;
+  source: string; // "ncci" | "model"
+};
+
 export type RiskReportDetail = {
   overall_risk_band: string | null;
   findings: RiskFinding[];
+  proposed_edits?: ProposedEdit[];
   deterministic_count: number;
   model_count: number;
   ncci_version_tag: string | null;

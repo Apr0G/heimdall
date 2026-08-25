@@ -207,6 +207,53 @@ def deterministic_findings(result: ncci.NcciResult, *, dos_missing: bool) -> lis
     return findings
 
 
+def deterministic_edits(result: ncci.NcciResult) -> list[dict]:
+    """Diff-style proposed edits derived straight from the NCCI engine — no
+    model judgment involved, so they merge ahead of (and immune to) the model's
+    own edits. One line per change, imperative, PM-system brief."""
+    edits: list[dict] = []
+    for hit in result.ptp:
+        if hit.bypassed:
+            continue
+        if hit.modifier_indicator == 1:
+            edits.append(
+                {
+                    "kind": "add_modifier",
+                    "target": hit.column2,
+                    "instruction": (
+                        f"Add modifier 59/XS/XE to {hit.column2} if distinct from "
+                        f"{hit.column1} — otherwise remove the line"
+                    ),
+                    "source": "ncci",
+                }
+            )
+        else:
+            edits.append(
+                {
+                    "kind": "remove_line",
+                    "target": hit.column2,
+                    "instruction": (
+                        f"Remove {hit.column2} — never payable with {hit.column1} "
+                        "on the same day"
+                    ),
+                    "source": "ncci",
+                }
+            )
+    for violation in result.mue:
+        edits.append(
+            {
+                "kind": "change_units",
+                "target": violation.hcpcs,
+                "instruction": (
+                    f"Reduce {violation.hcpcs} from {violation.units_billed} to "
+                    f"≤{violation.mue_value} units/day"
+                ),
+                "source": "ncci",
+            }
+        )
+    return edits
+
+
 def claim_lines_from_extraction(extraction: Extraction) -> list[ncci.ClaimLine]:
     """The NCCI engine's view of the extracted claim lines (stored in
     extracted_json by run_precheck_extraction)."""
@@ -351,13 +398,18 @@ async def run_risk_report(session: AsyncSession, case: Case) -> RiskReport:
         )
 
     model_findings = [f.model_dump(mode="json") for f in review.findings]
-    # Deterministic findings first and verbatim — table logic outranks the model.
+    # Deterministic findings/edits first and verbatim — table logic outranks
+    # the model, and its edits can never displace the engine's.
     findings = det_findings + model_findings
+    proposed_edits = deterministic_edits(ncci_result) + [
+        e.model_dump(mode="json") for e in review.proposed_edits
+    ]
 
     report = RiskReport(
         case_id=case.id,
         overall_risk_band=derive_band(findings),
         findings=findings,
+        proposed_edits=proposed_edits,
         deterministic_count=len(det_findings),
         model_count=len(model_findings),
         ncci_version_tag=ncci_result.version_tag,

@@ -147,9 +147,17 @@ class RiskFindingDetail(BaseModel):
     source: str  # "ncci" (deterministic) | "model" (documentation review)
 
 
+class ProposedEditDetail(BaseModel):
+    kind: str  # remove_line | add_modifier | change_units | change_code | documentation
+    target: str | None = None
+    instruction: str
+    source: str  # "ncci" | "model"
+
+
 class RiskReportDetail(BaseModel):
     overall_risk_band: str | None
     findings: list[RiskFindingDetail]
+    proposed_edits: list[ProposedEditDetail] = []
     deterministic_count: int
     model_count: int
     # Which NCCI load served the deterministic pass; None = tables not loaded,
