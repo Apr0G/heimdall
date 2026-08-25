@@ -21,6 +21,7 @@
 
 import { buildDecrypt } from "@aws-crypto/decrypt-node";
 import { KmsKeyringNode } from "@aws-crypto/kms-keyring-node";
+import { CommitmentPolicy } from "@aws-crypto/material-management";
 import {
   SecretsManagerClient,
   GetSecretValueCommand,
@@ -29,7 +30,13 @@ import {
 const SMTP2GO_ENDPOINT = "https://api.smtp2go.com/v3/email/send";
 const LOGIN_URL = "https://heimdallclaims.com/login";
 
-const { decrypt } = buildDecrypt();
+// FORBID_ENCRYPT_ALLOW_DECRYPT, not the SDK default: Cognito encrypts with the
+// legacy non-committed suite (ALG_AES256_GCM_IV12_TAG16_HKDF_SHA384_ECDSA_P384),
+// which the default REQUIRE_ENCRYPT_REQUIRE_DECRYPT policy refuses outright —
+// every invoke failed with "Configuration conflict" until this matched AWS's
+// own custom-sender example (seen live 2026-08-25). We never encrypt, so the
+// forbid-encrypt half costs nothing.
+const { decrypt } = buildDecrypt(CommitmentPolicy.FORBID_ENCRYPT_ALLOW_DECRYPT);
 const keyring = new KmsKeyringNode({ keyIds: [process.env.KMS_KEY_ARN] });
 const secrets = new SecretsManagerClient({});
 
