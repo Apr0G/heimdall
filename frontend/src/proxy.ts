@@ -31,10 +31,12 @@ export function proxy(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // Logged-in users skip the marketing landing and the login page.
+  // Logged-in users skip the marketing landing and the login page. The edge
+  // only knows "signed in", not the role — /pre-checks bounces admins to
+  // /admin client-side, same as /dashboard always has.
   if (authed && (pathname === "/" || pathname === "/login")) {
     const url = request.nextUrl.clone();
-    url.pathname = "/dashboard";
+    url.pathname = "/pre-checks";
     return NextResponse.redirect(url);
   }
 

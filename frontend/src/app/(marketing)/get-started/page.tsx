@@ -95,7 +95,7 @@ export default function GetStartedPage() {
             <textarea
               id="practice"
               rows={4}
-              placeholder="Specialty, size, and what your denial / appeal workload looks like."
+              placeholder="Specialty, size, monthly claim volume, and what your denial workload looks like."
               className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
               {...register("practice")}
             />

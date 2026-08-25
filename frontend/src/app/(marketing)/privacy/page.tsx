@@ -26,7 +26,8 @@ export default function PrivacyPage() {
         <li>
           <span className="text-foreground">Claim documents</span> — the denial,
           claim, and clinical documents your practice uploads to process an
-          appeal.
+          appeal, or the draft claim and clinical notes uploaded for a
+          pre-submission check.
         </li>
         <li>
           <span className="text-foreground">Usage data</span> — basic logs
@@ -36,9 +37,9 @@ export default function PrivacyPage() {
 
       <h2>2. How we use information</h2>
       <p>
-        We use uploaded documents solely to extract claim data, analyze the
-        denial, and draft the appeal letter for your practice. We do not sell
-        your data.
+        We use uploaded documents solely to extract claim data, check draft
+        claims for denial risk, analyze denials, and draft appeal letters for
+        your practice. We do not sell your data.
       </p>
 
       <h2>3. Protected health information (PHI)</h2>

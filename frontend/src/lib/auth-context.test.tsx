@@ -1,7 +1,7 @@
 /**
  * The auth context owns the only place the frontend decides "logged in": the
  * presence cookie, the /me load, and the role-aware redirect. These tests pin
- * that a finished login lands admins on /admin and everyone else on /dashboard,
+ * that a finished login lands admins on /admin and everyone else on /pre-checks,
  * and that a challenge is passed through untouched without starting a session.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -34,10 +34,10 @@ beforeEach(() => {
 });
 
 describe("auth context", () => {
-  it("homePath sends admins to /admin and everyone else to /dashboard", () => {
+  it("homePath sends admins to /admin and everyone else to /pre-checks", () => {
     expect(homePath("admin")).toBe("/admin");
-    expect(homePath("doctor")).toBe("/dashboard");
-    expect(homePath(undefined)).toBe("/dashboard");
+    expect(homePath("doctor")).toBe("/pre-checks");
+    expect(homePath(undefined)).toBe("/pre-checks");
   });
 
   it("does not call /me without the presence cookie", async () => {
@@ -47,7 +47,7 @@ describe("auth context", () => {
     expect(result.current.user).toBeNull();
   });
 
-  it("sends doctors to the dashboard after login", async () => {
+  it("sends doctors to pre-checks after login", async () => {
     api.post.mockResolvedValue({ data: { expires_in: 3600 } });
     api.get.mockResolvedValue({
       data: { id: "u", email: "d@x", role: "doctor", practice_id: "p" },
@@ -59,7 +59,7 @@ describe("auth context", () => {
       out = await result.current.login("d@x", "pw");
     });
     expect(out).toEqual({ status: "ok" });
-    expect(router.replace).toHaveBeenCalledWith("/dashboard");
+    expect(router.replace).toHaveBeenCalledWith("/pre-checks");
     expect(result.current.user?.role).toBe("doctor");
     expect(document.cookie).toMatch(/hd_authed=1/);
   });

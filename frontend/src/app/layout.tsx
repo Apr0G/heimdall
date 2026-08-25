@@ -19,7 +19,8 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: "Heimdall",
-  description: "AI-assisted insurance claim appeal automation",
+  description:
+    "AI-assisted claim pre-checks and insurance appeal automation for small practices",
 };
 
 export default async function RootLayout({

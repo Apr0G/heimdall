@@ -55,6 +55,12 @@ export function SiteHeader() {
               className="flex items-center gap-0.5 rounded-full border border-border bg-muted p-[3px] text-sm"
             >
               <NavTab
+                href="/pre-checks"
+                active={pathname.startsWith("/pre-checks")}
+              >
+                Pre-checks
+              </NavTab>
+              <NavTab
                 href="/dashboard"
                 active={
                   pathname.startsWith("/dashboard") ||
@@ -62,12 +68,6 @@ export function SiteHeader() {
                 }
               >
                 Appeals
-              </NavTab>
-              <NavTab
-                href="/pre-checks"
-                active={pathname.startsWith("/pre-checks")}
-              >
-                Pre-checks
               </NavTab>
             </nav>
           )}

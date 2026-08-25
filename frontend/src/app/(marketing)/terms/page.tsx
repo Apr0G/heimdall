@@ -20,9 +20,12 @@ export default function TermsPage() {
 
       <h2>1. The service</h2>
       <p>
-        Heimdall helps healthcare practices analyze denied insurance claims and
-        draft appeal letters. Heimdall is a drafting and estimation tool only;
-        it does not submit appeals or guarantee any outcome.
+        Heimdall helps healthcare practices screen draft claims for denial risk
+        before submission, analyze denied insurance claims, and draft appeal
+        letters. Heimdall is an informational, drafting, and estimation tool
+        only; it does not submit claims or appeals, its pre-submission risk
+        flags are not a guarantee that a claim will be paid or denied, and it
+        does not guarantee any outcome.
       </p>
 
       <h2>2. Accounts</h2>
@@ -46,10 +49,14 @@ export default function TermsPage() {
 
       <h2>4. AI-assisted output</h2>
       <p>
-        Heimdall uses AI to estimate appeal success and to draft letters. Output
-        may contain errors and must be reviewed by a qualified person before
-        use. Heimdall is not a medical, legal, or billing advisor, and all
-        clinical, financial, and submission decisions remain with your practice.
+        Heimdall uses AI to flag denial risk on draft claims, estimate appeal
+        success, and draft letters. Output may contain errors or omissions — a
+        claim that passes a pre-check may still be denied, and a flagged claim
+        may be paid — and must be reviewed by a qualified person before use.
+        Pre-check flags are evaluated against the Medicare (NCCI) edit baseline;
+        individual payers may apply different rules. Heimdall is not a medical,
+        legal, coding, or billing advisor, and all clinical, financial, coding,
+        and submission decisions remain with your practice.
       </p>
 
       <h2>5. Intellectual property</h2>

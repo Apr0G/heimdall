@@ -55,10 +55,11 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 const AUTH_COOKIE = "hd_authed";
 
 /** Where a signed-in user "lives": admins on the global admin area, everyone
- *  else on their practice dashboard. The single source for every redirect,
- *  back-link, and logo link. */
+ *  else on pre-checks (the pre-submission side is the daily-use surface;
+ *  appeals are episodic). The single source for every redirect, back-link,
+ *  and logo link. */
 export function homePath(role: string | null | undefined): string {
-  return role === "admin" ? "/admin" : "/dashboard";
+  return role === "admin" ? "/admin" : "/pre-checks";
 }
 
 // Fallback lifetime when the server didn't tell us (matches Cognito's default

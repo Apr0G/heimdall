@@ -54,7 +54,7 @@ export default function SettingsPage() {
         href={homePath(user?.role)}
         className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
-        <span aria-hidden>←</span> {isAdmin ? "Admin" : "Appeals"}
+        <span aria-hidden>←</span> {isAdmin ? "Admin" : "Pre-checks"}
       </Link>
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Account</h1>

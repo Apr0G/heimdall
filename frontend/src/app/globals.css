@@ -187,3 +187,25 @@
     animation: none;
   }
 }
+
+/* Quick settle for the hero preview's tab panels. Disabled under reduced-motion. */
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-panel {
+  animation: panel-in 240ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-panel {
+    animation: none;
+  }
+}

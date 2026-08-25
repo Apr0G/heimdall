@@ -57,7 +57,7 @@ describe("settings page", () => {
     expect(screen.getByText("Dr. Jane Doe")).toBeInTheDocument();
     expect(screen.getByText("doctor@heimdall.test")).toBeInTheDocument();
     expect(screen.getByText("Office manager")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Appeals/ })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /Pre-checks/ })).toHaveAttribute(
       "href",
       "/dashboard",
     );
