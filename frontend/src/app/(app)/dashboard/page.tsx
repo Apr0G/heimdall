@@ -102,7 +102,7 @@ export default function DashboardPage() {
     placeholderData: keepPreviousData, // keep the old page visible while the next loads
   });
 
-  const { data: summary } = useQuery({
+  const { data: summary, isError: summaryError } = useQuery({
     queryKey: ["case-summary"],
     queryFn: fetchSummary,
   });
@@ -127,6 +127,11 @@ export default function DashboardPage() {
       </div>
 
       {summary && <RecoveryStats summary={summary} />}
+      {summaryError && (
+        <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+          Couldn&rsquo;t load recovery stats. Refresh to try again.
+        </p>
+      )}
       {summary && summary.pending_outcomes.length > 0 && (
         <PendingBanner pending={summary.pending_outcomes} />
       )}

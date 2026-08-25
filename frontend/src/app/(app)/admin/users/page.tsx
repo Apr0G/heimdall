@@ -496,6 +496,21 @@ function DeactivationRequests({ onNotice }: { onNotice: (m: string) => void }) {
       setError(apiErrorText(err, "Couldn't resolve the request.")),
   });
 
+  // A failed fetch of a security-relevant queue must not look like "no requests"
+  // — surface the error instead of silently rendering nothing.
+  if (requests.isError) {
+    return (
+      <Card className="border-destructive/40">
+        <CardHeader>
+          <CardTitle>Deactivation requests</CardTitle>
+          <CardDescription className="text-destructive">
+            Couldn&rsquo;t load pending deactivation requests. Refresh to try
+            again.
+          </CardDescription>
+        </CardHeader>
+      </Card>
+    );
+  }
   if (!requests.data || requests.data.length === 0) return null;
 
   return (

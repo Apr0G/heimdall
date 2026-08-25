@@ -59,6 +59,10 @@ _STREET = re.compile(
     r"(?:\s+(?:Suite|Ste|Apt|Unit|Floor|Fl|#)\.?\s*\w+)?",
     re.IGNORECASE,
 )
+# PO Box: no street-type token, so _STREET misses it, and the box number
+# (3–5 digits) evades both _LONGNUM (6+) and _RESIDUAL_ZIP (exactly 5) — a
+# mailing-address element that would otherwise survive into the corpus.
+_PO_BOX = re.compile(r"\bP\.?\s*O\.?\s*Box\s+\d+\b", re.IGNORECASE)
 _DATE = re.compile(
     r"\b(?:"
     r"\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}"  # 03/15/1980
@@ -105,12 +109,17 @@ _AGE = re.compile(
 # start uppercase, so we don't redact a lowercase continuation like "Dear sir".
 _NAME_SLOT = re.compile(
     r"(?P<cue>(?i:\b(?:Dear|Attn|Attention|Sincerely|Regards|Patient(?:'s)?(?:\s+name)?"
-    r"|Member(?:\s+name)?|Name|Insured|Subscriber)\b)[:,]?\s+)"
-    r"(?P<name>[A-Z][a-zA-Z'.-]+(?:\s+[A-Z][a-zA-Z'.-]+){0,3})"
+    r"|Member(?:\s+name)?|Name|Insured|Subscriber|Beneficiary|Guarantor|Claimant)\b)[:,]?\s+)"
+    # Accept Title-case AND ALL-CAPS names in the slot: OCR'd EOB/CMS-1500 text is
+    # frequently all-caps ("PATIENT: JANE DOE"), which a Title-case-only pattern
+    # would miss entirely.
+    r"(?P<name>[A-Z][a-zA-Z'.-]+(?:\s+[A-Z][a-zA-Z'.-]+){0,3}|[A-Z]{2,}(?:\s+[A-Z]{2,}){0,3})"
 )
-# Capitalized bigram — a candidate name that may have slipped through, for QA only.
+# Candidate-name bigrams that may have slipped through, for the fail-closed QA
+# gate only (over-matching is fine — the review list is what it feeds). Both
+# Title-case and ALL-CAPS, since scanned claim text is dominated by the latter.
 # [ \t] (not \s) so a candidate never spans a line break.
-_CANDIDATE_NAME = re.compile(r"\b[A-Z][a-z]{1,}[ \t]+[A-Z][a-z]{1,}\b")
+_CANDIDATE_NAME = re.compile(r"\b[A-Z][a-z]{1,}[ \t]+[A-Z][a-z]{1,}\b|\b[A-Z]{2,}[ \t]+[A-Z]{2,}\b")
 # Billing/diagnosis code shapes. NER sometimes mis-tags these as a PERSON (e.g.
 # ICD-10 "I48.91"); we keep them — they're training signal, not PHI, and a code
 # never contains a real name. Used to filter NER detections.
@@ -230,6 +239,7 @@ def redact_text(text: str | None, known: list, use_ner: bool = False) -> str | N
     out = _SSN.sub("[SSN]", out)
     out = _IPV4.sub("[IP]", out)
     out = _STREET.sub("[ADDRESS]", out)
+    out = _PO_BOX.sub("[ADDRESS]", out)
     out = _ZIP4.sub("[ZIP]", out)
     out = _STATE_ZIP.sub(r"\1 [ZIP]", out)
     out = _PHONE.sub("[PHONE]", out)
@@ -289,6 +299,7 @@ def scan_residual(text: str | None) -> dict:
         ("date", _RESIDUAL_DATE),
         ("zip_like", _RESIDUAL_ZIP),
         ("alnum_id_like", _RESIDUAL_ALNUM_ID),
+        ("po_box", _PO_BOX),
     ):
         count = len(pat.findall(text))
         if count:

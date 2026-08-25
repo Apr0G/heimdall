@@ -2,7 +2,7 @@ export function formatCents(
   cents: number | null | undefined,
   currency = "USD",
 ): string {
-  if (cents == null) return "—";
+  if (cents == null || !Number.isFinite(cents)) return "—";
   // Integer arithmetic, not `cents / 100`. Hard rule 11 forbids floats for
   // currency. `Intl` formats the integer dollars and the cent digits are
   // spliced in as text, so the result is exact for every safe integer — the
@@ -13,19 +13,13 @@ export function formatCents(
   const remainder = abs % 100;
   // Format the integer dollars (exact) and splice the two cent digits in as a
   // string — no double is ever built from the amount.
-  const parts = new Intl.NumberFormat("en-US", {
+  const formatted = new Intl.NumberFormat("en-US", {
     style: "currency",
     currency,
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
-  }).formatToParts(dollars);
-  const formatted = parts
-    .map((p) =>
-      p.type === "integer" || p.type === "group" || p.type === "currency"
-        ? p.value
-        : p.value,
-    )
-    .join("")
+  })
+    .format(dollars)
     .replace(/(\d)(?!.*\d)/, `$1.${String(remainder).padStart(2, "0")}`);
   return negative ? `-${formatted}` : formatted;
 }

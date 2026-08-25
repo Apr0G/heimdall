@@ -16,15 +16,29 @@ const apiOrigin = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 // (<bucket>.s3.us-east-1.amazonaws.com). Allow both forms of the one bucket so the
 // upload PUT is never CSP-blocked. Set NEXT_PUBLIC_UPLOAD_ORIGIN (in either form)
 // to pin the bucket; falls back to region-scoped wildcards if unset.
-export function uploadOrigins(): string[] {
+export function uploadOrigins(
+  isProd = process.env.NODE_ENV === "production",
+): string[] {
+  // Dot-tolerant: S3 bucket names may contain dots, so capture up to ".s3" /
+  // ".s3-" rather than a single label.
   const bucket = process.env.NEXT_PUBLIC_UPLOAD_ORIGIN?.match(
-    /^https:\/\/([^.]+)\.s3\./,
+    /^https:\/\/(.+?)\.s3[.-]/,
   )?.[1];
-  if (!bucket)
+  if (!bucket) {
+    // Fail CLOSED in production: a wildcard would make any attacker S3 bucket an
+    // allowed exfil destination, defeating the whole point of pinning
+    // connect-src. A missing/unparseable upload origin in prod is a config bug
+    // that must fail the build/boot loudly, not silently widen the policy.
+    if (isProd) {
+      throw new Error(
+        "NEXT_PUBLIC_UPLOAD_ORIGIN is unset or unparseable in production — refusing to widen CSP connect-src to all of S3.",
+      );
+    }
     return [
       "https://*.s3.amazonaws.com",
       "https://*.s3.us-east-1.amazonaws.com",
     ];
+  }
   return [
     `https://${bucket}.s3.amazonaws.com`,
     `https://${bucket}.s3.us-east-1.amazonaws.com`,
@@ -39,7 +53,7 @@ export function buildCsp(
   const connectSrc = [
     "'self'",
     apiOrigin,
-    ...uploadOrigins(),
+    ...uploadOrigins(isProd),
     ...(isProd ? [] : ["http://localhost:8000", "ws://localhost:3000"]),
   ]
     .filter(Boolean)

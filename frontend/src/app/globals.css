@@ -161,8 +161,11 @@
     scrollbar-gutter: stable;
   }
   ::selection {
-    background: var(--amber-300, oklch(0.86 0.1 80));
-    color: var(--foreground);
+    /* --color-amber-300 is the real token (from @theme); --amber-300 was
+       undefined, so the literal fallback always applied. Use the token, and a
+       fixed dark ink so selected text stays legible on the amber in dark mode. */
+    background: var(--color-amber-300, oklch(0.86 0.1 80));
+    color: oklch(0.2 0.02 80);
   }
 }
 

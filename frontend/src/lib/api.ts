@@ -26,6 +26,23 @@ export function isCredentialCheck(url: string): boolean {
   return CREDENTIAL_CHECK_PATHS.some((p) => url.includes(p));
 }
 
+// Public marketing routes (mirrors proxy.ts PUBLIC_PATHS). A stale hd_authed flag
+// there must NOT bounce a visitor to /login — the auth-context's own /me catch
+// clears the cookie and stays put. The bounce is only for gated app routes.
+const PUBLIC_PATHS = [
+  "/",
+  "/contact",
+  "/terms",
+  "/privacy",
+  "/login",
+  "/get-started",
+];
+
+function onPublicRoute(): boolean {
+  const p = window.location.pathname;
+  return PUBLIC_PATHS.includes(p);
+}
+
 api.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -34,7 +51,8 @@ api.interceptors.response.use(
     if (
       status === 401 &&
       !isCredentialCheck(url) &&
-      typeof window !== "undefined"
+      typeof window !== "undefined" &&
+      !onPublicRoute()
     ) {
       document.cookie = "hd_authed=; path=/; max-age=0; samesite=lax";
       if (window.location.pathname !== "/login") {

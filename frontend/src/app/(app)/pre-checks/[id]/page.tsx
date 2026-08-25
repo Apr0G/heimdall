@@ -25,7 +25,7 @@ import {
   retryCase,
   type RiskFinding,
 } from "@/lib/cases";
-import { toastError } from "@/lib/errors";
+import { pipelineErrorMessage, toastError } from "@/lib/errors";
 import { formatCents, formatDate, humanize } from "@/lib/format";
 
 const SEVERITY_ORDER = ["high", "medium", "low", "info"] as const;
@@ -36,11 +36,6 @@ const SEVERITY_META: Record<string, { label: string; token: string }> = {
   low: { label: "Worth tightening", token: "--info" },
   info: { label: "Notes", token: "--neutral" },
 };
-
-// The pipeline's typed failure for an unreadable claim; translate the PHI-free
-// error name into copy a biller can act on.
-const NO_LINES_MESSAGE =
-  "We couldn't read any billable lines from the claim document. Check that the right file was uploaded — it should be the draft CMS-1500 with the CPT and diagnosis codes filled in.";
 
 export default function PreCheckDetailPage() {
   const params = useParams<{ id: string }>();
@@ -110,9 +105,7 @@ export default function PreCheckDetailPage() {
     );
   }
 
-  const errorMessage = data.error_message?.includes("NoBillableLinesError")
-    ? NO_LINES_MESSAGE
-    : data.error_message;
+  const errorMessage = pipelineErrorMessage(data.error_message);
 
   return (
     <div className="space-y-6">

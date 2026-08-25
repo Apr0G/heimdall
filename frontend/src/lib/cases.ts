@@ -62,7 +62,7 @@ export async function fetchProcessingItems(): Promise<ProcessingItem[]> {
   // during a deploy window where the backend predates it.
   return (
     res.data.items ??
-    res.data.ids.map((id) => ({ id, case_type: "appeal" as const }))
+    (res.data.ids ?? []).map((id) => ({ id, case_type: "appeal" as const }))
   );
 }
 

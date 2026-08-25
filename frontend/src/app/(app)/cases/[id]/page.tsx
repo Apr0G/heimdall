@@ -47,7 +47,7 @@ import {
   retryCase,
   submitOutcome,
 } from "@/lib/cases";
-import { toastError } from "@/lib/errors";
+import { pipelineErrorMessage, toastError } from "@/lib/errors";
 import {
   centsToInputString,
   formatCents,
@@ -168,7 +168,7 @@ export default function CaseDetailPage() {
         />
       ) : data.status === "error" ? (
         <ErrorView
-          message={data.error_message}
+          message={pipelineErrorMessage(data.error_message)}
           onRetry={() => retry.mutate()}
           retrying={retry.isPending}
         />

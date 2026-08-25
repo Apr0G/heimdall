@@ -55,7 +55,15 @@ export function notifyUntilSeen(
         <span className="flex-1">{message}</span>
       </button>
     ),
-    { duration: Infinity }, // we control dismissal ourselves
+    {
+      duration: Infinity, // we control dismissal ourselves
+      // Also tear down the listener if the toast is removed any other way
+      // (sonner stack-limit eviction, a global toast.dismiss(), swipe-to-
+      // dismiss) — otherwise the visibilitychange listener leaks for the page
+      // lifetime and re-arms a timer on every tab switch.
+      onDismiss: cleanup,
+      onAutoClose: cleanup,
+    },
   );
 
   document.addEventListener("visibilitychange", onVisibility);
