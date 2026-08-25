@@ -56,10 +56,11 @@ jobs:
             echo "Give practice_id (existing) or practice_name (new)."; exit 1
           fi
           if [ -n "$PID" ]; then
-            case "$PID" in
-              [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-*-*-*-*) ;;
-              *) echo "practice_id must be a UUID."; exit 1 ;;
-            esac
+            # Real UUID validation. The old shell-glob check accepted almost
+            # anything after the first 8 hex chars (the `*` matches any chars),
+            # so a crafted value could slip through; a proper regex closes it.
+            echo "$PID" | grep -qiE '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$' \
+              || { echo "practice_id must be a UUID."; exit 1; }
           fi
 
       - uses: aws-actions/configure-aws-credentials@v6

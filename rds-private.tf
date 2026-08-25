@@ -3,17 +3,22 @@
 # ONLY the backend's ECS tasks, and take it off the public internet.
 #
 # Two-phase apply (see DEPLOY.md), so the risky part is easily reversible:
-#   Phase A (rds_private = false, default): swap the DB's firewall to trust only
+#   Phase A (rds_private = false): swap the DB's firewall to trust only
 #     the backend. Public + laptop can no longer connect (firewall blocks them),
 #     but the public endpoint still exists — so rollback is trivial. This is the
 #     real test of the private path.
-#   Phase B (rds_private = true): also remove the public endpoint entirely.
+#   Phase B (rds_private = true, default): also remove the public endpoint entirely.
+#
+# The cutover is DONE and verified (RESOLVED 2026-07-08), so true is the default
+# — an apply that omits the variable must never re-publish the PHI endpoint
+# (same reasoning as rds_production in rds-hardening.tf). false stays available
+# for an explicit throwaway environment only.
 # =============================================================================
 
 variable "rds_private" {
-  description = "false = firewall-locked to the backend (public endpoint kept but blocked — reversible test); true = also remove the public endpoint."
+  description = "true (default) = no public endpoint, backend-only — the private cutover is verified, so a PHI endpoint must never be re-published by omission. false = firewall-locked but public endpoint kept (explicit throwaway/rollback use only)."
   type        = bool
-  default     = false
+  default     = true
 }
 
 # The security group Amazon ECS Express assigned to the backend tasks. RDS will

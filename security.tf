@@ -83,6 +83,45 @@ resource "aws_guardduty_detector" "main" {
   enable = true
 }
 
+# Route GuardDuty findings (sev >= 4 = medium/high) to the alerts topic —
+# otherwise a credential-exfil or crypto-mining finding sits unseen in the
+# console. For a one-person op, unrouted detection is close to no detection.
+resource "aws_cloudwatch_event_rule" "guardduty_findings" {
+  name        = "heimdall-guardduty-findings"
+  description = "GuardDuty medium/high findings -> alerts SNS"
+  event_pattern = jsonencode({
+    source      = ["aws.guardduty"]
+    detail-type = ["GuardDuty Finding"]
+    detail      = { severity = [{ numeric = [">=", 4] }] }
+  })
+}
+
+resource "aws_cloudwatch_event_target" "guardduty_to_sns" {
+  rule      = aws_cloudwatch_event_rule.guardduty_findings.name
+  target_id = "alerts"
+  arn       = aws_sns_topic.alerts.arn
+}
+
+# Let EventBridge publish to the (KMS-encrypted) alerts topic. The KMS key's
+# AllowSnsPublishers statement (main.tf) also lists events.amazonaws.com so the
+# encrypted publish succeeds.
+resource "aws_sns_topic_policy" "alerts_events" {
+  arn = aws_sns_topic.alerts.arn
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "AllowEventBridgePublish"
+      Effect    = "Allow"
+      Principal = { Service = "events.amazonaws.com" }
+      Action    = "sns:Publish"
+      Resource  = aws_sns_topic.alerts.arn
+      Condition = {
+        ArnEquals = { "aws:SourceArn" = aws_cloudwatch_event_rule.guardduty_findings.arn }
+      }
+    }]
+  })
+}
+
 # --- CloudTrail (all regions + log-file validation) + Object-Lock audit bucket -
 resource "aws_s3_bucket" "trail" {
   bucket              = "heimdall-cloudtrail-${random_id.suffix.hex}"

@@ -26,7 +26,7 @@ jobs:
     # race and the updated_at trigger cannot be tested any other way.
     services:
       postgres:
-        image: postgres:17
+        image: postgres:18 # match prod RDS major (18.x)
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: heimdall_test
@@ -46,10 +46,12 @@ jobs:
         working-directory: backend
         # Editable so the installed `app` points at the source tree — otherwise a
         # second copy lands in site-packages and pytest hits an import-file mismatch.
+        # ruff/black pinned to the SAME versions as .pre-commit-config.yaml so CI
+        # and the hook can never disagree; bump both together (pre-commit autoupdate).
         run: |
           pip install --require-hashes --no-deps -r requirements.lock
           pip install --no-deps -e '.[dev]'
-          pip install pytest pytest-asyncio ruff black
+          pip install pytest pytest-asyncio ruff==0.15.17 black==26.5.1
       - name: Lint, format check, tests
         working-directory: backend
         env:

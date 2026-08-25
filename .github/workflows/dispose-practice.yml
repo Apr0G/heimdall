@@ -42,10 +42,9 @@ jobs:
             echo "Confirmation failed — practice_id and confirm must match exactly."
             exit 1
           fi
-          case "$PID" in
-            [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-*-*-*-*) ;;
-            *) echo "practice_id must be a UUID."; exit 1 ;;
-          esac
+          if ! printf '%s' "$PID" | grep -qiE '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'; then
+            echo "practice_id must be a UUID."; exit 1
+          fi
           case "$EXPECTED_CASES" in
             ''|*[!0-9]*)
               echo "expected_cases must be a non-negative integer — how many cases"
@@ -76,14 +75,13 @@ jobs:
             --filters "Name=group-name,Values=default-heimdall-api-$VPC" "Name=vpc-id,Values=$VPC" \
             --query 'SecurityGroups[0].GroupId' --output text)
 
-          OVERRIDES=$(cat <<JSON
-          {"containerOverrides":[{"name":"dispose","environment":[
-            {"name":"PRACTICE_ID","value":"$PID"},
-            {"name":"DISPOSE_CONFIRM","value":"$PID"},
-            {"name":"DISPOSE_EXPECT_CASES","value":"$EXPECTED_CASES"}
-          ]}]}
-          JSON
-          )
+          # jq builds the JSON so the inputs can't break out of the quoting.
+          OVERRIDES=$(jq -nc --arg pid "$PID" --arg cases "$EXPECTED_CASES" \
+            '{containerOverrides:[{name:"dispose",environment:[
+              {name:"PRACTICE_ID",value:$pid},
+              {name:"DISPOSE_CONFIRM",value:$pid},
+              {name:"DISPOSE_EXPECT_CASES",value:$cases}
+            ]}]}')
 
           TASK_ARN=$(aws ecs run-task --cluster "$CLUSTER" --task-definition "$TASKDEF" \
             --launch-type FARGATE \

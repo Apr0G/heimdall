@@ -23,9 +23,11 @@ resource "random_id" "suffix" {
 
 # --- KMS: the encryption key for everything ---
 resource "aws_kms_key" "heimdall" {
-  description             = "Heimdall master encryption key"
-  enable_key_rotation     = true
-  deletion_window_in_days = 7
+  description         = "Heimdall master encryption key"
+  enable_key_rotation = true
+  # Maximum window: this key encrypts every PHI store (S3, RDS, logs, Redis) —
+  # if a deletion is ever scheduled by mistake, 30 days is the recovery runway.
+  deletion_window_in_days = 30
 
   # An explicit policy is REQUIRED for the CloudWatch Logs statement below: with
   # the default key policy, attaching `kms_key_id` to a log group fails outright
@@ -49,9 +51,15 @@ resource "aws_kms_key" "heimdall" {
         # (CloudWatch alarms -> heimdall-alerts, SES notifications -> same).
         Sid       = "AllowSnsPublishers"
         Effect    = "Allow"
-        Principal = { Service = ["cloudwatch.amazonaws.com", "ses.amazonaws.com", "sns.amazonaws.com"] }
+        Principal = { Service = ["cloudwatch.amazonaws.com", "ses.amazonaws.com", "sns.amazonaws.com", "events.amazonaws.com"] }
         Action    = ["kms:Decrypt", "kms:GenerateDataKey*"]
         Resource  = "*"
+        # Confused-deputy guard: these service principals are shared across all
+        # of AWS, so pin their use of the key to resources in THIS account
+        # (same pattern as the cognito_email key in cognito-email-sender.tf).
+        Condition = {
+          StringEquals = { "aws:SourceAccount" = data.aws_caller_identity.current.account_id }
+        }
       },
       {
         Sid       = "AllowCloudWatchLogs"

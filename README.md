@@ -5,6 +5,10 @@ healthcare practices. A doctor uploads three documents (the denial, the original
 claim, and clinical notes); Heimdall extracts the structured data, classifies the
 denial, estimates the chance of a successful appeal, and drafts the appeal letter.
 The practice reviews, downloads, and submits it themselves, then logs the outcome.
+A second case type, the **pre-check**, works *before* submission: upload a draft
+claim + clinical notes and get a denial-risk report — deterministic CMS NCCI edits
+plus an AI documentation-vs-codes review — always framed as risk flags, never a
+clean-claim guarantee.
 
 > **Synthetic data only.** This is an MVP. No real PHI ever belongs in this repo,
 > its fixtures, logs, or commits. Use names like "Jane Doe" and claims like
@@ -21,7 +25,13 @@ The practice reviews, downloads, and submits it themselves, then logs the outcom
 - **Monorepo** — `frontend/` (Next.js 16 App Router, TypeScript, Tailwind,
   shadcn-on-Base-UI) and `backend/` (FastAPI, SQLAlchemy 2 async, Alembic,
   Pydantic v2).
+- **Case types** — `cases.case_type` is `appeal` or `pre_check`, sharing one
+  pipeline architecture. Pre-checks run deterministic CMS NCCI edits (PTP
+  bundling + MUE unit limits, `backend/app/services/ncci.py`) plus an AI
+  documentation-vs-codes review, and write a denial-risk report (`risk_reports`).
 - **Database** — PostgreSQL (AWS RDS). All money stored as integer cents.
+  NCCI reference tables (`ncci_ptp_edits`, `ncci_mue`, `ncci_loads` — no PHI,
+  no tenant column) are refreshed monthly by the `load-ncci` workflow.
 - **File storage** — S3 (presigned URLs; the backend never streams file bodies).
 - **AI** — Claude Sonnet via **AWS Bedrock** (`invoke_model`). Models are invoked
   **only from the backend**. Every call writes a `model_runs` row (provider,
@@ -120,6 +130,10 @@ created via the `provision-user` workflow). There is no sign-up flow by design.
    rate and dollars recovered, and reminds you about appeals left unreported.
 5. If the analysis asks for a prior authorization or prior-treatment record,
    upload it from the case page to **re-draft** the letter (a new version).
+6. **New Pre-Check** → upload a *draft* claim + clinical notes before submitting
+   to the payer. The pipeline runs the NCCI edits (PTP bundling, MUE units) and
+   the AI documentation-vs-codes review, then shows a denial-risk report — fix
+   the flagged issues before the claim goes out.
 
 Synthetic test PDFs can be generated with `python scripts/make_fixtures.py`
 (written to the gitignored `fixtures/`).
@@ -156,8 +170,9 @@ heimdall/
       db/         # session, base, mixins
       models/     # SQLAlchemy models
       schemas/    # Pydantic request/response + LLM I/O
-      services/   # pipeline, claude_client, extraction, analysis, letter, pdf_gen, s3
-      prompts/    # one module per prompt with a VERSION constant
+      services/   # pipeline, claude_client, extraction, analysis, letter, ncci, precheck, pdf_gen, s3
+      prompts/    # one module per prompt with a VERSION constant (incl. the two pre-check prompts)
+      scripts/    # one-off ECS tasks (provision_user, load_ncci, dispose_practice, ...)
       tests/
     alembic/      # migrations
   docs/         # policies, prior audit reports, pitch deck, research

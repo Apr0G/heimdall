@@ -121,6 +121,16 @@ data "archive_file" "cognito_email_sender_stub" {
   output_path = "${path.module}/lambda/cognito-email-sender/stub.zip"
 }
 
+# Pre-create the Lambda's log group so it gets retention + the CMK — left to
+# auto-create on first invoke, it would be unencrypted with infinite retention.
+# The Lambda finds it implicitly by name (/aws/lambda/<function_name>); same
+# retention/key as the other task log groups (ecs-express.tf, provision.tf).
+resource "aws_cloudwatch_log_group" "cognito_email_sender" {
+  name              = "/aws/lambda/heimdall-cognito-email-sender"
+  retention_in_days = 90
+  kms_key_id        = aws_kms_key.heimdall.arn
+}
+
 resource "aws_lambda_function" "cognito_email_sender" {
   function_name    = "heimdall-cognito-email-sender"
   role             = aws_iam_role.cognito_email_sender.arn

@@ -49,16 +49,16 @@ jobs:
             --filters "Name=group-name,Values=default-heimdall-api-$VPC" "Name=vpc-id,Values=$VPC" \
             --query 'SecurityGroups[0].GroupId' --output text)
 
-          OVERRIDES=$(cat <<JSON
-          {"containerOverrides":[{"name":"$CONTAINER",
-            "command":["python","-m","app.scripts.seed_tenant"],
-            "environment":[
-              {"name":"TENANT_PRACTICE_NAME","value":"$P_NAME"},
-              {"name":"TENANT_EMAIL","value":"$P_EMAIL"},
-              {"name":"TENANT_COGNITO_SUB","value":"$P_SUB"}
-            ]}]}
-          JSON
-          )
+          # jq builds the JSON so user-supplied names can't break out of the quoting.
+          OVERRIDES=$(jq -nc --arg container "$CONTAINER" --arg name "$P_NAME" \
+            --arg email "$P_EMAIL" --arg sub "$P_SUB" \
+            '{containerOverrides:[{name:$container,
+              command:["python","-m","app.scripts.seed_tenant"],
+              environment:[
+                {name:"TENANT_PRACTICE_NAME",value:$name},
+                {name:"TENANT_EMAIL",value:$email},
+                {name:"TENANT_COGNITO_SUB",value:$sub}
+              ]}]}')
 
           TASK_ARN=$(aws ecs run-task \
             --cluster "$CLUSTER" --task-definition "$TASKDEF" --launch-type FARGATE \
