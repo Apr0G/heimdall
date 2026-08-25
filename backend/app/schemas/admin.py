@@ -11,10 +11,22 @@ class AdminUserStats(BaseModel):
 
 
 class AdminCaseStats(BaseModel):
+    # Appeal cases only — pre-checks are their own block (AdminPreCheckStats),
+    # so the recovery/denial figures keep meaning "appeals".
     total: int
     by_status: dict[str, int]
     billed_amount_cents: int
     denied_amount_cents: int
+
+
+class AdminPreCheckStats(BaseModel):
+    total: int
+    # Pre-checks only ever occupy processing/ready/error; zero-filled with the
+    # full case_status enum anyway so the frontend never key-checks.
+    by_status: dict[str, int]
+    # Headline band of each pre-check's LATEST risk report; "none" = a report
+    # with no findings ("no flags").
+    by_risk_band: dict[str, int]
 
 
 class AdminDocumentStats(BaseModel):
@@ -60,6 +72,7 @@ class AdminOverviewResponse(BaseModel):
     practice_count: int
     users: AdminUserStats
     cases: AdminCaseStats
+    pre_checks: AdminPreCheckStats
     documents: AdminDocumentStats
     appeal_letter_count: int
     model_runs: AdminModelRunStats

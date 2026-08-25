@@ -10,6 +10,31 @@ import { Wordmark } from "@/components/wordmark";
 import { homePath, useAuth } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
 
+function NavTab({
+  href,
+  active,
+  children,
+}: {
+  href: string;
+  active: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      aria-current={active ? "page" : undefined}
+      className={cn(
+        "rounded-full px-3.5 py-1 font-medium transition-colors",
+        active
+          ? "bg-card text-foreground shadow-sm"
+          : "text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {children}
+    </Link>
+  );
+}
+
 export function SiteHeader() {
   const { user, logout } = useAuth();
   const pathname = usePathname();
@@ -23,37 +48,27 @@ export function SiteHeader() {
             <Wordmark />
           </Link>
           {user && user.role !== "admin" && (
-            <nav className="flex items-center gap-4 text-sm">
-              <Link
+            // Segmented control: the active product area reads as a raised pill;
+            // the inactive one stays quiet but clearly clickable.
+            <nav
+              aria-label="Product areas"
+              className="flex items-center gap-0.5 rounded-full border border-border bg-muted p-[3px] text-sm"
+            >
+              <NavTab
                 href="/dashboard"
-                aria-current={
+                active={
                   pathname.startsWith("/dashboard") ||
                   pathname.startsWith("/cases")
-                    ? "page"
-                    : undefined
                 }
-                className={cn(
-                  "text-muted-foreground hover:text-foreground",
-                  (pathname.startsWith("/dashboard") ||
-                    pathname.startsWith("/cases")) &&
-                    "font-semibold text-foreground",
-                )}
               >
                 Appeals
-              </Link>
-              <Link
+              </NavTab>
+              <NavTab
                 href="/pre-checks"
-                aria-current={
-                  pathname.startsWith("/pre-checks") ? "page" : undefined
-                }
-                className={cn(
-                  "text-muted-foreground hover:text-foreground",
-                  pathname.startsWith("/pre-checks") &&
-                    "font-semibold text-foreground",
-                )}
+                active={pathname.startsWith("/pre-checks")}
               >
                 Pre-checks
-              </Link>
+              </NavTab>
             </nav>
           )}
         </div>

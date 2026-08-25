@@ -24,6 +24,15 @@ const CASE_STATUSES = [
   "resolved",
   "error",
 ];
+// Pre-checks only ever occupy these three (submission/outcome are appeal-only).
+const PRECHECK_STATUSES = ["processing", "ready", "error"];
+// Same polarity as the practice-side RiskBadge: high risk = danger.
+const RISK_BANDS: { key: string; label: string; token: string | null }[] = [
+  { key: "high", label: "High risk", token: "--danger" },
+  { key: "moderate", label: "Moderate", token: "--warn" },
+  { key: "low", label: "Low", token: "--ok" },
+  { key: "none", label: "No flags", token: null },
+];
 const RUN_PURPOSES = [
   "extraction",
   "analysis",
@@ -148,9 +157,15 @@ function Overview({ data }: { data: AdminOverview }) {
     data.outcomes.win_rate == null
       ? "—"
       : `${Math.round(data.outcomes.win_rate * 100)}%`;
+  // Zeros during the deploy window where the backend predates the field.
+  const preChecks = data.pre_checks ?? {
+    total: 0,
+    by_status: {},
+    by_risk_band: {},
+  };
   return (
     <div className="space-y-8">
-      <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile label="Practices" value={plain.format(data.practice_count)} />
         <StatTile
           label="Users"
@@ -158,9 +173,14 @@ function Overview({ data }: { data: AdminOverview }) {
           detail={`${plain.format(data.users.active)} active`}
         />
         <StatTile
-          label="Cases"
+          label="Appeals"
           value={plain.format(data.cases.total)}
           detail={`${plain.format(data.cases.by_status.error ?? 0)} in error`}
+        />
+        <StatTile
+          label="Pre-checks"
+          value={plain.format(preChecks.total)}
+          detail={`${plain.format(preChecks.by_risk_band.high ?? 0)} high risk`}
         />
         <StatTile
           label="Recovered"
@@ -183,9 +203,49 @@ function Overview({ data }: { data: AdminOverview }) {
 
       <section className="space-y-2">
         <h2 className="text-sm font-medium text-muted-foreground">
-          Cases by status
+          Appeals by status
         </h2>
         <CountsRow order={CASE_STATUSES} counts={data.cases.by_status} />
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-sm font-medium text-muted-foreground">
+          Pre-checks
+        </h2>
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-border bg-card p-[18px] text-sm shadow-sm">
+          {PRECHECK_STATUSES.map((key) => (
+            <div key={key} className="flex items-baseline gap-1.5">
+              <span className="text-muted-foreground">{humanize(key)}</span>
+              <span className="font-semibold tabular-nums">
+                {plain.format(preChecks.by_status[key] ?? 0)}
+              </span>
+            </div>
+          ))}
+          <span
+            aria-hidden
+            className="hidden h-4 w-px self-center bg-border sm:block"
+          />
+          {RISK_BANDS.map((band) => (
+            <div key={band.key} className="flex items-center gap-1.5">
+              <span
+                aria-hidden
+                className="size-2 rounded-full"
+                style={{
+                  background: band.token
+                    ? `var(${band.token})`
+                    : "var(--muted-foreground)",
+                }}
+              />
+              <span className="text-muted-foreground">{band.label}</span>
+              <span className="font-semibold tabular-nums">
+                {plain.format(preChecks.by_risk_band[band.key] ?? 0)}
+              </span>
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Risk is the headline band of each pre-check&rsquo;s latest report.
+        </p>
       </section>
 
       <section className="space-y-2">

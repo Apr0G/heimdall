@@ -29,6 +29,7 @@ from app.models import (
     ModelRun,
     Outcome,
     Practice,
+    RiskReport,
     User,
 )
 from app.models.enums import case_status, model_run_purpose, outcome_result, user_role
@@ -38,6 +39,7 @@ from app.schemas.admin import (
     AdminModelRunStats,
     AdminOutcomeStats,
     AdminOverviewResponse,
+    AdminPreCheckStats,
     AdminUserStats,
     PracticeBreakdownItem,
 )
@@ -91,23 +93,49 @@ async def admin_overview(
         users_total += count
         users_active += active
 
+    # Split by case_type so `cases` keeps meaning "appeals" — mixing pre-checks
+    # into the billed/denied sums and status counts would quietly distort them.
     case_rows = (
         await session.execute(
             select(
+                Case.case_type,
                 Case.status,
                 func.count(),
                 func.coalesce(func.sum(Case.billed_amount_cents), 0),
                 func.coalesce(func.sum(Case.denied_amount_cents), 0),
-            ).group_by(Case.status)
+            ).group_by(Case.case_type, Case.status)
         )
     ).all()
     cases_by_status = _zero_filled(case_status)
-    cases_total = billed_total = denied_total = 0
-    for status_value, count, billed, denied in case_rows:
+    prechecks_by_status = _zero_filled(case_status)
+    cases_total = billed_total = denied_total = prechecks_total = 0
+    for type_value, status_value, count, billed, denied in case_rows:
+        if type_value == "pre_check":
+            prechecks_by_status[status_value] = count
+            prechecks_total += count
+            continue
         cases_by_status[status_value] = count
         cases_total += count
         billed_total += billed
         denied_total += denied
+
+    # Headline band of each pre-check's latest risk report ("none" = no flags).
+    latest_reports = (
+        select(RiskReport.case_id, RiskReport.overall_risk_band)
+        .order_by(RiskReport.case_id, RiskReport.created_at.desc())
+        .distinct(RiskReport.case_id)
+        .subquery()
+    )
+    band_rows = (
+        await session.execute(
+            select(latest_reports.c.overall_risk_band, func.count()).group_by(
+                latest_reports.c.overall_risk_band
+            )
+        )
+    ).all()
+    prechecks_by_band = {"high": 0, "moderate": 0, "low": 0, "none": 0}
+    for band, count in band_rows:
+        prechecks_by_band[band or "none"] = count
 
     doc_count, doc_bytes = (
         await session.execute(
@@ -294,6 +322,11 @@ async def admin_overview(
             by_status=cases_by_status,
             billed_amount_cents=billed_total,
             denied_amount_cents=denied_total,
+        ),
+        pre_checks=AdminPreCheckStats(
+            total=prechecks_total,
+            by_status=prechecks_by_status,
+            by_risk_band=prechecks_by_band,
         ),
         documents=AdminDocumentStats(count=doc_count, total_bytes=doc_bytes),
         appeal_letter_count=letter_count,

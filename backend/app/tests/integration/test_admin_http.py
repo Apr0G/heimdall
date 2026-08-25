@@ -210,6 +210,8 @@ async def test_enum_maps_are_zero_filled_and_empty_practices_read_as_zero(sessio
         body = (await client.get("/api/admin/overview")).json()
 
     assert set(body["cases"]["by_status"]) == CASE_STATUSES
+    assert set(body["pre_checks"]["by_status"]) == CASE_STATUSES
+    assert set(body["pre_checks"]["by_risk_band"]) == {"high", "moderate", "low", "none"}
     assert set(body["model_runs"]["by_purpose"]) == RUN_PURPOSES
     assert set(body["outcomes"]["by_result"]) == OUTCOME_RESULTS
 

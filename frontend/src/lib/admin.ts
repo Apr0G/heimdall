@@ -16,6 +16,13 @@ export type AdminCaseStats = {
   denied_amount_cents: number;
 };
 
+export type AdminPreCheckStats = {
+  total: number;
+  by_status: Record<string, number>;
+  // Latest report per pre-check; "none" = a report with no flags.
+  by_risk_band: Record<string, number>;
+};
+
 export type AdminDocumentStats = {
   count: number;
   total_bytes: number;
@@ -58,6 +65,9 @@ export type AdminOverview = {
   practice_count: number;
   users: AdminUserStats;
   cases: AdminCaseStats;
+  // Optional so the page renders during the deploy window where Vercel is
+  // ahead of the backend; the page defaults it to zeros.
+  pre_checks?: AdminPreCheckStats;
   documents: AdminDocumentStats;
   appeal_letter_count: number;
   model_runs: AdminModelRunStats;

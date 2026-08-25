@@ -153,18 +153,22 @@ export default function SettingsPage() {
           )}
         </CardContent>
       </Card>
-      <Card className="border-destructive/30">
-        <CardHeader>
-          <CardTitle>Deactivate account</CardTitle>
-          <CardDescription>
-            Accounts belong to your practice, so deactivation is approved by an
-            administrator. Send a request and they&rsquo;ll be notified.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <DeactivationRequestCard />
-        </CardContent>
-      </Card>
+      {/* Admins approve deactivations — a request from the (sole) admin has
+          nobody to approve it, so the card is a dead end for them. */}
+      {!isAdmin && (
+        <Card className="border-destructive/30">
+          <CardHeader>
+            <CardTitle>Deactivate account</CardTitle>
+            <CardDescription>
+              Accounts belong to your practice, so deactivation is approved by
+              an administrator. Send a request and they&rsquo;ll be notified.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <DeactivationRequestCard />
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
