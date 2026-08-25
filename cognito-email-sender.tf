@@ -172,8 +172,14 @@ resource "aws_iam_role_policy" "gha_deploy_email_sender" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect   = "Allow"
-      Action   = ["lambda:UpdateFunctionCode", "lambda:GetFunction"]
+      Effect = "Allow"
+      Action = [
+        "lambda:UpdateFunctionCode",
+        "lambda:GetFunction",
+        # `aws lambda wait function-updated` polls this; without it the
+        # workflow's upload succeeds but the wait step fails (seen 2026-08-25).
+        "lambda:GetFunctionConfiguration",
+      ]
       Resource = aws_lambda_function.cognito_email_sender.arn
     }]
   })
