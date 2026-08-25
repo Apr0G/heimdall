@@ -217,8 +217,15 @@ async def _extract_documents(
         # multi-document Textract run can legitimately exceed that window. Touching
         # the case row between documents keeps a working pipeline from being
         # declared dead and duplicated.
-        case.updated_at = datetime.now(UTC)
-        await session.flush()
+        #
+        # This MUST go through _touch_if_owner (its own short committed transaction),
+        # NOT `case.updated_at = ...; flush()` on the phase session. A phase-session
+        # write locks the cases row until the phase commits; a later scanned doc's
+        # _extract_one then calls _touch_if_owner, whose UPDATE of the same row (on a
+        # separate connection) blocks on that lock forever — an undetectable
+        # cross-connection self-deadlock. A flush is also uncommitted, so the stall
+        # detector (which reads committed state) never sees the heartbeat anyway.
+        await _touch_if_owner(case_id=case.id, run_id=case.pipeline_run_id)
 
 
 async def _touch_if_owner(

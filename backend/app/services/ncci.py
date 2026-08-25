@@ -164,12 +164,15 @@ async def ptp_conflicts(
     codes = {normalize_code(line.cpt) for line in lines if line.cpt.strip()}
     if len(codes) < 2:
         return []
-    mods_by_code: dict[str, tuple[str, ...]] = {}
+    # Per-LINE modifiers, not pooled per code. An NCCI edit is only bypassed when
+    # EVERY line of the column-2 code carries an associated modifier — pooling
+    # would let one modified line mark an unmodified same-code line as bypassed,
+    # under-warning about a line that will still deny (the failure direction a
+    # screening tool must avoid).
+    lines_by_code: dict[str, list[tuple[str, ...]]] = {}
     for line in lines:
         code = normalize_code(line.cpt)
-        mods_by_code[code] = mods_by_code.get(code, ()) + tuple(
-            m.strip().upper() for m in line.modifiers
-        )
+        lines_by_code.setdefault(code, []).append(tuple(m.strip().upper() for m in line.modifiers))
 
     rows = (
         await session.scalars(
@@ -187,16 +190,21 @@ async def ptp_conflicts(
     for row in rows:
         if row.column1 == row.column2:
             continue
-        disposition = evaluate_ptp_pair(row.modifier_indicator, mods_by_code.get(row.column2, ()))
-        if disposition is None:
+        if row.modifier_indicator == 9:  # dead edit (also excluded in the query)
             continue
+        col2_lines = lines_by_code.get(row.column2, [()])
+        # Bypassed only when EVERY column-2 line carries an associated modifier
+        # (indicator 1). Any unmodified line will still deny.
+        disposition_bypassed = row.modifier_indicator == 1 and all(
+            any(m in NCCI_ASSOCIATED_MODIFIERS for m in line_mods) for line_mods in col2_lines
+        )
         findings.append(
             PtpFinding(
                 column1=row.column1,
                 column2=row.column2,
                 modifier_indicator=row.modifier_indicator,
                 rationale=row.rationale,
-                bypassed=disposition.bypassed,
+                bypassed=disposition_bypassed,
             )
         )
     return findings

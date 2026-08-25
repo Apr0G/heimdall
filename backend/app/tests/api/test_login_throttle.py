@@ -20,7 +20,13 @@ THROTTLED = [
     ("/api/auth/password/forgot", {"email": "a@b.com"}),
     ("/api/auth/password/reset", {"email": "a@b.com", "code": "1", "new_password": "x"}),
     ("/api/auth/mfa/recover/start", {"email": "a@b.com", "password": "x"}),
+    # The identity-recreation surface, the highest-risk unauthenticated one — accepts
+    # a password plus an emailed one-time code and rebinds the Cognito identity.
+    ("/api/auth/mfa/recover/complete", {"email": "a@b.com", "password": "x", "code": "1"}),
     ("/api/auth/mfa/verify", {"email": "a@b.com", "session": "s", "code": "1"}),
+    # MFA-setup endpoints accept TOTP guesses; both must throttle too.
+    ("/api/auth/mfa/setup/start", {"email": "a@b.com", "session": "s"}),
+    ("/api/auth/mfa/setup/complete", {"email": "a@b.com", "session": "s", "code": "1"}),
 ]
 
 
@@ -35,8 +41,14 @@ def test_closed_throttle_is_429_before_cognito(monkeypatch, path, body):
         "confirm_forgot_password",
         "password_challenge",
         "respond_software_token_mfa",
+        "recover_password",
+        "verify_code",
+        "start_mfa_setup",
+        "complete_mfa_setup",
+        "admin_recreate_user",
     ):
-        monkeypatch.setattr(auth_api, name, cognito)
+        if hasattr(auth_api, name):
+            monkeypatch.setattr(auth_api, name, cognito)
     resp = client.post(path, json=body)
     assert resp.status_code == 429
     cognito.assert_not_called()

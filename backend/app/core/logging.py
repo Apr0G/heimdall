@@ -39,7 +39,13 @@ _MAX_EXC_MESSAGE = 200
 # input it choked on (pypdf embeds 80 bytes of the decompressed content stream,
 # pydantic echoes field values, json echoes the document snippet), and for those
 # the type name plus the frame list is all a debugger gets.
-_MESSAGE_ALLOWED_MODULES = ("app.", "botocore.", "boto3.", "httpx.", "asyncio.", "builtins")
+#
+# "builtins" is deliberately EXCLUDED: ValueError/KeyError/TypeError/
+# UnicodeDecodeError all live there and their str() echoes the offending value
+# (e.g. int("<value>") → "invalid literal for int() with base 10: '<value>'"),
+# which for model-derived-from-document text is a PHI leak. App-raised builtins
+# exceptions carry static messages, so nothing debuggable is lost by dropping it.
+_MESSAGE_ALLOWED_MODULES = ("app.", "botocore.", "boto3.", "httpx.", "asyncio.")
 
 
 def _safe_exception(exc_info) -> dict[str, object]:

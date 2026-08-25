@@ -38,9 +38,13 @@ class TestClaimLine:
         with pytest.raises(ValidationError):
             ClaimLine.model_validate({"cpt": "99213", "charge_cents": "45.00"})
 
-    def test_unit_bounds(self):
-        with pytest.raises(ValidationError):
-            ClaimLine.model_validate({"cpt": "99213", "units": 0})
+    def test_units_zero_or_missing_normalizes_to_one(self):
+        # A blank/0 units cell means "not stated" — bill-once, don't fail the
+        # whole extraction on one line.
+        assert ClaimLine.model_validate({"cpt": "99213", "units": 0}).units == 1
+        assert ClaimLine.model_validate({"cpt": "99213"}).units == 1
+
+    def test_units_upper_bound(self):
         with pytest.raises(ValidationError):
             ClaimLine.model_validate({"cpt": "99213", "units": 1000})
 

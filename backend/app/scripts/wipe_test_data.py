@@ -125,16 +125,22 @@ async def main() -> None:
     s3_purge.assert_prefix_empty(s3, bucket, "model_runs/")
 
     async with engine.begin() as conn:
+        # DELETE in FK-safe order, NOT TRUNCATE. This runs as the limited
+        # heimdall_app role (the heimdall-dispose task injects the app DB
+        # secret), which is granted DELETE but NEVER TRUNCATE — a TRUNCATE would
+        # raise permission denied *after* the S3 purge above has already
+        # destroyed every object, leaving rows pointing at nothing. CASE_TABLES
+        # is ordered children-before-parents (model_runs after the tables that
+        # reference it, cases last), which satisfies the ON DELETE RESTRICT FKs.
         # CASE_TABLES is a hardcoded module constant, never user input, so
-        # interpolating it into the TRUNCATE is not a SQL-injection vector.
-        await conn.execute(
-            text(f"TRUNCATE TABLE {', '.join(CASE_TABLES)} RESTART IDENTITY CASCADE")  # nosemgrep
-        )
+        # interpolating a name into the statement is not an injection vector.
+        for table in CASE_TABLES:
+            await conn.execute(text(f"DELETE FROM {table}"))  # nosemgrep
 
     await engine.dispose()
     print(
         f"Wiped {deleted} S3 object versions ({len(key_list)} keys referenced by rows) "
-        f"and truncated {len(CASE_TABLES)} tables."
+        f"and cleared {len(CASE_TABLES)} tables."
     )
 
 

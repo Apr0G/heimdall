@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # The repo root holds the single source of truth for local secrets (.env.local),
@@ -107,6 +108,22 @@ class Settings(BaseSettings):
     # a control — a closed tab leaves the session valid for the token's full life.
     # 0 disables the server-side check.
     idle_timeout_minutes: int = 15
+
+    @model_validator(mode="after")
+    def _require_redis_in_production(self) -> "Settings":
+        """Fail to boot in production without a Redis DSN. The rate limiters fall
+        back to `memory://` when redis_dsn() is empty (see core/rate_limit.py) —
+        which silently makes the fail-closed AI spend cap and the login
+        brute-force throttle per-container counters that reset on every deploy.
+        A dropped REDIS_URL must be a loud boot failure, not a quiet security
+        downgrade. Guarded on app_env so dev/test keep the in-memory fallback."""
+        if self.app_env == "production" and not self.redis_dsn():
+            raise ValueError(
+                "REDIS_URL (and REDIS_AUTH_TOKEN) must be set in production — the "
+                "in-memory rate-limit fallback is single-process only and defeats "
+                "the AI spend cap and login throttle."
+            )
+        return self
 
     def redis_dsn(self) -> str:
         """`redis_url` with the AUTH token spliced in, or "" when unset.

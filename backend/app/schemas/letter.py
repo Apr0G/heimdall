@@ -36,7 +36,11 @@ class LetterDraft(BaseModel):
             # missing body into an empty string is what made the failure silent.
             if value is None and key != "body":
                 value = [] if key == "attachments_referenced" else ""
-            if key in {"subject_line", "body"} and value is not None and not isinstance(value, str):
+            # str() coercion applies to subject_line ONLY. A non-string `body`
+            # (the model emitting a list of paragraphs or a dict) is a structural
+            # parse failure — str()'ing it to a repr that clears MIN_BODY_CHARS
+            # would ship "['…', '…']" as the letter. Let it fail and retry.
+            if key == "subject_line" and value is not None and not isinstance(value, str):
                 value = str(value)
             cleaned[key] = value
         return cleaned

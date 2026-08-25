@@ -34,7 +34,14 @@ class AnalysisResult(BaseModel):
     probability_band is re-derived server-side from success_probability."""
 
     denial_category: str = "other"
-    is_appealable: bool = False
+    # REQUIRED, no default. This is the most consequential field in the product:
+    # a missing/null verdict must fail validation (consume the one retry, then
+    # fail the model_run) rather than silently coerce to "not appealable", which
+    # would send the case to `ready` with no letter and no error — an empty
+    # success state (rule 9) that quietly writes off a winnable appeal. The
+    # server-side never-appeal guard can only flip true→false, never rescue a
+    # coerced false.
+    is_appealable: bool
     appealability_reason: str | None = None
     # Bounded because the DB column is Numeric(4,3) — max 9.999. An unbounded value
     # (the model returning 95 instead of 0.95) overflows on flush, and the failing
@@ -56,8 +63,8 @@ class AnalysisResult(BaseModel):
                 value = [] if key == "additional_documents_needed" else None
             if key == "additional_documents_needed" and value is None:
                 value = []
-            if key == "is_appealable" and value is None:
-                value = False
+            # NB: is_appealable is deliberately NOT coerced from None → False —
+            # a null/missing verdict must fail validation (see the field docstring).
             cleaned[key] = value
         return cleaned
 

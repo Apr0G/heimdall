@@ -14,7 +14,9 @@ _FONT_SIZE = 11
 _LEADING = 15
 _TOP = _PAGE_H - _MARGIN
 # Conservative character budget per line for 11pt Helvetica within the margins.
-_WRAP = 92
+# Usable width is 612 - 2*72 = 468pt; at ~5.5pt average advance for 11pt
+# Helvetica, ~85 chars is the safe budget (92 overran into the right margin).
+_WRAP = 85
 _LINES_PER_PAGE = (_TOP - _MARGIN) // _LEADING
 
 # The content stream is encoded latin-1 (one byte per char) so the xref table's

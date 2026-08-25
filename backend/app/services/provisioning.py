@@ -59,10 +59,15 @@ async def invite_user(
     if bool(practice_id) == bool(practice_name):
         raise ProvisioningError("Choose an existing practice or name a new one — not both")
 
-    # Cognito first: if this fails nothing has been written.
+    # Look up the existing row BEFORE any Cognito side effect. Inviting first
+    # meant a request we then refuse (email bound to a different identity) had
+    # already created an orphan Cognito account or resent an invite — a side
+    # effect that survives the DB rollback. Only the different-sub-refusal needs
+    # `sub`, so do the read-only DB check up front and refuse cheaply.
+    existing = await session.scalar(select(User).where(User.email == email))
+
     sub, created_cognito = await run_in_threadpool(admin_invite, email)
 
-    existing = await session.scalar(select(User).where(User.email == email))
     if existing is not None:
         if existing.cognito_sub != sub:
             if not existing.cognito_sub.startswith(RESET_PENDING_PREFIX):

@@ -50,6 +50,7 @@ def test_well_formed_extraction_parses():
             "payer_name": "Aetna",
             "plan_type": "commercial",
             "claim_number": "CLM-TEST-0001",
+            "member_id": "MBR123",
             "denial_date": "2026-05-04",
             "denied_amount_cents": 45000,
             "carc_codes": ["CO-50"],
@@ -63,8 +64,10 @@ def test_well_formed_extraction_parses():
     assert result.denial_date == date(2026, 5, 4)
     assert result.denied_amount_cents == 45000
     assert result.carc_codes == ["CO-50"]
-    # raw member_id is excluded from the persisted JSON
-    assert "member_id" not in result.model_dump(exclude={"member_id"})
+    # The raw member_id is on the schema (the model returns it) but the persist
+    # path excludes it — proven by the run_ai_extraction test below, not by a
+    # self-referential exclude() here (which would pass for any schema).
+    assert result.member_id == "MBR123"
 
 
 # --- appeal deadlines (HIGH-01) ---------------------------------------------

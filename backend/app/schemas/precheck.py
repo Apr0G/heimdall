@@ -83,8 +83,10 @@ class ClaimLine(BaseModel):
             if key in _LIST_FIELDS and value is None:
                 value = []
             cleaned[key] = value
-        # A missing/None units means "not stated" — bill-once is the safe read.
-        if cleaned.get("units") is None:
+        # A missing/None/0 units means "not stated" — bill-once is the safe read
+        # (a blank units cell is as likely read as 0 as null). Falsy → 1 rather
+        # than failing the whole extraction on one line.
+        if not cleaned.get("units"):
             cleaned["units"] = 1
         return cleaned
 
@@ -175,6 +177,13 @@ class RiskFinding(BaseModel):
     def _clip_title(cls, value: object) -> object:
         return _clip(value, 120) or value
 
+    @field_validator("predicted_carc", mode="before")
+    @classmethod
+    def _clip_carc(cls, value: object) -> str | None:
+        # Clip an over-long code annotation ("CO-16 (missing information)")
+        # rather than reject and fail the whole review parse.
+        return _clip(value, 16)
+
     @field_validator("explanation", "suggested_fix", mode="before")
     @classmethod
     def _clip_prose(cls, value: object) -> str | None:
@@ -191,6 +200,11 @@ class ProposedEdit(BaseModel):
     target: str | None = Field(default=None, max_length=16)
     instruction: str = Field(min_length=1)
     source: str = "model"
+
+    @field_validator("target", mode="before")
+    @classmethod
+    def _clip_target(cls, value: object) -> str | None:
+        return _clip(value, 16)
 
     @field_validator("instruction", mode="before")
     @classmethod
@@ -218,9 +232,15 @@ class RiskReviewResult(BaseModel):
         kept: list = []
         dropped = 0
         for item in raw:
-            if isinstance(item, dict) and item.get("check_id") in MODEL_CHECK_IDS:
-                item = {**item, "source": "model"}
-                kept.append(item)
+            # Drop (and count) anything outside the vocabulary OR missing a
+            # usable title — a single degenerate finding must not fail the whole
+            # parse (the contract is drop-not-reject).
+            if (
+                isinstance(item, dict)
+                and item.get("check_id") in MODEL_CHECK_IDS
+                and str(item.get("title") or "").strip()
+            ):
+                kept.append({**item, "source": "model"})
             else:
                 dropped += 1
         raw_edits = data.get("proposed_edits") or []
@@ -228,10 +248,20 @@ class RiskReviewResult(BaseModel):
             raw_edits = []
         kept_edits: list = []
         for item in raw_edits:
-            if isinstance(item, dict) and item.get("kind") in EDIT_KINDS:
+            if (
+                isinstance(item, dict)
+                and item.get("kind") in EDIT_KINDS
+                and str(item.get("instruction") or "").strip()
+            ):
                 kept_edits.append({**item, "source": "model"})
             else:
                 dropped += 1
+        # Prioritize by severity before the cap so a high-severity finding at
+        # position 31 isn't discarded in favor of an info at position 3; count
+        # what the cap truncates, per the "dropped, never trusted" contract.
+        _order = {"high": 0, "medium": 1, "low": 2, "info": 3}
+        kept.sort(key=lambda f: _order.get(str(f.get("severity", "")).strip().lower(), 2))
+        dropped += max(0, len(kept) - MAX_FINDINGS) + max(0, len(kept_edits) - MAX_EDITS)
         return {
             **data,
             "findings": kept[:MAX_FINDINGS],

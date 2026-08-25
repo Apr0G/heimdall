@@ -44,14 +44,19 @@ _NEVER_APPEAL_EXACT = {"CO-45"}
 _NEVER_APPEAL_PREFIXES = ("PR-",)
 
 
-_CARC_RE = re.compile(r"^\s*(?:([A-Z]{2})\s*[-_ ]?\s*)?(\d{1,3})\s*$")
+# The reason part accepts an optional leading letter (A/B/W-series CARCs like
+# "B1", "W2", "P13" exist) so alphanumeric reason codes don't slip past the
+# never-appeal guard — a purely-numeric pattern let "PR-B1" parse to [] and fail
+# open. Group is the two-letter adjustment group (CO/PR/OA/PI).
+_CARC_RE = re.compile(r"^\s*(?:([A-Z]{2})\s*[-_ ]?\s*)?([A-Z]?\d{1,3})\s*$")
 
 
 def _canonical_carcs(raw: str, group_codes: list[str]) -> list[str]:
     """Every GROUP-REASON spelling a raw code could mean, in the form the guard
-    matches ("CO-45"). Accepts "CO-45", "co 45", "CO45", "CO_45"; a bare reason
-    code ("45") is combined with each supplied group code, since extraction may
-    split the pair across `carc_codes` / `group_codes`. Unparseable → []."""
+    matches ("CO-45"). Accepts "CO-45", "co 45", "CO45", "CO_45", "PR-B1"; a bare
+    reason code ("45", "B1") is combined with each supplied group code, since
+    extraction may split the pair across `carc_codes` / `group_codes`.
+    Unparseable → []."""
     m = _CARC_RE.match(raw.upper())
     if not m:
         return []

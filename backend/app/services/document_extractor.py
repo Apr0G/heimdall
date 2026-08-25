@@ -13,6 +13,11 @@ from app.services import s3
 # A digital PDF yields selectable text; a scanned one yields ~nothing and needs
 # OCR. This threshold separates the two.
 MIN_DIGITAL_CHARS = 20
+# Minimum average embedded chars/page for a multi-page PDF to count as digital.
+# A whole-document threshold alone lets a scanned note behind a digital cover
+# page (fax-to-PDF, payer-portal headers) clear MIN_DIGITAL_CHARS while most
+# pages are actually images — the models would then "succeed" on the cover text.
+MIN_DIGITAL_CHARS_PER_PAGE = 20
 
 _textract = None
 
@@ -105,12 +110,20 @@ def digital_text_from_bytes(data: bytes) -> str | None:
     try:
         reader = PdfReader(io.BytesIO(data))
         assert_page_count(reader)
+        page_count = len(reader.pages)
         text = "\n".join((page.extract_text() or "") for page in reader.pages).strip()
     except TooManyPagesError:
         raise
     except Exception as exc:  # noqa: BLE001 — any parser failure; detail intentionally dropped
         raise DocumentParseError(type(exc).__name__) from None
-    return text if len(text) >= MIN_DIGITAL_CHARS else None
+    if len(text) < MIN_DIGITAL_CHARS:
+        return None
+    # Guard the mixed-document case: enough total text but spread thin across many
+    # pages means most pages are scanned images — send the whole doc to OCR
+    # rather than feed the models a near-empty extraction.
+    if page_count > 1 and len(text) < page_count * MIN_DIGITAL_CHARS_PER_PAGE:
+        return None
+    return text
 
 
 def run_textract(s3_key: str, poll_seconds: float = 2.0, timeout_seconds: int = 180) -> str:

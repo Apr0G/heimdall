@@ -107,7 +107,16 @@ def discover_ptp_urls(page_html: str) -> tuple[str, list[str]]:
         groups.setdefault((year, quarter, ver), set()).add(m.group(0))
     if not groups:
         raise RuntimeError("no practitioner PTP zip links found on the CMS page")
-    year, quarter, ver = max(groups)
+
+    def _sort_key(g: tuple[int, int, str]) -> tuple[int, int, int, int]:
+        # Sort the version numerically, not lexicographically: "...r10" must beat
+        # "...r9", and v-major must compare as ints. Falls back to (0,0) for any
+        # unexpected tag shape so the newest quarter still wins.
+        y, q, ver = g
+        vm = re.search(r"v(\d+)r(\d+)", ver)
+        return (y, q, int(vm.group(1)), int(vm.group(2))) if vm else (y, q, 0, 0)
+
+    year, quarter, ver = max(groups, key=_sort_key)
     paths = sorted(groups[(year, quarter, ver)])
     tag = f"{year}Q{quarter}-{ver.removeprefix('ccipra-')}"
     return tag, [f"https://www.cms.gov{p}" for p in paths]

@@ -18,6 +18,7 @@ import time
 from app.core.config import settings
 
 _PREFIX = "mfa-recover:"
+_ATTEMPTS_PREFIX = "mfa-recover-attempts:"
 
 
 def _hash(salt: str, code: str) -> str:
@@ -47,6 +48,16 @@ class _MemoryStore:
         with self._lock:
             self._data.pop(key, None)
 
+    def incr(self, key: str, ttl: int) -> int:
+        """Atomic increment (under the lock) returning the new count."""
+        with self._lock:
+            item = self._data.get(key)
+            now = time.monotonic()
+            n = int(item[1]) if item is not None and item[0] >= now else 0
+            n += 1
+            self._data[key] = (now + ttl, str(n))
+            return n
+
 
 class _RedisStore:
     def __init__(self, dsn: str) -> None:
@@ -63,6 +74,15 @@ class _RedisStore:
 
     def delete(self, key: str) -> None:
         self._r.delete(key)
+
+    def incr(self, key: str, ttl: int) -> int:
+        """Server-side atomic INCR + expiry — concurrent guesses each get a
+        distinct count, so the attempt cap can't be raced past."""
+        pipe = self._r.pipeline()
+        pipe.incr(key)
+        pipe.expire(key, ttl)
+        result = pipe.execute()
+        return int(result[0])
 
 
 _store = None
@@ -81,14 +101,19 @@ def issue_code(email: str) -> str:
     ONLY place the plaintext exists; the caller emails it and drops it."""
     code = f"{secrets.randbelow(10**6):06d}"
     salt = secrets.token_hex(8)
-    record = json.dumps({"salt": salt, "hash": _hash(salt, code), "attempts": 0})
-    _get_store().set(_PREFIX + email, record, settings.mfa_recovery_code_ttl_seconds)
+    # The record is immutable (salt + hash only) — it is never re-written on a
+    # wrong guess, so its TTL is never re-armed and the code dies on schedule.
+    # Attempts live in a SEPARATE atomic counter, not in this record.
+    record = json.dumps({"salt": salt, "hash": _hash(salt, code)})
+    store = _get_store()
+    store.set(_PREFIX + email, record, settings.mfa_recovery_code_ttl_seconds)
+    store.delete(_ATTEMPTS_PREFIX + email)  # clear any stale counter from a prior code
     return code
 
 
 def verify_code(email: str, code: str) -> bool:
-    """True exactly once per issued code. A wrong guess counts an attempt; too many
-    wrong guesses void the code so it must be re-requested."""
+    """True exactly once per issued code. A wrong guess atomically counts an
+    attempt; too many wrong guesses void the code so it must be re-requested."""
     store = _get_store()
     key = _PREFIX + email
     raw = store.get(key)
@@ -97,11 +122,13 @@ def verify_code(email: str, code: str) -> bool:
     record = json.loads(raw)
     if secrets.compare_digest(record["hash"], _hash(record["salt"], code)):
         store.delete(key)
+        store.delete(_ATTEMPTS_PREFIX + email)
         return True
-    record["attempts"] += 1
-    if record["attempts"] >= settings.mfa_recovery_max_attempts:
+    # Atomic increment on a separate key: concurrent wrong guesses each get a
+    # distinct count, so the cap cannot be raced past (the record read-modify-
+    # write it replaced could). The counter shares the code's TTL budget.
+    attempts = store.incr(_ATTEMPTS_PREFIX + email, settings.mfa_recovery_code_ttl_seconds)
+    if attempts >= settings.mfa_recovery_max_attempts:
         store.delete(key)
-    else:
-        # Keep the original expiry budget roughly intact rather than extending it.
-        store.set(key, json.dumps(record), settings.mfa_recovery_code_ttl_seconds)
+        store.delete(_ATTEMPTS_PREFIX + email)
     return False

@@ -38,6 +38,7 @@ async def main() -> None:
     checked = matched = mismatched = 0
     unhashed = 0
     altered: list[str] = []
+    missing_but_recorded: list[str] = []
     skip_reasons: Counter = Counter()
     unreadable = 0
 
@@ -50,8 +51,15 @@ async def main() -> None:
         except ClientError as exc:
             code = exc.response.get("Error", {}).get("Code", "Unknown")
             skip_reasons[code] += 1
-            if code not in _BENIGN_MISSING:
-                unreadable += 1
+            # A 404 on a key that HAS a documents row is not benign: every row is
+            # supposed to point at a live object, so a vanished object is a
+            # tampering/corruption signal (the app role's s3:DeleteObject writes a
+            # delete marker → GET 404). Count it as a failure, not a skip —
+            # otherwise deleting any proper subset of documents keeps this
+            # §164.312(c) attestation green.
+            unreadable += 1
+            if code in _BENIGN_MISSING:
+                missing_but_recorded.append(str(doc.id))
             continue
         except Exception as exc:  # noqa: BLE001 — record the kind, keep going
             skip_reasons[type(exc).__name__] += 1
@@ -77,6 +85,12 @@ async def main() -> None:
     if altered:
         # Document ids are internal UUIDs, not PHI.
         print("ALTERED document ids:", ", ".join(altered))
+        raise SystemExit(1)
+
+    if missing_but_recorded:
+        # A recorded document whose object is gone (404/NoSuchKey) — deletion
+        # tampering or data loss. Ids are internal UUIDs, not PHI.
+        print("MISSING (recorded but 404) document ids:", ", ".join(missing_but_recorded))
         raise SystemExit(1)
 
     # A check that verified nothing is not a passing check. Previously the only

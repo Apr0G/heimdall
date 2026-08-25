@@ -74,21 +74,33 @@ def test_appealable_codes_pass_the_guard(codes):
 
 def test_unknown_category_and_level_normalized():
     result = AnalysisResult.model_validate(
-        {"denial_category": "weird", "recommended_appeal_level": "made_up"}
+        {
+            "is_appealable": True,
+            "denial_category": "weird",
+            "recommended_appeal_level": "made_up",
+        }
     )
     assert result.denial_category == "other"
     assert result.recommended_appeal_level == "level_1_internal"
 
 
-def test_is_appealable_and_empties_coerced():
+def test_missing_or_null_is_appealable_fails_loudly():
+    """The most consequential field: a missing/null/empty verdict must FAIL
+    validation (burn the retry, then fail the model_run) — never coerce to a
+    definitive 'not appealable' that silently writes off a winnable appeal."""
+    for bad in ({}, {"is_appealable": None}, {"is_appealable": ""}):
+        with pytest.raises(ValidationError):
+            AnalysisResult.model_validate(bad)
+
+
+def test_empties_coerced_with_verdict_present():
     result = AnalysisResult.model_validate(
         {
-            "is_appealable": "",
+            "is_appealable": True,
             "appealability_reason": "",
             "additional_documents_needed": "",
         }
     )
-    assert result.is_appealable is False
     assert result.appealability_reason is None
     assert result.additional_documents_needed == []
 
@@ -97,14 +109,16 @@ def test_additional_documents_filtered_to_valid():
     """ "imaging" is filtered out alongside "garbage": no doc_type enum member and no
     upload endpoint accepts it, so requesting it silently discards the ask."""
     result = AnalysisResult.model_validate(
-        {"additional_documents_needed": ["prior_auth", "garbage", "imaging"]}
+        {"is_appealable": True, "additional_documents_needed": ["prior_auth", "garbage", "imaging"]}
     )
     assert result.additional_documents_needed == ["prior_auth"]
 
 
 def test_new_never_appeal_categories_accepted():
     for category in ("contractual_adjustment", "patient_responsibility"):
-        result = AnalysisResult.model_validate({"denial_category": category})
+        result = AnalysisResult.model_validate(
+            {"is_appealable": False, "denial_category": category}
+        )
         assert result.denial_category == category
 
 
