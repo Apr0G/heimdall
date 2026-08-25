@@ -22,6 +22,12 @@ from app.core.security_headers import BodySizeLimitMiddleware, SecurityHeadersMi
 setup_logging(settings.log_level)
 logger = logging.getLogger(__name__)
 
+# Fail the SERVING API loudly if production has no Redis (the in-memory
+# rate-limit fallback silently defeats the AI spend cap + login throttle). Lives
+# here, not in Settings, so one-off admin tasks (alembic migrate, export,
+# dispose, provision) — which run APP_ENV=production without Redis — still boot.
+settings.require_redis_in_production()
+
 # Swagger UI, ReDoc, and the OpenAPI schema expose the full API surface (every
 # route, param, and shape) — useful in dev, but free reconnaissance for an
 # attacker in prod. Serve them only outside production; in prod all three 404.
