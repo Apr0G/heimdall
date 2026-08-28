@@ -100,11 +100,15 @@ class ReanalyzeRequest(BaseModel):
 
 
 class DocumentDetail(BaseModel):
+    """`text_source`: pdf_text | ocr | form_fields (fillable form); None for
+    documents extracted before it was recorded."""
+
     id: UUID
     doc_type: str
     original_filename: str | None
     file_size_bytes: int | None
     ocr_status: str
+    text_source: str | None = None
 
 
 class ExtractionDetail(BaseModel):
@@ -211,6 +215,9 @@ class CorrectedClaimDetail(BaseModel):
     total_updated: bool | None
     # False when nothing could be applied — there is no file to download.
     downloadable: bool
+    # "form": the claim was a fillable PDF and the corrected copy stays fillable;
+    # "text": born-digital page text edited in place.
+    format: str | None = None
     created_at: datetime
     downloaded_at: datetime | None
 

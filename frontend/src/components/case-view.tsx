@@ -200,6 +200,16 @@ export function DocumentsCard({ documents }: { documents: DocumentDetail[] }) {
                 </div>
                 <div className="text-xs text-muted-foreground">
                   {d.original_filename ?? "document.pdf"}
+                  {d.text_source === "form_fields" && (
+                    <span className="ml-1.5 rounded bg-muted px-1.5 py-0.5 text-[11px] text-foreground">
+                      Fillable form
+                    </span>
+                  )}
+                  {d.text_source === "ocr" && (
+                    <span className="ml-1.5 rounded bg-muted px-1.5 py-0.5 text-[11px]">
+                      Scanned
+                    </span>
+                  )}
                 </div>
               </div>
               <Button

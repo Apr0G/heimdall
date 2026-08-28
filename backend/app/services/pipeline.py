@@ -166,7 +166,20 @@ async def _extract_one(session: AsyncSession, doc: Document, *, case_id, run_id)
         raise DocumentTamperedError(
             f"document {doc.id} no longer matches its recorded content hash"
         )
-    text = await run_in_threadpool(document_extractor.digital_text_from_bytes, data)
+    # A filled fillable form carries its data in field values, not page text:
+    # read those (labelled, positioned — better than OCR of a rendered form).
+    form_text = await run_in_threadpool(document_extractor.form_fields_text, data)
+    text = (
+        form_text
+        if form_text is not None
+        else await run_in_threadpool(document_extractor.digital_text_from_bytes, data)
+    )
+    if form_text is not None:
+        # Any typed-over page text rides along after the fields.
+        page_text = await run_in_threadpool(document_extractor.digital_text_from_bytes, data)
+        if page_text:
+            text = f"{form_text}\n\n{page_text}"
+        doc.text_source = "form_fields"
     if text is None:
         # Scanned PDF -> OCR. Mark pending so the state is observable — via a
         # guarded UPDATE in its own session, never a commit of THIS session,
@@ -179,9 +192,12 @@ async def _extract_one(session: AsyncSession, doc: Document, *, case_id, run_id)
         await run_in_threadpool(document_extractor.store_extracted_text, doc.s3_key, text)
         doc.ocr_status = "completed"
         doc.ocr_completed_at = datetime.now(UTC)
+        doc.text_source = "ocr"
     else:
         await run_in_threadpool(document_extractor.store_extracted_text, doc.s3_key, text)
         doc.ocr_status = "not_needed"
+        if doc.text_source is None:
+            doc.text_source = "pdf_text"
     await session.flush()
     logger.info(
         "extracted document",
@@ -190,6 +206,7 @@ async def _extract_one(session: AsyncSession, doc: Document, *, case_id, run_id)
                 "document_id": str(doc.id),
                 "chars": len(text),
                 "ocr_status": doc.ocr_status,
+                "text_source": doc.text_source,
             }
         },
     )

@@ -329,9 +329,20 @@ describe("pre-check report page", () => {
           ],
           total_updated: null,
           downloadable: true,
+          format: "form",
           created_at: "2026-08-28T10:00:00Z",
           downloaded_at: null,
         },
+        documents: [
+          {
+            id: "d1",
+            doc_type: "claim",
+            original_filename: "claim.pdf",
+            file_size_bytes: 1000,
+            ocr_status: "not_needed",
+            text_source: "form_fields",
+          },
+        ],
       }),
     );
     cases.fetchCorrectedClaimDownloadUrl.mockResolvedValue("https://s3/signed");
@@ -352,6 +363,8 @@ describe("pre-check report page", () => {
     expect(
       screen.getByText(/Check the diagnosis pointers/),
     ).toBeInTheDocument();
+    expect(screen.getByText(/still a fillable form/)).toBeInTheDocument();
+    expect(screen.getByText("Fillable form")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Download PDF/ }));
     await waitFor(() =>
       expect(open).toHaveBeenCalledWith(

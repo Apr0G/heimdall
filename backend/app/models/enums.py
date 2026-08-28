@@ -43,6 +43,7 @@ doc_type = _pg_enum(
 )
 
 ocr_status = _pg_enum("not_needed", "pending", "completed", "failed", name="ocr_status")
+text_source = _pg_enum("pdf_text", "ocr", "form_fields", name="text_source")
 
 denial_category = _pg_enum(
     "medical_necessity",

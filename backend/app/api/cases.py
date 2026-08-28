@@ -656,6 +656,7 @@ async def get_case(
                 original_filename=d.original_filename,
                 file_size_bytes=d.file_size_bytes,
                 ocr_status=d.ocr_status,
+                text_source=d.text_source,
             )
             for d in documents
         ],
@@ -732,17 +733,24 @@ async def get_case(
             and case.status == "ready"
             and corrected_claim_service.claim_document_editable(list(documents))
         ),
-        corrected_claim=_corrected_claim_detail(corrected) if corrected else None,
+        corrected_claim=(
+            _corrected_claim_detail(
+                corrected, corrected_claim_service.claim_format(list(documents))
+            )
+            if corrected
+            else None
+        ),
     )
 
 
-def _corrected_claim_detail(row: CorrectedClaim) -> CorrectedClaimDetail:
+def _corrected_claim_detail(row: CorrectedClaim, fmt: str | None) -> CorrectedClaimDetail:
     return CorrectedClaimDetail(
         id=row.id,
         version=row.version,
         results=[CorrectedClaimEditResult(**r) for r in (row.results or [])],
         total_updated=row.total_updated,
         downloadable=row.s3_key is not None,
+        format=fmt,
         created_at=row.created_at,
         downloaded_at=row.downloaded_at,
     )
@@ -826,7 +834,8 @@ async def create_corrected_claim(
     )
     await session.commit()
     await session.refresh(row)
-    return _corrected_claim_detail(row)
+    documents = (await session.scalars(select(Document).where(Document.case_id == case.id))).all()
+    return _corrected_claim_detail(row, corrected_claim_service.claim_format(list(documents)))
 
 
 @router.get("/{case_id}/corrected-claim/download-url", response_model=DownloadUrlResponse)

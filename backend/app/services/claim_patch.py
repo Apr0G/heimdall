@@ -47,6 +47,8 @@ from pypdf.generic import (
     NumberObject,
 )
 
+from app.services import claim_form
+
 # --- vocabulary --------------------------------------------------------------
 
 EDIT_KINDS = ("remove_line", "add_modifier", "change_units", "change_code")
@@ -148,6 +150,7 @@ class PatchResult:
     # could not be located unambiguously (caller tells the user to fix it).
     total_updated: bool | None
     pages_changed: int
+    format: str = "text"  # "text" (glyph surgery) | "form" (field values)
 
 
 # --- page model -------------------------------------------------------------
@@ -169,6 +172,10 @@ class _Word:
     # whether the face is italic — so a drawn value matches its neighbours.
     color: tuple[float, ...] = (0.0,)
     italic: bool = False
+    # Fillable forms: the field this token belongs to and its index among the
+    # value's whitespace-separated tokens.
+    field: object = None
+    token: int = 0
 
     @property
     def upright(self) -> bool:
@@ -213,6 +220,7 @@ class _Overlay:
     size: float
     text: str
     line: object = None  # the service line it was drawn on, if any
+    word: object = None  # the word it replaced, if any (dropped if that word is removed)
     color: tuple[float, ...] = (0.0,)
     italic: bool = False
 
@@ -229,32 +237,38 @@ class _PageEdits:
 def patch_claim(pdf_bytes: bytes, edits: Sequence[ClaimEdit]) -> PatchResult:
     """Apply ``edits`` to the CMS-1500 in ``pdf_bytes``. Raises ClaimPatchError
     when the document as a whole can't be handled; individual edits that can't
-    be applied come back as EditResult(applied=False, reason=...)."""
-    pages = _load_pages(pdf_bytes)
-    pages_words = [page.words for page in pages]
+    be applied come back as EditResult(applied=False, reason=...).
+
+    A fillable form (values in AcroForm fields) is edited by rewriting field
+    values; anything else by glyph surgery on the content stream. Both go
+    through the same row parser and the same edit policy."""
+    backend: _Backend
+    try:
+        form = claim_form.read_form(pdf_bytes)
+    except claim_form.FormReadError as exc:
+        if exc.code == "xfa":
+            raise ClaimPatchError("unsupported_pdf", "xfa form") from None
+        backend = _GlyphBackend(pdf_bytes)
+    else:
+        backend = _FormBackend(pdf_bytes, form)
+
+    pages_words = backend.pages_words
     lines = [line for page_words in pages_words for line in _find_service_lines(page_words)]
     if not lines:
         raise ClaimPatchError("no_service_lines")
+    backend.lines = lines
 
-    per_page: dict[int, _PageEdits] = {}
     results: list[EditResult] = []
-    removed_lines: list[_ServiceLine] = []
-    expected_removed: list[_Word] = []
-    expected_added: list[tuple[int, str, float, float]] = []  # page, text, x0, baseline
-
-    def page_edits(page: int) -> _PageEdits:
-        return per_page.setdefault(page, _PageEdits())
-
-    ctx = _ApplyContext(page_edits, expected_removed, expected_added, removed_lines, lines)
-
     for edit in edits:
         if edit.kind not in EDIT_KINDS:
             results.append(EditResult(edit, False, "unsupported_kind"))
             continue
         target = edit.target.strip().upper()
-        matches = [line for line in lines if line.cpt.text == target and line not in removed_lines]
+        matches = [
+            line for line in lines if line.cpt.text == target and line not in backend.removed_lines
+        ]
         if matches:
-            results.append(_apply_to_lines(edit, matches, ctx))
+            results.append(_apply_to_lines(edit, matches, backend))
             continue
         dx_words = _find_dx(pages_words, lines, target)
         if dx_words is None or not dx_words:
@@ -262,54 +276,107 @@ def patch_claim(pdf_bytes: bytes, edits: Sequence[ClaimEdit]) -> PatchResult:
         elif len(dx_words) > 1:
             results.append(EditResult(edit, False, "ambiguous_line"))
         else:
-            results.append(_apply_to_dx(edit, dx_words[0], pages_words, ctx))
+            results.append(_apply_to_dx(edit, dx_words[0], pages_words, backend))
 
     total_updated: bool | None = None
-    if removed_lines or ctx.charges:
-        total_updated = _update_total(
-            pages_words, lines, removed_lines, ctx, per_page, expected_removed, expected_added
+    if backend.removed_lines or backend.charges:
+        total_updated = _update_total(pages_words, lines, backend)
+
+    if not backend.changed:
+        return PatchResult(
+            pdf=pdf_bytes,
+            results=results,
+            total_updated=None,
+            pages_changed=0,
+            format=backend.format,
         )
-
-    # A page whose every edit was skipped has an empty entry; don't rewrite it.
-    per_page = {k: v for k, v in per_page.items() if v.remove or v.overlays}
-    if not per_page:
-        return PatchResult(pdf=pdf_bytes, results=results, total_updated=None, pages_changed=0)
-
-    patched = _rewrite(pdf_bytes, pages, per_page)
-    _verify(patched, pages, per_page)
+    patched = backend.finalize()
     return PatchResult(
-        pdf=patched, results=results, total_updated=total_updated, pages_changed=len(per_page)
+        pdf=patched,
+        results=results,
+        total_updated=total_updated,
+        pages_changed=backend.pages_changed,
+        format=backend.format,
     )
 
 
-@dataclass
-class _ApplyContext:
-    page_edits: object  # callable page -> _PageEdits
-    expected_removed: list[_Word]
-    expected_added: list[tuple[int, str, float, float]]
-    removed_lines: list[_ServiceLine]
-    lines: list[_ServiceLine] = field(default_factory=list)
-    # Current charge per line (id(line) -> cents) after scaling, for Box 28.
-    charges: dict[int, int] = field(default_factory=dict)
+# --- backends ---------------------------------------------------------------
 
-    def units_column_x(self, page: int, line: _ServiceLine) -> float:
-        """Where 24G starts: from a sibling line that prints a count, else at
-        the fixed distance the form keeps between the charge box and the
-        units box (a blank 24G on every line is the common case)."""
-        xs = [ln.units.origin_x for ln in self.lines if ln.page == page and ln.units is not None]
-        if xs:
-            return min(xs)
-        last_charge = line.charge.words[-1]
-        return last_charge.x1 + 1.6 * last_charge.size
+
+class _Backend:
+    """What an edit needs from the document: replace a token, add a modifier,
+    fill a blank units cell, rewrite an amount, remove a line, and finally
+    write + verify. Room checks and the mechanics differ per backend; the
+    edit policy above does not."""
+
+    format: str
+    pages_words: list[list[_Word]]
+
+    def __init__(self) -> None:
+        self.lines: list[_ServiceLine] = []
+        self.removed_lines: list[_ServiceLine] = []
+        # Current charge per line (id(line) -> cents) after scaling, for Box 28.
+        self.charges: dict[int, int] = {}
 
     def current_cents(self, line: _ServiceLine) -> int:
         return self.charges.get(id(line), line.charge.cents)
 
-    def remove_word(self, word: _Word) -> None:
-        self.page_edits(word.page).remove.update(word.chars)
-        self.expected_removed.append(word)
+    # -- operations (return a skip reason, or None when done) --
+    def replace(self, word: _Word, text: str, *, row: list[_Word], line: _ServiceLine | None):
+        raise NotImplementedError
 
-    def draw(
+    def add_modifier(self, line: _ServiceLine, value: str) -> str | None:
+        raise NotImplementedError
+
+    def set_blank_units(self, line: _ServiceLine, value: str) -> str | None:
+        raise NotImplementedError
+
+    def set_money(self, charge: _Charge, texts: list[str], *, row: list[_Word], line) -> str | None:
+        raise NotImplementedError
+
+    def remove_word(self, word: _Word) -> None:
+        raise NotImplementedError
+
+    def remove_line(self, line: _ServiceLine) -> None:
+        raise NotImplementedError
+
+    @property
+    def changed(self) -> bool:
+        raise NotImplementedError
+
+    @property
+    def pages_changed(self) -> int:
+        raise NotImplementedError
+
+    def finalize(self) -> bytes:
+        raise NotImplementedError
+
+
+class _GlyphBackend(_Backend):
+    """Born-digital text: remove the glyph codes of a token from the content
+    stream (keeping every other glyph in place) and draw the replacement in
+    Helvetica at the old origin, matching colour and slant."""
+
+    format = "text"
+
+    def __init__(self, pdf_bytes: bytes) -> None:
+        super().__init__()
+        self.pdf_bytes = pdf_bytes
+        self.pages = _load_pages(pdf_bytes)
+        self.pages_words = [page.words for page in self.pages]
+        self.per_page: dict[int, _PageEdits] = {}
+
+    def _page(self, page: int) -> _PageEdits:
+        return self.per_page.setdefault(page, _PageEdits())
+
+    def remove_word(self, word: _Word) -> None:
+        pe = self._page(word.page)
+        pe.remove.update(word.chars)
+        # A value drawn in this word's place earlier goes with it: "change it,
+        # then remove it" ends with nothing there, as on a form.
+        pe.overlays = [o for o in pe.overlays if o.word is not word]
+
+    def _draw(
         self,
         page: int,
         x: float,
@@ -318,27 +385,348 @@ class _ApplyContext:
         text: str,
         *,
         like: _Word,
-        line: _ServiceLine | None = None,
-    ) -> None:
-        """Draw `text` at (x, y) styled like the word it replaces or sits next to."""
-        overlay = _Overlay(page, x, y, size, text, line=line, color=like.color, italic=like.italic)
-        self.page_edits(page).overlays.append(overlay)
-        self.expected_added.append((page, text, x, y))
+        line=None,
+        replacing: _Word | None = None,
+    ):
+        self._page(page).overlays.append(
+            _Overlay(
+                page,
+                x,
+                y,
+                size,
+                text,
+                line=line,
+                word=replacing,
+                color=like.color,
+                italic=like.italic,
+            )
+        )
+
+    def replace(self, word: _Word, text: str, *, row: list[_Word], line=None) -> str | None:
+        width = _text_width(text, word.size)
+        right_neighbour = _next_word_right(row, word)
+        limit = right_neighbour.x0 - 1 if right_neighbour else word.x1 + width
+        if word.origin_x + width > limit:
+            return "no_room"
+        self.remove_word(word)
+        self._draw(
+            word.page,
+            word.origin_x,
+            word.origin_y,
+            word.size,
+            text,
+            like=word,
+            line=line,
+            replacing=word,
+        )
+        return None
+
+    def add_modifier(self, line: _ServiceLine, value: str) -> str | None:
+        anchor = line.modifiers[-1] if line.modifiers else line.cpt
+        # Modifier boxes are ~3 characters apart on the form; reuse the gap the
+        # printer left between the code and its first modifier when we have
+        # one, else three digit-widths.
+        gap = (
+            (line.modifiers[0].x0 - line.cpt.x1)
+            if line.modifiers
+            else 3 * anchor.size * _HELVETICA_WIDTHS["0"] / 1000
+        )
+        x = anchor.x1 + gap
+        if x + _text_width(value, anchor.size) > line.pointer.x0 - 1:
+            return "no_room"
+        self._draw(line.page, x, anchor.origin_y, anchor.size, value, like=anchor, line=line)
+        return None
+
+    def set_blank_units(self, line: _ServiceLine, value: str) -> str | None:
+        # Where 24G starts: from a sibling line that prints a count, else at
+        # the fixed distance the form keeps between the charge box and the
+        # units box (a blank 24G on every line is the common case).
+        xs = [ln.units.origin_x for ln in self.lines if ln.page == line.page and ln.units]
+        if xs:
+            column_x = min(xs)
+        else:
+            last_charge = line.charge.words[-1]
+            column_x = last_charge.x1 + 1.6 * last_charge.size
+        anchor = line.cpt
+        after = [w for w in line.row_words if w.x0 > column_x]
+        limit = after[0].x0 - 1 if after else column_x + _text_width(value, anchor.size)
+        if column_x + _text_width(value, anchor.size) > limit:
+            return "no_room"
+        self._draw(line.page, column_x, anchor.origin_y, anchor.size, value, like=anchor, line=line)
+        return None
+
+    def set_money(self, charge: _Charge, texts: list[str], *, row: list[_Word], line=None):
+        dollars = charge.words[0]
+        x = dollars.x1 - _text_width(texts[0], dollars.size)  # money is right-aligned
+        tol = max(2.0, 0.45 * dollars.size)
+        left = [w for w in row if w.x1 <= dollars.x0 + 0.1 and abs(w.top - dollars.top) <= tol]
+        if left and x < max(w.x1 for w in left) + 1:
+            return "no_room"
+        for word in charge.words:
+            self.remove_word(word)
+        # Split money ("13" "45") is one printed string with a space glyph
+        # between the halves; the extractor splits words on whitespace in
+        # stream order, so the replacement carries a space too — dollars
+        # right-aligned where they were, cents left-aligned where they were.
+        self._draw(
+            dollars.page, x, dollars.origin_y, dollars.size, texts[0], like=dollars, line=line
+        )
+        if charge.split:
+            cents = charge.words[1]
+            self._draw(
+                dollars.page,
+                dollars.x1,
+                dollars.origin_y,
+                dollars.size,
+                " ",
+                like=dollars,
+                line=line,
+            )
+            self._draw(
+                cents.page,
+                cents.origin_x,
+                cents.origin_y,
+                cents.size,
+                texts[1],
+                like=cents,
+                line=line,
+            )
+        return None
 
     def remove_line(self, line: _ServiceLine) -> None:
         """Take every word of the line — and anything an earlier edit drew on
         it, or a changed code / added modifier would float on the blank row."""
         for word in line.row_words + line.shaded_words:
             self.remove_word(word)
-        pe = self.page_edits(line.page)
-        dropped = [o for o in pe.overlays if o.line is line]
+        pe = self._page(line.page)
         pe.overlays = [o for o in pe.overlays if o.line is not line]
-        for o in dropped:
-            self.expected_added.remove((o.page, o.text, o.x, o.y))
         self.removed_lines.append(line)
 
+    @property
+    def changed(self) -> bool:
+        return any(pe.remove or pe.overlays for pe in self.per_page.values())
 
-def _apply_to_lines(edit: ClaimEdit, lines: list[_ServiceLine], ctx: _ApplyContext) -> EditResult:
+    @property
+    def pages_changed(self) -> int:
+        return sum(1 for pe in self.per_page.values() if pe.remove or pe.overlays)
+
+    def finalize(self) -> bytes:
+        per_page = {k: v for k, v in self.per_page.items() if v.remove or v.overlays}
+        patched = _rewrite(self.pdf_bytes, self.pages, per_page)
+        _verify(patched, self.pages, per_page)
+        return patched
+
+
+class _FormBackend(_Backend):
+    """Fillable form: every token is part of a field value; an edit rewrites
+    that field's value (old value gone, appearance regenerated), a removal
+    clears every field in the row, and the result is verified by reading the
+    fields back."""
+
+    format = "form"
+
+    def __init__(self, pdf_bytes: bytes, form: claim_form.FormDocument) -> None:
+        super().__init__()
+        self.pdf_bytes = pdf_bytes
+        self.form = form
+        self.original: dict[str, str] = form.values
+        self.values: dict[str, str] = {}  # pending field value changes
+        self.clear_buttons: set[str] = set()
+        self.touched_pages: set[int] = set()
+        self.pages_words = self._words()
+        for page_index in range(form.page_count):
+            for f in form.fields:
+                if f.page == page_index and f.kind == "text":
+                    break
+
+    # -- reading --
+    def _words(self) -> list[list[_Word]]:
+        pages: list[list[_Word]] = [[] for _ in range(self.form.page_count)]
+        counter = 0
+        for f in self.form.fields:
+            if f.kind != "text" or not f.value:
+                continue
+            tokens = f.value.split()
+            if not tokens:
+                continue
+            size = f.size
+            char_w = size * 0.55
+            est = sum(len(t) for t in tokens) * char_w + (len(tokens) - 1) * char_w
+            box_w = f.x1 - f.x0
+            if f.align == 2:
+                cursor = max(f.x0, f.x1 - est - 1)
+            elif f.align == 1:
+                cursor = max(f.x0, f.x0 + (box_w - est) / 2)
+            else:
+                cursor = f.x0 + 1
+            for token_index, token in enumerate(tokens):
+                w = len(token) * char_w
+                counter += 1
+                pages[f.page].append(
+                    _Word(
+                        page=f.page,
+                        text=token,
+                        x0=cursor,
+                        x1=min(cursor + w, f.x1),
+                        top=f.top,
+                        bottom=f.bottom,
+                        size=size,
+                        origin_x=cursor,
+                        origin_y=f.y0 + 2,
+                        chars=[counter],
+                        field=f,
+                        token=token_index,
+                    )
+                )
+                cursor += w + char_w
+        return pages
+
+    # -- helpers --
+    def _current(self, f: claim_form.FormField) -> str:
+        return self.values.get(f.name, self.original.get(f.name, f.value))
+
+    def _set(self, f: claim_form.FormField, text: str) -> str | None:
+        if f.read_only:
+            return "no_room"
+        if f.max_len is not None and len(text) > f.max_len:
+            return "no_room"
+        self.values[f.name] = text
+        self.touched_pages.add(f.page)
+        return None
+
+    def _set_token(self, word: _Word, text: str | None) -> str | None:
+        """Rewrite one whitespace-separated token of a field's value; None
+        deletes it."""
+        f = word.field
+        assert isinstance(f, claim_form.FormField)
+        tokens = self._current(f).split()
+        if word.token >= len(tokens):
+            return "line_not_found"
+        if text is None:
+            del tokens[word.token]
+        else:
+            tokens[word.token] = text
+        return self._set(f, " ".join(tokens))
+
+    def _band(self, line: _ServiceLine) -> tuple[float, float]:
+        row_h = max(line.cpt.bottom - line.cpt.top, 8.0)
+        # The data row plus the shaded half-row above it (24J qualifier etc.).
+        return line.cpt.top - 1.1 * row_h, line.cpt.bottom + 0.3 * row_h
+
+    def _fields_in_band(self, line: _ServiceLine) -> list[claim_form.FormField]:
+        lo, hi = self._band(line)
+        out = []
+        for f in self.form.fields:
+            if f.page != line.page:
+                continue
+            centre = (f.top + f.bottom) / 2
+            if lo <= centre <= hi:
+                out.append(f)
+        return sorted(out, key=lambda f: f.x0)
+
+    def _empty_text_fields(self, line: _ServiceLine) -> list[claim_form.FormField]:
+        return [
+            f
+            for f in self._fields_in_band(line)
+            if f.kind == "text" and not self._current(f).strip() and not f.read_only
+        ]
+
+    # -- operations --
+    def replace(self, word: _Word, text: str, *, row: list[_Word], line=None) -> str | None:
+        return self._set_token(word, text)
+
+    def add_modifier(self, line: _ServiceLine, value: str) -> str | None:
+        lo_x = line.cpt.x1 - 0.1
+        hi_x = line.pointer.x0 + 0.1
+        slots = [f for f in self._empty_text_fields(line) if lo_x <= f.x0 and f.x1 <= hi_x]
+        if line.modifiers:
+            slots = [f for f in slots if f.x0 >= line.modifiers[-1].x1 - 0.1]
+        if slots:
+            return self._set(slots[0], value)
+        if line.modifiers:
+            # A template with one combined modifier field: append to it.
+            last = line.modifiers[-1].field
+            assert isinstance(last, claim_form.FormField)
+            joined = " ".join([*self._current(last).split(), value])
+            return self._set(last, joined)
+        return "no_room"
+
+    def set_blank_units(self, line: _ServiceLine, value: str) -> str | None:
+        after_x = line.charge.words[-1].x1 - 0.1
+        nxt = _next_word_right(line.row_words, line.charge.words[-1])
+        slots = [
+            f
+            for f in self._empty_text_fields(line)
+            if f.x0 >= after_x and (nxt is None or f.x1 <= nxt.x0 + 0.1)
+        ]
+        if not slots:
+            return "no_units_cell"
+        return self._set(slots[0], value)
+
+    def set_money(self, charge: _Charge, texts: list[str], *, row: list[_Word], line=None):
+        if charge.split and charge.words[0].field is charge.words[1].field:
+            # Both halves live in one field ("22 00"): rewrite it whole.
+            f = charge.words[0].field
+            assert isinstance(f, claim_form.FormField)
+            tokens = self._current(f).split()
+            a, b = charge.words[0].token, charge.words[1].token
+            if b >= len(tokens):
+                return "line_not_found"
+            tokens[a], tokens[b] = texts[0], texts[1]
+            return self._set(f, " ".join(tokens))
+        for word, text in zip(charge.words, texts, strict=True):
+            reason = self._set_token(word, text)
+            if reason is not None:
+                return reason
+        return None
+
+    def remove_word(self, word: _Word) -> None:
+        self._set_token(word, None)
+
+    def remove_line(self, line: _ServiceLine) -> None:
+        for f in self._fields_in_band(line):
+            if f.kind == "text":
+                self.values[f.name] = ""
+            elif f.kind in ("checkbox", "radio"):
+                self.clear_buttons.add(f.name)
+            self.touched_pages.add(f.page)
+        self.removed_lines.append(line)
+
+    @property
+    def changed(self) -> bool:
+        return any(self.values.get(k) != self.original.get(k) for k in self.values) or bool(
+            self.clear_buttons
+        )
+
+    @property
+    def pages_changed(self) -> int:
+        return len(self.touched_pages)
+
+    def finalize(self) -> bytes:
+        changes = {k: v for k, v in self.values.items() if v != self.original.get(k)}
+        patched = claim_form.write_values(self.pdf_bytes, changes, self.clear_buttons)
+        try:
+            after = claim_form.read_form(patched)
+        except claim_form.FormReadError as exc:
+            raise ClaimPatchError("verification_failed", exc.code) from None
+        expected = dict(self.original)
+        expected.update(changes)
+        for name in self.clear_buttons:
+            expected[name] = ""
+        actual = after.values
+        if len(after.fields) != len(self.form.fields):
+            raise ClaimPatchError("verification_failed", "field count")
+        mismatched = sum(1 for name, value in expected.items() if actual.get(name, "") != value)
+        still_on = sum(1 for name in self.clear_buttons if actual.get(name, ""))
+        if mismatched or still_on:
+            raise ClaimPatchError("verification_failed", f"fields={mismatched} buttons={still_on}")
+        return patched
+
+
+# --- edit policy (backend-agnostic) ------------------------------------------
+
+
+def _apply_to_lines(edit: ClaimEdit, lines: list[_ServiceLine], ctx: _Backend) -> EditResult:
     """Apply one edit to every service line carrying its code. A modifier or a
     code correction belongs on each line of that code; a unit cut lands on the
     lines that exceed the new count; a removal takes every line. Per-line
@@ -396,7 +784,7 @@ def _apply_to_lines(edit: ClaimEdit, lines: list[_ServiceLine], ctx: _ApplyConte
     return EditResult(edit, True, applied_lines=applied, note=note)
 
 
-def _scale_charge(line: _ServiceLine, new_units: str, ctx: _ApplyContext) -> int | None:
+def _scale_charge(line: _ServiceLine, new_units: str, ctx: _Backend) -> int | None:
     """Rewrite 24F as (charge ÷ old units) × new units. Only when the per-unit
     price is a whole number of cents — otherwise the charge was not built from
     these units and scaling would invent an amount. Returns the new cents."""
@@ -408,79 +796,25 @@ def _scale_charge(line: _ServiceLine, new_units: str, ctx: _ApplyContext) -> int
     if new_cents == cents:
         return cents
     texts = _format_money(new_cents, like=line.charge)
-    dollars = line.charge.words[0]
-    x = dollars.x1 - _text_width(texts[0], dollars.size)  # money is right-aligned
-    left = [w for w in line.row_words if w.x1 <= dollars.x0 + 0.1]
-    if left and x < max(w.x1 for w in left) + 1:
+    if ctx.set_money(line.charge, texts, row=line.row_words, line=line) is not None:
         return None
-    for word in line.charge.words:
-        ctx.remove_word(word)
-    for page, px, py, size, text, like in _money_overlays(line.charge, texts, x):
-        ctx.draw(page, px, py, size, text, like=like, line=line)
     return new_cents
 
 
-def _money_overlays(
-    charge: _Charge, texts: list[str], dollars_x: float
-) -> list[tuple[int, float, float, float, str, _Word]]:
-    """Where to draw a rewritten amount. Split money ("13" "45") is one printed
-    string with a space glyph between the halves; the extractor splits words on
-    whitespace in stream order, so the replacement must carry a space too —
-    dollars right-aligned where they were, cents left-aligned where they were."""
-    dollars = charge.words[0]
-    out = [(dollars.page, dollars_x, dollars.origin_y, dollars.size, texts[0], dollars)]
-    if charge.split:
-        cents = charge.words[1]
-        out.append((dollars.page, dollars.x1, dollars.origin_y, dollars.size, " ", dollars))
-        out.append((cents.page, cents.origin_x, cents.origin_y, cents.size, texts[1], cents))
-    return out
-
-
-def _apply_to_line(
-    edit: ClaimEdit, value: str, line: _ServiceLine, ctx: _ApplyContext
-) -> str | None:
+def _apply_to_line(edit: ClaimEdit, value: str, line: _ServiceLine, ctx: _Backend) -> str | None:
     """Apply to one line; return a skip reason or None when applied."""
     if edit.kind == "add_modifier":
         if len(line.modifiers) >= MAX_MODIFIERS:
             return "modifier_slots_full"
-        anchor = line.modifiers[-1] if line.modifiers else line.cpt
-        # Modifier boxes are ~3 characters apart on the form; reuse the gap the
-        # printer left between the code and its first modifier when we have
-        # one, else three digit-widths.
-        gap = (
-            (line.modifiers[0].x0 - line.cpt.x1)
-            if line.modifiers
-            else 3 * anchor.size * _HELVETICA_WIDTHS["0"] / 1000
-        )
-        x = anchor.x1 + gap
-        if x + _text_width(value, anchor.size) > line.pointer.x0 - 1:
-            return "no_room"
-        ctx.draw(line.page, x, anchor.origin_y, anchor.size, value, like=anchor, line=line)
-        return None
-
+        return ctx.add_modifier(line, value)
     if edit.kind == "change_units" and line.units is None:
         # Blank 24G (one unit implied): write the new count in the units column.
-        column_x = ctx.units_column_x(line.page, line)
-        anchor = line.cpt
-        after = [w for w in line.row_words if w.x0 > column_x]
-        limit = after[0].x0 - 1 if after else column_x + _text_width(value, anchor.size)
-        if column_x + _text_width(value, anchor.size) > limit:
-            return "no_room"
-        ctx.draw(line.page, column_x, anchor.origin_y, anchor.size, value, like=anchor, line=line)
-        return None
-
+        return ctx.set_blank_units(line, value)
     old = line.units if edit.kind == "change_units" else line.cpt
     assert old is not None
     if old.text == value:
         return "already_present"
-    width = _text_width(value, old.size)
-    right_neighbour = _next_word_right(line.row_words, old)
-    limit = right_neighbour.x0 - 1 if right_neighbour else old.x1 + width
-    if old.origin_x + width > limit:
-        return "no_room"
-    ctx.remove_word(old)
-    ctx.draw(line.page, old.origin_x, old.origin_y, old.size, value, like=old, line=line)
-    return None
+    return ctx.replace(old, value, row=line.row_words, line=line)
 
 
 def _find_dx(
@@ -502,7 +836,7 @@ def _find_dx(
 
 
 def _apply_to_dx(
-    edit: ClaimEdit, word: _Word, pages_words: list[list[_Word]], ctx: _ApplyContext
+    edit: ClaimEdit, word: _Word, pages_words: list[list[_Word]], ctx: _Backend
 ) -> EditResult:
     """A diagnosis code in Box 21: it can be removed or replaced. Modifiers and
     units are service-line concepts and don't apply."""
@@ -529,13 +863,9 @@ def _apply_to_dx(
         ),
         key=lambda w: w.x0,
     )
-    width = _text_width(value, word.size)
-    right_neighbour = _next_word_right(row, word)
-    limit = right_neighbour.x0 - 1 if right_neighbour else word.x1 + width
-    if word.origin_x + width > limit:
-        return EditResult(edit, False, "no_room")
-    ctx.remove_word(word)
-    ctx.draw(word.page, word.origin_x, word.origin_y, word.size, value, like=word)
+    reason = ctx.replace(word, value, row=row, line=None)
+    if reason is not None:
+        return EditResult(edit, False, reason)
     return EditResult(edit, True, applied_lines=1)
 
 
@@ -755,15 +1085,7 @@ def _format_money(cents: int, like: _Charge) -> list[str]:
     return [("$" + body) if sample.startswith("$") else body]
 
 
-def _update_total(
-    pages_words: list[list[_Word]],
-    lines: list[_ServiceLine],
-    removed: list[_ServiceLine],
-    ctx: _ApplyContext,
-    per_page: dict[int, _PageEdits],
-    expected_removed: list[_Word],
-    expected_added: list[tuple[int, str, float, float]],
-) -> bool:
+def _update_total(pages_words: list[list[_Word]], lines: list[_ServiceLine], ctx: _Backend) -> bool:
     """Recompute Box 28 after removals or scaled charges. Only attempted on
     single-page claims (multi-page claims carry per-page or cumulative totals —
     ambiguous), and only when exactly one money token off the service rows
@@ -772,13 +1094,15 @@ def _update_total(
         return False
     page = 0
     old_total = sum(line.charge.cents for line in lines)
-    new_total = sum(ctx.current_cents(line) for line in lines if line not in removed)
+    new_total = sum(ctx.current_cents(line) for line in lines if line not in ctx.removed_lines)
     if new_total == old_total:
         return True
     in_rows = {idx for line in lines for w in line.row_words for idx in w.chars}
+    # Row-banded sort: dollars and cents boxes can differ by a fraction of a
+    # point vertically, and a plain (top, x) sort would interleave neighbours.
     words = sorted(
         (w for w in pages_words[page] if w.upright and w.chars[0] not in in_rows),
-        key=lambda w: (w.top, w.x0),
+        key=lambda w: (round(w.top / 3), w.x0),
     )
     candidates: list[_Charge] = []
     for i in range(len(words)):
@@ -789,16 +1113,7 @@ def _update_total(
         return False
     total = candidates[0]
     new_text = _format_money(new_total, like=total)
-    pe = per_page.setdefault(page, _PageEdits())
-    for old_word in total.words:
-        pe.remove.update(old_word.chars)
-        expected_removed.append(old_word)
-    dollars = total.words[0]
-    dollars_x = dollars.x1 - _text_width(new_text[0], dollars.size)
-    for _, px, py, size, text, like in _money_overlays(total, new_text, dollars_x):
-        pe.overlays.append(_Overlay(page, px, py, size, text, color=like.color, italic=like.italic))
-        expected_added.append((page, text, px, py))
-    return True
+    return ctx.set_money(total, new_text, row=words, line=None) is None
 
 
 # --- writing ----------------------------------------------------------------

@@ -1,4 +1,5 @@
 import io
+import logging
 import time
 
 import boto3
@@ -12,6 +13,8 @@ from app.services import s3
 
 # A digital PDF yields selectable text; a scanned one yields ~nothing and needs
 # OCR. This threshold separates the two.
+logger = logging.getLogger(__name__)
+
 MIN_DIGITAL_CHARS = 20
 # Minimum average embedded chars/page for a multi-page PDF to count as digital.
 # A whole-document threshold alone lets a scanned note behind a digital cover
@@ -124,6 +127,23 @@ def digital_text_from_bytes(data: bytes) -> str | None:
     if page_count > 1 and len(text) < page_count * MIN_DIGITAL_CHARS_PER_PAGE:
         return None
     return text
+
+
+def form_fields_text(data: bytes) -> str | None:
+    """Text for a fillable (AcroForm) PDF: its field values as ``label: value``
+    lines, or None when the PDF isn't a filled form. Checked before the
+    digital-text/OCR decision — a filled form has no page text to extract and
+    Textract would only see whatever appearances the saving app left. XFA
+    forms and empty templates fall through to the usual path."""
+    from app.services import claim_form  # local: keeps pypdf-form code out of the import graph
+
+    try:
+        doc = claim_form.read_form(data)
+    except claim_form.FormReadError as exc:
+        if exc.code in ("xfa", "too_many_fields"):
+            logger.info("fillable form not usable", extra={"context": {"reason": exc.code}})
+        return None
+    return claim_form.form_text(doc)
 
 
 def run_textract(s3_key: str, poll_seconds: float = 2.0, timeout_seconds: int = 180) -> str:

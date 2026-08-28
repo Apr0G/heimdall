@@ -27,7 +27,7 @@ PINNED = {
     "extraction": ("extract_v3", "54e1e3ca74c814dd"),
     "analysis": ("analyze_v6", "9496bdb547376b9a"),
     "letter": ("letter_v6", "d01604c786b394e1"),
-    "precheck_extraction": ("pc_extract_v1", "d2e1350122b298e4"),
+    "precheck_extraction": ("pc_extract_v2", "62e4b26c7bbf5f63"),
     "precheck_review": ("pc_review_v3", "bf291579c4f33722"),
 }
 

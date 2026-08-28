@@ -6,7 +6,7 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, UUIDPrimaryKey
-from app.models.enums import doc_type, ocr_status
+from app.models.enums import doc_type, ocr_status, text_source
 
 
 class Document(Base, UUIDPrimaryKey):
@@ -29,6 +29,10 @@ class Document(Base, UUIDPrimaryKey):
     ocr_completed_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
+    # Where the text came from: pdf_text (born-digital), ocr (Textract),
+    # form_fields (fillable form). Null on rows extracted before 0017 — read
+    # those through ocr_status. Drives claim_editable and the document badge.
+    text_source: Mapped[str | None] = mapped_column(text_source, nullable=True)
     uploaded_by: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("users.id", ondelete="RESTRICT"),

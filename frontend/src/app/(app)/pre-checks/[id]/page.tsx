@@ -870,6 +870,12 @@ function CorrectedClaimCard({
           </p>
         )}
         <p className="text-xs leading-relaxed text-muted-foreground">
+          {corrected.format === "form" && (
+            <>
+              Your corrected copy is still a fillable form — keep editing it if
+              you need to.{" "}
+            </>
+          )}
           For review — check every changed cell against the note, then re-key
           the claim in your billing system. This PDF is not for submission to
           the payer, and a corrected claim is not a guarantee of payment.

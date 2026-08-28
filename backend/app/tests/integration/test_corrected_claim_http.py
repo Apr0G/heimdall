@@ -15,6 +15,8 @@ from app.db.session import get_db
 from app.main import app
 from app.models import AuditLog, Case, CorrectedClaim, Document, Practice, RiskReport, User
 from app.services import s3
+from app.tests.services.test_claim_form import LINES as FORM_LINES
+from app.tests.services.test_claim_form import build_form_claim
 from app.tests.services.test_claim_patch import LINES, build_claim, service_lines
 
 pytestmark = pytest.mark.asyncio
@@ -62,7 +64,14 @@ async def _user(sessions) -> User:
         return user
 
 
-async def _precheck_case(sessions, user: User, *, ocr_status: str) -> uuid.UUID:
+async def _precheck_case(
+    sessions,
+    user: User,
+    *,
+    ocr_status: str,
+    text_source: str | None = None,
+    edits: list[dict] | None = None,
+) -> uuid.UUID:
     async with sessions() as s:
         case = Case(
             practice_id=user.practice_id,
@@ -80,6 +89,7 @@ async def _precheck_case(sessions, user: User, *, ocr_status: str) -> uuid.UUID:
                 s3_key=f"practices/{user.practice_id}/cases/{case.id}/claim/{uuid.uuid4()}.pdf",
                 uploaded_by=user.id,
                 ocr_status=ocr_status,
+                text_source=text_source,
             )
         )
         s.add(
@@ -96,7 +106,7 @@ async def _precheck_case(sessions, user: User, *, ocr_status: str) -> uuid.UUID:
                 case_id=case.id,
                 overall_risk_band="high",
                 findings=[],
-                proposed_edits=PROPOSED_EDITS,
+                proposed_edits=edits if edits is not None else PROPOSED_EDITS,
                 deterministic_count=2,
                 model_count=0,
             )
@@ -246,3 +256,63 @@ async def test_documentation_edits_and_bad_indexes_are_422(sessions, fake_s3):
             )
             assert resp.status_code == 422, selections
         assert fake_s3 == {}
+
+
+async def test_fillable_form_claim_is_edited_by_field_and_stays_a_form(
+    sessions, fake_s3, monkeypatch
+):
+    """A claim typed into a fillable CMS-1500: text_source=form_fields marks it
+    editable, the patch rewrites field values, and the response says so."""
+    from app.services import s3 as s3_module
+
+    form_pdf = build_form_claim(FORM_LINES)
+    monkeypatch.setattr(s3_module, "get_bytes", lambda key: fake_s3.get(key, form_pdf))
+    user = await _user(sessions)
+    case_id = await _precheck_case(
+        sessions,
+        user,
+        ocr_status="not_needed",
+        text_source="form_fields",
+        edits=[
+            {
+                "kind": "add_modifier",
+                "target": "J2501",
+                "instruction": "Add modifier 59 to J2501",
+                "value": "59",
+                "source": "ncci",
+            }
+        ],
+    )
+    async with _client(sessions, user) as client:
+        detail = (await client.get(f"/api/cases/{case_id}")).json()
+        assert detail["claim_editable"] is True
+        assert detail["documents"][0]["text_source"] == "form_fields"
+        resp = await client.post(
+            f"/api/cases/{case_id}/corrected-claim",
+            json={"selections": [{"index": 0, "value": "59"}]},
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["format"] == "form"
+        assert body["results"][0]["applied"] is True and body["results"][0]["applied_lines"] == 2
+        ((_, pdf),) = fake_s3.items()
+        from app.services.claim_form import read_form
+
+        values = read_form(pdf).values
+        assert (values["Mod 1b"], values["Mod 2b"]) == ("59", "59")
+        detail = (await client.get(f"/api/cases/{case_id}")).json()
+        assert detail["corrected_claim"]["format"] == "form"
+
+
+async def test_scanned_claim_marked_by_text_source_is_refused(sessions, fake_s3):
+    """text_source is authoritative once recorded: an OCR'd claim is not
+    editable even if ocr_status were misleading."""
+    user = await _user(sessions)
+    case_id = await _precheck_case(sessions, user, ocr_status="not_needed", text_source="ocr")
+    async with _client(sessions, user) as client:
+        detail = (await client.get(f"/api/cases/{case_id}")).json()
+        assert detail["claim_editable"] is False
+        resp = await client.post(
+            f"/api/cases/{case_id}/corrected-claim", json={"selections": [{"index": 0}]}
+        )
+        assert resp.status_code == 409

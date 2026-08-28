@@ -119,10 +119,10 @@ export default function NewPreCheckPage() {
           <span className="font-medium text-foreground">
             Want a corrected claim back?
           </span>{" "}
-          Export the draft claim from your billing software as a PDF. A scanned
-          or photographed claim can still be checked, but Heimdall can&rsquo;t
-          edit it for you — you&rsquo;ll get the list of changes to apply
-          yourself.
+          Export the draft claim from your billing software as a PDF, or fill a
+          fillable CMS-1500 PDF — both can be corrected in place. A scanned or
+          photographed claim can still be checked, but Heimdall can&rsquo;t edit
+          it for you — you&rsquo;ll get the list of changes to apply yourself.
         </p>
       </div>
       <Card>

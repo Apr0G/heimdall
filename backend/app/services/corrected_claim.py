@@ -60,11 +60,32 @@ class Selection:
     charge: str = "scale"  # change_units: "scale" the line charge with the units, or "keep"
 
 
+EDITABLE_TEXT_SOURCES = ("pdf_text", "form_fields")
+
+
+def _document_editable(d: Document) -> bool:
+    # text_source is authoritative; rows from before 0017 have none, and for
+    # those "no OCR was needed" means a text layer exists.
+    if getattr(d, "text_source", None) is not None:
+        return d.text_source in EDITABLE_TEXT_SOURCES
+    return d.ocr_status == EDITABLE_OCR_STATUS
+
+
 def claim_document_editable(documents: list[Document]) -> bool:
-    """True when the draft claim has a text layer the patcher can edit."""
-    return any(
-        d.doc_type == EDITABLE_DOC_TYPE and d.ocr_status == EDITABLE_OCR_STATUS for d in documents
-    )
+    """True when the draft claim can be edited in place: born-digital page text
+    or a fillable form. A scan (OCR) can't."""
+    return any(d.doc_type == EDITABLE_DOC_TYPE and _document_editable(d) for d in documents)
+
+
+def claim_format(documents: list[Document]) -> str | None:
+    """ "form" for a fillable claim, "text" for born-digital, None otherwise."""
+    for d in documents:
+        if d.doc_type != EDITABLE_DOC_TYPE:
+            continue
+        if getattr(d, "text_source", None) == "form_fields":
+            return "form"
+        return "text" if _document_editable(d) else None
+    return None
 
 
 def resolve_selections(
@@ -157,7 +178,7 @@ async def create_corrected_claim(
     )
     if doc is None:
         raise ClaimNotEditable("no_claim_document")
-    if doc.ocr_status != EDITABLE_OCR_STATUS:
+    if not _document_editable(doc):
         raise ClaimNotEditable("scanned")
 
     resolved = resolve_selections(list(report.proposed_edits or []), selections)

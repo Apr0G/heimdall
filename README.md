@@ -32,8 +32,11 @@ clean-claim guarantee.
   When the draft claim is a born-digital PDF, the doctor can tick the proposed
   edits and get the same PDF back with them applied in place — no model call,
   old glyphs removed and the result re-read and verified
-  (`backend/app/services/claim_patch.py`, `corrected_claims`). Scanned claims
-  get the edits list only.
+  (`backend/app/services/claim_patch.py`, `corrected_claims`). A claim typed
+  into a fillable CMS-1500 PDF is read through its form fields
+  (`services/claim_form.py`, `documents.text_source = form_fields`) and edited
+  by rewriting field values — the corrected copy stays fillable. Scanned
+  claims get the edits list only.
 - **Database** — PostgreSQL (AWS RDS). All money stored as integer cents.
   NCCI reference tables (`ncci_ptp_edits`, `ncci_mue`, `ncci_loads` — no PHI,
   no tenant column) are refreshed monthly by the `load-ncci` workflow.

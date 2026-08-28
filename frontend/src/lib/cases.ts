@@ -81,6 +81,8 @@ export type DocumentDetail = {
   original_filename: string | null;
   file_size_bytes: number | null;
   ocr_status: string;
+  // pdf_text | ocr | form_fields (fillable form); null before it was recorded.
+  text_source?: string | null;
 };
 
 export type ExtractionDetail = {
@@ -171,6 +173,8 @@ export type CorrectedClaimDetail = {
   // couldn't be located, so the user must fix it by hand.
   total_updated: boolean | null;
   downloadable: boolean;
+  // "form": the claim was a fillable PDF and the corrected copy stays fillable.
+  format?: "text" | "form" | null;
   created_at: string;
   downloaded_at: string | null;
 };
