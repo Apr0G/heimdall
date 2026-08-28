@@ -3,7 +3,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect } from "react";
+import { ChevronDownIcon } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import { RiskBadge, StatusBadge } from "@/components/case-badges";
 import {
@@ -13,8 +14,14 @@ import {
   ProcessingView,
 } from "@/components/case-view";
 import { Badge } from "@/components/ui/badge";
-import { buttonVariants } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button, buttonVariants } from "@/components/ui/button";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { carcMeaning } from "@/lib/carc-codes";
 import {
@@ -27,6 +34,7 @@ import {
 } from "@/lib/cases";
 import { pipelineErrorMessage, toastError } from "@/lib/errors";
 import { formatCents, formatDate, humanize } from "@/lib/format";
+import { attachEditsToFindings } from "@/lib/precheck-findings";
 
 const SEVERITY_ORDER = ["high", "medium", "low", "info"] as const;
 
@@ -143,7 +151,6 @@ export default function PreCheckDetailPage() {
         <>
           <HeaderCard c={data} />
           <RiskSummaryCard c={data} />
-          <ProposedChangesCard c={data} />
           <FindingsCard c={data} />
           <DocumentsCard documents={data.documents} />
           <ReportFooter c={data} />
@@ -226,8 +233,8 @@ function RiskSummaryCard({ c }: { c: CaseDetail }) {
   );
 }
 
-// Diff-style glyphs: removals read as deletions, tweaks as modifications,
-// note tasks as writing work.
+// Diff-style glyphs for the one-line change inside a finding: removals read as
+// deletions, tweaks as modifications, note tasks as writing work.
 const EDIT_GLYPH: Record<string, { glyph: string; token: string }> = {
   remove_line: { glyph: "−", token: "--danger" },
   add_modifier: { glyph: "±", token: "--warn" },
@@ -236,62 +243,43 @@ const EDIT_GLYPH: Record<string, { glyph: string; token: string }> = {
   documentation: { glyph: "✎", token: "--info" },
 };
 
-function ProposedChangesCard({ c }: { c: CaseDetail }) {
-  const edits = c.risk_report?.proposed_edits ?? [];
-  if (edits.length === 0) return null;
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Proposed changes</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-1.5">
-        {edits.map((edit, i) => (
-          <EditLine key={`${edit.kind}-${edit.target}-${i}`} edit={edit} />
-        ))}
-        <p className="pt-1.5 text-xs text-muted-foreground">
-          Apply what fits in your billing system — you decide what&rsquo;s
-          clinically right. Details for each change are in the findings below.
-        </p>
-      </CardContent>
-    </Card>
-  );
-}
-
-function EditLine({ edit }: { edit: ProposedEdit }) {
-  const meta = EDIT_GLYPH[edit.kind] ?? { glyph: "±", token: "--neutral" };
-  return (
-    <div className="flex items-start gap-2.5 rounded-md border border-border bg-background px-3 py-2">
-      <span
-        aria-hidden
-        className="flex size-5 shrink-0 items-center justify-center rounded font-mono text-sm font-bold"
-        style={{
-          background: `color-mix(in oklab, var(${meta.token}) 16%, var(--card))`,
-          color: `var(${meta.token})`,
-        }}
-      >
-        {meta.glyph}
-      </span>
-      <span className="text-sm leading-snug">{edit.instruction}</span>
-      <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-        {edit.source === "ncci" ? "CMS tables" : "AI review"}
-      </span>
-    </div>
-  );
-}
-
 function FindingsCard({ c }: { c: CaseDetail }) {
   const report = c.risk_report;
+  // `expanded` is the user's explicit choice; null = per-row default (closed).
+  const [expanded, setExpanded] = useState<boolean | null>(null);
   if (!report || report.findings.length === 0) return null;
 
+  const edits = attachEditsToFindings(
+    report.findings,
+    report.proposed_edits ?? [],
+  );
   const groups = SEVERITY_ORDER.map((severity) => ({
     severity,
-    findings: report.findings.filter((f) => f.severity === severity),
+    findings: report.findings
+      .map((f, index) => ({ f, index }))
+      .filter(({ f }) => f.severity === severity),
   })).filter((g) => g.findings.length > 0);
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Findings</CardTitle>
+        <CardTitle>
+          Findings{" "}
+          <span className="font-normal text-muted-foreground">
+            ({report.findings.length})
+          </span>
+        </CardTitle>
+        <CardAction>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="text-muted-foreground"
+            onClick={() => setExpanded((v) => !v)}
+          >
+            {expanded ? "Collapse all" : "Expand all"}
+          </Button>
+        </CardAction>
       </CardHeader>
       <CardContent className="space-y-5">
         {groups.map((group) => (
@@ -304,67 +292,165 @@ function FindingsCard({ c }: { c: CaseDetail }) {
             >
               {SEVERITY_META[group.severity].label} ({group.findings.length})
             </div>
-            <div className="space-y-2.5">
-              {group.findings.map((f, i) => (
-                <Finding key={`${f.check_id}-${i}`} f={f} />
+            <div className="space-y-2">
+              {group.findings.map(({ f, index }) => (
+                <Finding
+                  // Keyed on the toggle so a native <details> re-mounts and
+                  // picks up the new default; a user can still open/close
+                  // rows individually afterwards.
+                  key={`${f.check_id}-${index}-${expanded}`}
+                  f={f}
+                  edit={edits.get(index)}
+                  defaultOpen={expanded ?? false}
+                />
               ))}
             </div>
           </div>
         ))}
+        <p className="border-t border-border pt-4 text-xs text-muted-foreground">
+          Open a finding to see what the payer would object to and how to fix
+          it. Apply what fits in your billing system — you decide what&rsquo;s
+          clinically right.
+        </p>
       </CardContent>
     </Card>
   );
 }
 
-function Finding({ f }: { f: RiskFinding }) {
+function Finding({
+  f,
+  edit,
+  defaultOpen,
+}: {
+  f: RiskFinding;
+  edit: ProposedEdit | undefined;
+  defaultOpen: boolean;
+}) {
   const token = SEVERITY_META[f.severity]?.token ?? "--neutral";
-  const hasDetail = Boolean(f.explanation || f.suggested_fix);
+  const hasDetail = Boolean(f.explanation || f.suggested_fix || edit);
+  const muted = f.severity === "info";
   return (
     <details
-      className="group rounded-md border border-border bg-card"
+      className={`group overflow-hidden rounded-md border border-border bg-card ${
+        muted ? "opacity-80 open:opacity-100" : ""
+      }`}
       style={{ borderLeft: `3px solid var(${token})` }}
+      open={hasDetail && defaultOpen}
     >
       <summary
-        className={`flex flex-wrap items-start justify-between gap-2 p-3.5 marker:content-none [&::-webkit-details-marker]:hidden ${
-          hasDetail ? "cursor-pointer select-none" : "pointer-events-none"
+        className={`flex items-start gap-3 px-3.5 py-3 marker:content-none [&::-webkit-details-marker]:hidden ${
+          hasDetail
+            ? "cursor-pointer select-none transition-colors hover:bg-muted/60 group-open:bg-muted/40"
+            : "pointer-events-none"
         }`}
       >
-        <div className="flex items-start gap-2">
-          {hasDetail && (
-            <span
-              aria-hidden
-              className="mt-0.5 text-xs text-muted-foreground transition-transform group-open:rotate-90"
-            >
-              ▸
+        <div className="min-w-0 flex-1">
+          <div className="text-sm leading-snug font-semibold">{f.title}</div>
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <span>
+              {f.source === "ncci"
+                ? "CMS NCCI edit tables"
+                : "AI documentation review"}
             </span>
-          )}
-          <span className="text-sm font-semibold">{f.title}</span>
+            {f.predicted_carc && (
+              <>
+                <span aria-hidden>·</span>
+                <span>
+                  Would deny as{" "}
+                  <Badge
+                    variant="outline"
+                    className="font-mono"
+                    title={carcMeaning(f.predicted_carc)}
+                  >
+                    {f.predicted_carc}
+                  </Badge>
+                </span>
+              </>
+            )}
+          </div>
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          {f.predicted_carc && (
-            <Badge variant="outline" title={carcMeaning(f.predicted_carc)}>
-              {f.predicted_carc}
-            </Badge>
-          )}
-          <span className="text-xs text-muted-foreground">
-            {f.source === "ncci" ? "CMS edit tables" : "AI review"}
-          </span>
-        </div>
+        {hasDetail && (
+          <ChevronDownIcon
+            aria-hidden
+            className="mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180"
+          />
+        )}
       </summary>
       {hasDetail && (
-        <div className="px-3.5 pb-3.5">
-          {f.explanation && (
-            <p className="text-sm text-muted-foreground">{f.explanation}</p>
-          )}
-          {f.suggested_fix && (
-            <p className="mt-2 text-sm">
-              <span className="font-medium">Fix: </span>
-              {f.suggested_fix}
-            </p>
-          )}
+        <div className="grid gap-4 border-t border-border px-3.5 py-4 md:grid-cols-2">
+          <section>
+            <h4 className="mb-1.5 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+              What&rsquo;s wrong
+            </h4>
+            {f.explanation ? (
+              <p className="text-sm leading-relaxed">{f.explanation}</p>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                No further detail for this flag.
+              </p>
+            )}
+            {f.predicted_carc && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                <span className="font-mono">{f.predicted_carc}</span> —{" "}
+                {carcMeaning(f.predicted_carc)}
+              </p>
+            )}
+          </section>
+          <section
+            className="rounded-md p-3"
+            style={{
+              background: `color-mix(in oklab, var(${token}) 7%, var(--card))`,
+              border: `1px solid color-mix(in oklab, var(${token}) 25%, var(--border))`,
+            }}
+          >
+            <h4
+              className="mb-1.5 text-[11px] font-semibold tracking-wide uppercase"
+              style={{ color: `var(${token})` }}
+            >
+              How to fix it
+            </h4>
+            {edit && <EditChip edit={edit} />}
+            {f.suggested_fix ? (
+              <p className={`text-sm leading-relaxed ${edit ? "mt-2.5" : ""}`}>
+                {f.suggested_fix}
+              </p>
+            ) : (
+              !edit && (
+                <p className="text-sm text-muted-foreground">
+                  Nothing to change — this is for your awareness.
+                </p>
+              )
+            )}
+          </section>
         </div>
       )}
     </details>
+  );
+}
+
+// The one-line, PM-system version of the fix: glyph, the code it applies to,
+// and the imperative instruction.
+function EditChip({ edit }: { edit: ProposedEdit }) {
+  const meta = EDIT_GLYPH[edit.kind] ?? { glyph: "±", token: "--neutral" };
+  return (
+    <div className="flex items-start gap-2 rounded border border-border bg-card px-2.5 py-2">
+      <span
+        aria-hidden
+        className="flex size-5 shrink-0 items-center justify-center rounded font-mono text-sm font-bold"
+        style={{
+          background: `color-mix(in oklab, var(${meta.token}) 16%, var(--card))`,
+          color: `var(${meta.token})`,
+        }}
+      >
+        {meta.glyph}
+      </span>
+      <span className="text-sm leading-snug">
+        {edit.target && (
+          <span className="mr-1.5 font-mono font-semibold">{edit.target}</span>
+        )}
+        {edit.instruction}
+      </span>
+    </div>
   );
 }
 
