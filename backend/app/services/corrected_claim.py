@@ -111,6 +111,8 @@ def _result_rows(resolved: list[tuple[int, ClaimEdit]], patched: PatchResult) ->
                 "value": edit.value,
                 "applied": outcome.applied,
                 "reason": outcome.reason,
+                "applied_lines": outcome.applied_lines,
+                "note": outcome.note,
             }
         )
     return rows

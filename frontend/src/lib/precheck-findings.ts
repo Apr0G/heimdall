@@ -87,9 +87,18 @@ export function choiceIsComplete(
   const v = choice.value.trim().toUpperCase();
   if (edit.kind === "add_modifier") return /^[A-Z0-9]{2}$/.test(v);
   if (edit.kind === "change_units") return /^[1-9]\d{0,2}$/.test(v);
-  if (edit.kind === "change_code")
-    return /^(\d{5}|\d{4}[FTU]|[A-Z]\d{4})$/.test(v);
+  if (edit.kind === "change_code") return isProcedureCode(v) || isDxCode(v);
   return false;
+}
+
+// CPT (5 digits, or 4 + F/T/U) or HCPCS level II (letter + 4 digits).
+export function isProcedureCode(code: string): boolean {
+  return /^(\d{5}|\d{4}[FTU]|[A-Z]\d{4})$/.test(code.trim().toUpperCase());
+}
+
+// ICD-10-CM, with or without the decimal the paper form omits ("D509").
+export function isDxCode(code: string): boolean {
+  return /^[A-TV-Z]\d{2}(\.?\d{1,4})?$/.test(code.trim().toUpperCase());
 }
 
 export function buildSelections(
@@ -115,8 +124,20 @@ export const SKIP_REASON_TEXT: Record<string, string> = {
   no_room: "No space in the box for this value",
   bad_value: "Not a valid value",
   unsupported_kind: "Not a claim change",
+  not_a_service_line:
+    "That's a diagnosis code — modifiers and units apply to service lines",
 };
 
 export function skipReasonText(reason: string | null): string {
   return (reason && SKIP_REASON_TEXT[reason]) || "Couldn't apply this change";
+}
+
+// Advisory notes on an applied edit.
+export const NOTE_TEXT: Record<string, string> = {
+  check_dx_pointers:
+    "Check the diagnosis pointers (Box 24E) on any line that referenced it",
+};
+
+export function noteText(note: string | null | undefined): string | null {
+  return (note && NOTE_TEXT[note]) || null;
 }

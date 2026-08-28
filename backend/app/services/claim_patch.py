@@ -55,6 +55,9 @@ MAX_MODIFIERS = 4  # Box 24D has four modifier positions
 # CPT (5 digits, or 4 digits + F/T/U category suffix) or HCPCS level II (letter + 4 digits).
 _CODE_RE = re.compile(r"^(?:\d{5}|\d{4}[FTU]|[A-Z]\d{4})$")
 _MODIFIER_RE = re.compile(r"^[A-Z0-9]{2}$")
+# ICD-10-CM as printed in Box 21 — with or without the decimal (the paper form
+# omits it: "D509"). U is excluded (reserved chapter), same as CMS's own list.
+_ICD10_RE = re.compile(r"^[A-TV-Z]\d{2}(?:\.?\d{1,4})?$")
 _DX_POINTER_RE = re.compile(r"^[A-L]{1,4}$")
 _UNITS_RE = re.compile(r"^\d{1,3}$")
 _MONEY_SINGLE_RE = re.compile(r"^\$?\d{1,3}(?:,\d{3})*\.\d{2}$|^\$?\d{1,7}\.\d{2}$")
@@ -110,8 +113,14 @@ class EditResult:
     edit: ClaimEdit
     applied: bool
     # Reason codes for a skipped edit: unsupported_kind, line_not_found,
-    # ambiguous_line, modifier_slots_full, already_present, no_room, bad_value.
+    # ambiguous_line, modifier_slots_full, already_present, no_room, bad_value,
+    # not_a_service_line (a modifier/units edit aimed at a diagnosis code).
     reason: str | None = None
+    # A code can sit on several service lines (one per date); the edit applies
+    # to each line it fits, and this says how many it reached.
+    applied_lines: int = 0
+    # Advisory for an applied edit, e.g. check_dx_pointers after a Box 21 removal.
+    note: str | None = None
 
 
 @dataclass
@@ -209,78 +218,24 @@ def patch_claim(pdf_bytes: bytes, edits: Sequence[ClaimEdit]) -> PatchResult:
     def page_edits(page: int) -> _PageEdits:
         return per_page.setdefault(page, _PageEdits())
 
+    ctx = _ApplyContext(page_edits, expected_removed, expected_added, removed_lines)
+
     for edit in edits:
         if edit.kind not in EDIT_KINDS:
             results.append(EditResult(edit, False, "unsupported_kind"))
             continue
-        matches = [
-            line
-            for line in lines
-            if line.cpt.text == edit.target.strip().upper() and line not in removed_lines
-        ]
-        if not matches:
+        target = edit.target.strip().upper()
+        matches = [line for line in lines if line.cpt.text == target and line not in removed_lines]
+        if matches:
+            results.append(_apply_to_lines(edit, matches, ctx))
+            continue
+        dx_words = _find_dx(pages_words, lines, target)
+        if dx_words is None or not dx_words:
             results.append(EditResult(edit, False, "line_not_found"))
-            continue
-        if len(matches) > 1:
+        elif len(dx_words) > 1:
             results.append(EditResult(edit, False, "ambiguous_line"))
-            continue
-        line = matches[0]
-        pe = page_edits(line.page)
-
-        if edit.kind == "remove_line":
-            for word in line.row_words + line.shaded_words:
-                pe.remove.update(word.chars)
-                expected_removed.append(word)
-            removed_lines.append(line)
-            results.append(EditResult(edit, True))
-            continue
-
-        value = _validated_value(edit)
-        if value is None:
-            results.append(EditResult(edit, False, "bad_value"))
-            continue
-
-        if edit.kind == "add_modifier":
-            if any(m.text == value for m in line.modifiers):
-                results.append(EditResult(edit, False, "already_present"))
-                continue
-            if len(line.modifiers) >= MAX_MODIFIERS:
-                results.append(EditResult(edit, False, "modifier_slots_full"))
-                continue
-            anchor = line.modifiers[-1] if line.modifiers else line.cpt
-            # Modifier boxes are ~3 characters apart on the form; reuse the gap
-            # the printer left between the code and its first modifier when we
-            # have one, else three digit-widths.
-            gap = (
-                (line.modifiers[0].x0 - line.cpt.x1)
-                if line.modifiers
-                else 3 * anchor.size * _HELVETICA_WIDTHS["0"] / 1000
-            )
-            x = anchor.x1 + gap
-            width = _text_width(value, anchor.size)
-            if x + width > line.pointer.x0 - 1:
-                results.append(EditResult(edit, False, "no_room"))
-                continue
-            pe.overlays.append(_Overlay(line.page, x, anchor.origin_y, anchor.size, value))
-            expected_added.append((line.page, value, x, anchor.top))
-            results.append(EditResult(edit, True))
-            continue
-
-        old = line.units if edit.kind == "change_units" else line.cpt
-        if old.text == value:
-            results.append(EditResult(edit, False, "already_present"))
-            continue
-        width = _text_width(value, old.size)
-        right_neighbour = _next_word_right(line.row_words, old)
-        limit = right_neighbour.x0 - 1 if right_neighbour else old.x1 + width
-        if old.origin_x + width > limit:
-            results.append(EditResult(edit, False, "no_room"))
-            continue
-        pe.remove.update(old.chars)
-        expected_removed.append(old)
-        pe.overlays.append(_Overlay(line.page, old.origin_x, old.origin_y, old.size, value))
-        expected_added.append((line.page, value, old.origin_x, old.top))
-        results.append(EditResult(edit, True))
+        else:
+            results.append(_apply_to_dx(edit, dx_words[0], pages_words, ctx))
 
     total_updated: bool | None = None
     if removed_lines:
@@ -298,6 +253,169 @@ def patch_claim(pdf_bytes: bytes, edits: Sequence[ClaimEdit]) -> PatchResult:
     return PatchResult(
         pdf=patched, results=results, total_updated=total_updated, pages_changed=len(per_page)
     )
+
+
+@dataclass
+class _ApplyContext:
+    page_edits: object  # callable page -> _PageEdits
+    expected_removed: list[_Word]
+    expected_added: list[tuple[int, str, float, float]]
+    removed_lines: list[_ServiceLine]
+
+    def remove_word(self, word: _Word) -> None:
+        self.page_edits(word.page).remove.update(word.chars)
+        self.expected_removed.append(word)
+
+    def draw(self, page: int, x: float, y: float, size: float, top: float, text: str) -> None:
+        self.page_edits(page).overlays.append(_Overlay(page, x, y, size, text))
+        self.expected_added.append((page, text, x, top))
+
+
+def _apply_to_lines(edit: ClaimEdit, lines: list[_ServiceLine], ctx: _ApplyContext) -> EditResult:
+    """Apply one edit to every service line carrying its code. A modifier or a
+    code correction belongs on each line of that code; a unit cut lands on the
+    lines that exceed the new count; a removal takes every line. Per-line
+    failures (no room, slots full) don't block the other lines."""
+    if edit.kind == "remove_line":
+        for line in lines:
+            for word in line.row_words + line.shaded_words:
+                ctx.remove_word(word)
+            ctx.removed_lines.append(line)
+        return EditResult(edit, True, applied_lines=len(lines))
+
+    value = _validated_value(edit)
+    if value is None:
+        return EditResult(edit, False, "bad_value")
+
+    if edit.kind == "change_units":
+        current = [line for line in lines if line.units.text != value]
+        if not current:
+            return EditResult(edit, False, "already_present")
+        over = [line for line in current if int(line.units.text) > int(value)]
+        candidates = over or current
+    elif edit.kind == "add_modifier":
+        candidates = [line for line in lines if all(m.text != value for m in line.modifiers)]
+        if not candidates:
+            return EditResult(edit, False, "already_present")
+    else:  # change_code
+        candidates = lines
+
+    applied = 0
+    reasons: list[str] = []
+    for line in candidates:
+        reason = _apply_to_line(edit, value, line, ctx)
+        if reason is None:
+            applied += 1
+        else:
+            reasons.append(reason)
+    if applied == 0:
+        return EditResult(edit, False, reasons[0] if reasons else "line_not_found")
+    return EditResult(edit, True, applied_lines=applied)
+
+
+def _apply_to_line(
+    edit: ClaimEdit, value: str, line: _ServiceLine, ctx: _ApplyContext
+) -> str | None:
+    """Apply to one line; return a skip reason or None when applied."""
+    if edit.kind == "add_modifier":
+        if len(line.modifiers) >= MAX_MODIFIERS:
+            return "modifier_slots_full"
+        anchor = line.modifiers[-1] if line.modifiers else line.cpt
+        # Modifier boxes are ~3 characters apart on the form; reuse the gap the
+        # printer left between the code and its first modifier when we have
+        # one, else three digit-widths.
+        gap = (
+            (line.modifiers[0].x0 - line.cpt.x1)
+            if line.modifiers
+            else 3 * anchor.size * _HELVETICA_WIDTHS["0"] / 1000
+        )
+        x = anchor.x1 + gap
+        if x + _text_width(value, anchor.size) > line.pointer.x0 - 1:
+            return "no_room"
+        ctx.draw(line.page, x, anchor.origin_y, anchor.size, anchor.top, value)
+        return None
+
+    old = line.units if edit.kind == "change_units" else line.cpt
+    if old.text == value:
+        return "already_present"
+    width = _text_width(value, old.size)
+    right_neighbour = _next_word_right(line.row_words, old)
+    limit = right_neighbour.x0 - 1 if right_neighbour else old.x1 + width
+    if old.origin_x + width > limit:
+        return "no_room"
+    ctx.remove_word(old)
+    ctx.draw(line.page, old.origin_x, old.origin_y, old.size, old.top, value)
+    return None
+
+
+def _find_dx(
+    pages_words: list[list[_Word]], lines: list[_ServiceLine], target: str
+) -> list[_Word] | None:
+    """Box 21 candidates for an ICD-10 target: words off the service rows whose
+    text equals the target with decimals ignored ("D50.9" matches "D509").
+    None when the target isn't shaped like an ICD-10 code at all."""
+    if not _ICD10_RE.match(target):
+        return None
+    key = target.replace(".", "")
+    in_rows = {idx for line in lines for w in line.row_words + line.shaded_words for idx in w.chars}
+    return [
+        w
+        for page_words in pages_words
+        for w in page_words
+        if w.upright and w.chars[0] not in in_rows and w.text.upper().replace(".", "") == key
+    ]
+
+
+def _apply_to_dx(
+    edit: ClaimEdit, word: _Word, pages_words: list[list[_Word]], ctx: _ApplyContext
+) -> EditResult:
+    """A diagnosis code in Box 21: it can be removed or replaced. Modifiers and
+    units are service-line concepts and don't apply."""
+    if edit.kind in ("add_modifier", "change_units"):
+        return EditResult(edit, False, "not_a_service_line")
+    if edit.kind == "remove_line":
+        ctx.remove_word(word)
+        # Lines pointing at this slot (Box 24E) now reference nothing; the
+        # form's own A–L labels stay, so only the pointers need a look.
+        return EditResult(edit, True, applied_lines=1, note="check_dx_pointers")
+    value = (edit.value or "").strip().upper()
+    if not _ICD10_RE.match(value):
+        return EditResult(edit, False, "bad_value")
+    # Match the print style of the slot: no decimal if the form omits it.
+    if "." not in word.text:
+        value = value.replace(".", "")
+    if value == word.text.upper():
+        return EditResult(edit, False, "already_present")
+    row = sorted(
+        (
+            w
+            for w in pages_words[word.page]
+            if w.upright and abs(w.top - word.top) <= max(2.0, 0.45 * word.size)
+        ),
+        key=lambda w: w.x0,
+    )
+    width = _text_width(value, word.size)
+    right_neighbour = _next_word_right(row, word)
+    limit = right_neighbour.x0 - 1 if right_neighbour else word.x1 + width
+    if word.origin_x + width > limit:
+        return EditResult(edit, False, "no_room")
+    ctx.remove_word(word)
+    ctx.draw(word.page, word.origin_x, word.origin_y, word.size, word.top, value)
+    return EditResult(edit, True, applied_lines=1)
+
+
+def _tj_units(
+    advance: float, *, font_size: float, hscale: float, char_spacing: float, word_spacing: float
+) -> float:
+    """The TJ number that moves the cursor exactly as far as one removed glyph
+    did. Per the PDF text-space equations a glyph displaces
+    (w0·Tfs + Tc + Tw)·Th and a TJ number n displaces −n/1000·Tfs·Th, so
+    n = 1000·w0 + 1000·(Tc + Tw)/Tfs. `advance` is pdfminer's glyph width,
+    which already carries Th (1000·w0·Th)."""
+    th = hscale / 100.0
+    if th <= 0 or font_size <= 0:
+        raise ClaimPatchError("unsupported_pdf", "text scaling state")
+    return advance / th + 1000.0 * (char_spacing + word_spacing) / font_size
 
 
 # --- reading ----------------------------------------------------------------
@@ -450,7 +568,7 @@ def _validated_value(edit: ClaimEdit) -> str | None:
     if edit.kind == "change_units":
         return value if _UNITS_RE.match(value) and int(value) >= 1 else None
     if edit.kind == "change_code":
-        return value if _CODE_RE.match(value) else None
+        return value if _CODE_RE.match(value) or _ICD10_RE.match(value) else None
     return None
 
 
@@ -524,24 +642,44 @@ def _rewrite(pdf_bytes: bytes, pages: list[_PageText], per_page: dict[int, _Page
     for page_index, pe in per_page.items():
         page = writer.pages[page_index]
         content = ContentStream(page.get_contents(), writer)
-        fonts = _page_fonts(page)
-        ops = _strip_glyphs(content.operations, fonts, pe.remove, pages[page_index].advances)
+        resources = _resources(page)
+        ops = _strip_glyphs(
+            content.operations,
+            _fonts_in(resources),
+            _xobjects_in(resources),
+            pe.remove,
+            pages[page_index].advances,
+        )
         ops = [([], b"q")] + ops + [([], b"Q")] + _overlay_ops(pe.overlays)
         _ensure_overlay_font(page, writer)
         new_content = ContentStream(None, writer)
         new_content.operations = ops
         page.replace_contents(new_content)
+        # The rewritten stream is emitted raw; a form export is tens of
+        # thousands of operators, so re-compress or the file triples in size.
+        page.compress_content_streams()
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue()
 
 
-def _page_fonts(page) -> dict[str, int]:
+def _resources(obj) -> dict:
+    res = obj.get("/Resources")
+    return res.get_object() if res is not None else {}
+
+
+def _xobjects_in(resources: dict) -> dict:
+    xobjects = resources.get("/XObject")
+    return xobjects.get_object() if xobjects is not None else {}
+
+
+def _fonts_in(resources: dict, inherited: dict[str, int] | None = None) -> dict[str, int]:
     """Font resource name -> bytes per character code. Composite fonts with a
-    non-Identity CMap would need the CMap to count codes; refuse those."""
-    resources = page.get("/Resources") or {}
+    non-Identity CMap would need the CMap to count codes; refuse those. A form
+    XObject may lean on its parent's fonts (non-conforming but common), so the
+    parent's map is the fallback."""
     fonts = resources.get("/Font") or {}
-    out: dict[str, int] = {}
+    out: dict[str, int] = dict(inherited or {})
     for name, ref in fonts.items():
         font = ref.get_object()
         subtype = font.get("/Subtype")
@@ -556,8 +694,43 @@ def _page_fonts(page) -> dict[str, int]:
     return out
 
 
+def _form_text_codes(xobject, fonts: dict[str, int], depth: int = 0) -> int:
+    """How many character codes pdfminer sees inside a form XObject (and any it
+    nests) — text drawn there shifts the page's char numbering by that much."""
+    if depth > 8:
+        raise ClaimPatchError("unsupported_pdf", "xobject nesting")
+    resources = _resources(xobject)
+    own_fonts = _fonts_in(resources, inherited=fonts)
+    nested = _xobjects_in(resources)
+    bytes_per_code = 1
+    saved: list[int] = []
+    total = 0
+    for operands, operator in ContentStream(xobject, None).operations:
+        if operator == b"Tf":
+            bytes_per_code = own_fonts.get(str(operands[0]), 1)
+        elif operator == b"q":
+            saved.append(bytes_per_code)
+        elif operator == b"Q" and saved:
+            bytes_per_code = saved.pop()
+        elif operator == b"Do":
+            child = nested.get(str(operands[0]))
+            child = child.get_object() if child is not None else None
+            if child is not None and child.get("/Subtype") == "/Form":
+                total += _form_text_codes(child, own_fonts, depth + 1)
+        elif operator in _TEXT_SHOWING:
+            strings = list(operands[0]) if operator == b"TJ" else [operands[-1]]
+            for item in strings:
+                if isinstance(item, bytes | str):
+                    total += -(-len(_raw_bytes(item)) // bytes_per_code)
+    return total
+
+
 def _strip_glyphs(
-    operations, fonts: dict[str, int], remove: set[int], advances: list[float]
+    operations,
+    fonts: dict[str, int],
+    xobjects: dict,
+    remove: set[int],
+    advances: list[float],
 ) -> list:
     """Walk the content stream in order, numbering character codes the way
     pdfminer numbers chars, and drop the codes in ``remove`` — each dropped run
@@ -567,10 +740,11 @@ def _strip_glyphs(
     ops_out: list = []
     char_index = 0
     bytes_per_code = 1
+    font_size = 0.0
     char_spacing = 0.0
     word_spacing = 0.0
     hscale = 100.0
-    saved: list[tuple[int, float, float, float]] = []
+    saved: list[tuple[int, float, float, float, float]] = []
 
     for operands, operator in operations:
         if operator == b"Tf":
@@ -578,6 +752,7 @@ def _strip_glyphs(
             if name not in fonts:
                 raise ClaimPatchError("unsupported_pdf", "font outside page resources")
             bytes_per_code = fonts[name]
+            font_size = float(operands[1])
         elif operator == b"Tc":
             char_spacing = float(operands[0])
         elif operator == b"Tw":
@@ -585,13 +760,23 @@ def _strip_glyphs(
         elif operator == b"Tz":
             hscale = float(operands[0])
         elif operator == b"q":
-            saved.append((bytes_per_code, char_spacing, word_spacing, hscale))
+            saved.append((bytes_per_code, font_size, char_spacing, word_spacing, hscale))
         elif operator == b"Q" and saved:
-            bytes_per_code, char_spacing, word_spacing, hscale = saved.pop()
+            bytes_per_code, font_size, char_spacing, word_spacing, hscale = saved.pop()
         elif operator == b"Do":
-            # Text inside a form XObject is invisible to this walk but not to
-            # pdfminer; the char numbering would drift. Refuse rather than guess.
-            raise ClaimPatchError("unsupported_pdf", "form xobject")
+            # Images carry no text. A form XObject (typically the drawn CMS-1500
+            # background) may: pdfminer numbers any text inside it in sequence,
+            # so account for those chars — but never edit them, they belong to
+            # the form, not the claim data.
+            xobject = xobjects.get(str(operands[0]))
+            xobject = xobject.get_object() if xobject is not None else None
+            if xobject is None:
+                raise ClaimPatchError("unsupported_pdf", "xobject outside page resources")
+            if xobject.get("/Subtype") == "/Form":
+                inside = _form_text_codes(xobject, fonts)
+                if any(char_index <= idx < char_index + inside for idx in remove):
+                    raise ClaimPatchError("unsupported_pdf", "text inside form xobject")
+                char_index += inside
 
         if operator not in _TEXT_SHOWING:
             ops_out.append((operands, operator))
@@ -621,14 +806,18 @@ def _strip_glyphs(
                     raise ClaimPatchError("unsupported_pdf", "more codes than chars")
                 if char_index in remove:
                     touched = True
-                    # Tc/Tw/Tz also move the cursor per glyph; a TJ adjustment
-                    # can't reproduce them, so refuse rather than shift the row.
-                    if char_spacing or word_spacing or hscale != 100.0:
-                        raise ClaimPatchError("unsupported_pdf", "text spacing state")
                     if keep:
                         new_array.append(ByteStringObject(bytes(keep)))
                         keep = bytearray()
-                    drop_advance += advances[char_index]
+                    drop_advance += _tj_units(
+                        advances[char_index],
+                        font_size=font_size,
+                        hscale=hscale,
+                        char_spacing=char_spacing,
+                        word_spacing=(
+                            word_spacing if bytes_per_code == 1 and code == b" " else 0.0
+                        ),
+                    )
                 else:
                     if drop_advance:
                         new_array.append(FloatObject(-drop_advance))

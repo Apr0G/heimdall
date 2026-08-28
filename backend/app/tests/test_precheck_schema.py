@@ -144,6 +144,7 @@ class TestProposedEditsFilter:
                     _edit("change_units", value="0"),  # units start at 1
                     _edit("change_code", value="99213"),
                     _edit("change_code", value="99213; DROP"),
+                    _edit("change_code", value="n20.1"),  # ICD-10 for a Box 21 fix
                     _edit("remove_line", value="99213"),  # no value for a removal
                     _edit("documentation", value="anything"),
                 ],
@@ -155,6 +156,7 @@ class TestProposedEditsFilter:
             None,
             "99213",
             None,
+            "N20.1",
             None,
             None,
         ]

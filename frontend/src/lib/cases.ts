@@ -154,6 +154,10 @@ export type CorrectedClaimEditResult = {
   value: string | null;
   applied: boolean;
   reason: string | null;
+  // A code can sit on several service lines (one per date); how many it reached.
+  applied_lines?: number;
+  // Advisory for an applied edit, e.g. check_dx_pointers after a Box 21 removal.
+  note?: string | null;
 };
 
 export type CorrectedClaimDetail = {

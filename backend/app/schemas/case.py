@@ -192,6 +192,8 @@ class CorrectedClaimEditResult(BaseModel):
     value: str | None
     applied: bool
     reason: str | None  # claim_patch skip reason code
+    applied_lines: int = 0  # a code can sit on several service lines
+    note: str | None = None  # advisory for an applied edit (check_dx_pointers)
 
 
 class CorrectedClaimDetail(BaseModel):

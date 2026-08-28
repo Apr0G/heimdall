@@ -21,8 +21,11 @@ def _esc(text: str) -> str:
     return text.replace("\\", r"\\").replace("(", r"\(").replace(")", r"\)")
 
 
+_SPACING = ""  # set per build_claim call; keeps the cell helpers' signatures small
+
+
 def _tj(text: str, x: float, y: float, size: int = 9) -> str:
-    return f"BT /F1 {size} Tf 1 0 0 1 {x} {y} Tm ({_esc(text)}) Tj ET\n"
+    return f"BT /F1 {size} Tf {_SPACING} 1 0 0 1 {x} {y} Tm ({_esc(text)}) Tj ET\n"
 
 
 def _tj_array(parts: list, x: float, y: float, size: int = 9) -> str:
@@ -55,13 +58,20 @@ def build_claim(
     style: str = "cells",
     form: bool = True,
     money: str = "split",  # split ("150" "00") | single ("150.00") | dollar ("$1,150.00")
+    dx: tuple[str, ...] = ("M17.11", "M25.561"),
+    dx_dots: bool = True,  # the paper form prints Box 21 without decimals ("D509")
     total_label: str = "TOTAL CHARGE",
     pages: int = 1,
     xobject: bool = False,
+    background: bool = False,  # drawn form background as a text-free form XObject
+    spacing: str = "",  # extra text-state ops, e.g. "0.3 Tc 95 Tz 1 Tw"
     compress: bool = False,
 ) -> bytes:
     """Synthetic claim: every value is fake (CPT/HCPCS are real code *formats*,
     the NPI is all zeros)."""
+
+    global _SPACING
+    _SPACING = spacing
 
     def money_words(cents: int) -> list[str]:
         dollars, rem = divmod(cents, 100)
@@ -82,7 +92,11 @@ def build_claim(
                 ROW_Y0 + 30,
                 6,
             )
-            c += _tj("21. DIAGNOSIS  A. M17.11  B. M25.561", 40, ROW_Y0 + 60, 8)
+            slots = "  ".join(
+                f"{letter}. {code if dx_dots else code.replace('.', '')}"
+                for letter, code in zip("ABCDEFGHIJKL", dx, strict=False)
+            )
+            c += _tj(f"21. DIAGNOSIS  {slots}", 40, ROW_Y0 + 60, 8)
             c += _tj("1a. INSURED ID  000000000  ZIP 90210", 40, ROW_Y0 + 90, 8)
         for i, line in enumerate(page_lines):
             y = ROW_Y0 - ROW_STEP * i
@@ -149,6 +163,30 @@ def build_claim(
             resources = (
                 b"/Resources << /Font << /F1 3 0 R >> /XObject << /X1 "
                 + str(xobj_num).encode()
+                + b" 0 R >> >>"
+            )
+        elif background:
+            # A vector form background (boxes, no text) drawn before the data,
+            # the way "with form" exports from billing systems are built.
+            bg = (
+                b"0.8 0 0 RG 40 180 530 380 re S 40 "
+                + str(ROW_Y0 - 10).encode()
+                + b" m 570 "
+                + str(ROW_Y0 - 10).encode()
+                + b" l S"
+            )
+            objects.append(
+                b"<< /Type /XObject /Subtype /Form /BBox [0 0 612 792] /Length "
+                + str(len(bg)).encode()
+                + b" >>\nstream\n"
+                + bg
+                + b"\nendstream"
+            )
+            bg_num = len(objects)
+            content = b"q /Bg Do Q\n" + content
+            resources = (
+                b"/Resources << /Font << /F1 3 0 R >> /XObject << /Bg "
+                + str(bg_num).encode()
                 + b" 0 R >> >>"
             )
         else:
@@ -383,17 +421,11 @@ def test_multi_page_claim_edits_lines_but_leaves_the_total_alone():
 
 
 def test_skip_reasons():
-    pdf = build_claim(
-        LINES
-        + [
-            {"cpt": "20610", "cents": 100, "units": 1},
-            {"cpt": "97110", "mods": ["59", "XS", "XE", "XP"], "cents": 100},
-        ]
-    )
+    pdf = build_claim(LINES + [{"cpt": "97110", "mods": ["59", "XS", "XE", "XP"], "cents": 100}])
     result = patch_claim(
         pdf,
         [
-            ClaimEdit("change_units", "20610", "1"),  # two 20610 lines
+            ClaimEdit("change_units", "20610", "3"),  # already 3
             ClaimEdit("documentation", "99213", None),
             ClaimEdit("change_units", "99213", "1"),  # already 1
             ClaimEdit("change_units", "99213", "0"),
@@ -404,7 +436,7 @@ def test_skip_reasons():
         ],
     )
     assert [r.reason for r in result.results] == [
-        "ambiguous_line",
+        "already_present",
         "unsupported_kind",
         "already_present",
         "bad_value",
@@ -455,3 +487,131 @@ def test_verification_catches_a_rewrite_that_did_not_take(monkeypatch):
     with pytest.raises(ClaimPatchError) as exc:
         patch_claim(pdf, [ClaimEdit("change_units", "20610", "1")])
     assert exc.value.code == "verification_failed"
+
+
+# --- a code on several lines ----------------------------------------------------
+
+MULTI = [
+    {"cpt": "J2501", "mods": ["KX"], "cents": 2200, "units": 5},
+    {"cpt": "J2501", "mods": ["KX"], "cents": 2200, "units": 5},
+    {"cpt": "J3370", "mods": ["KX"], "cents": 1095, "units": 10},
+    {"cpt": "J3370", "mods": ["KX"], "cents": 1095, "units": 2},
+]
+
+
+def test_edits_apply_to_every_line_carrying_the_code():
+    # Drug codes are billed one line per date; the edit is about the code.
+    pdf = build_claim(MULTI, money="single")
+    result = patch_claim(
+        pdf,
+        [
+            ClaimEdit("change_units", "J2501", "2"),
+            ClaimEdit("add_modifier", "J2501", "59"),
+            ClaimEdit("change_units", "J3370", "2"),  # only the line over 2
+            ClaimEdit("change_code", "J3370", "J3371"),
+        ],
+    )
+    assert [(r.applied, r.applied_lines, r.reason) for r in result.results] == [
+        (True, 2, None),
+        (True, 2, None),
+        (True, 1, None),
+        (True, 2, None),
+    ]
+    lines = service_lines(result.pdf)
+    assert [(ln.cpt.text, [m.text for m in ln.modifiers], ln.units.text) for ln in lines] == [
+        ("J2501", ["KX", "59"], "2"),
+        ("J2501", ["KX", "59"], "2"),
+        ("J3371", ["KX"], "2"),
+        ("J3371", ["KX"], "2"),
+    ]
+
+
+def test_remove_line_takes_every_line_of_the_code_and_fixes_the_total():
+    pdf = build_claim(MULTI, money="single")
+    result = patch_claim(pdf, [ClaimEdit("remove_line", "J2501")])
+    assert result.results[0].applied_lines == 2
+    assert result.total_updated is True
+    assert [ln.cpt.text for ln in service_lines(result.pdf)] == ["J3370", "J3370"]
+    assert "21.90" in [w["text"] for w in words(result.pdf)]
+
+
+def test_modifier_only_lands_on_lines_that_lack_it():
+    pdf = build_claim(
+        [
+            {"cpt": "J2501", "mods": ["KX", "59"], "cents": 100, "units": 1},
+            {"cpt": "J2501", "mods": ["KX"], "cents": 100, "units": 1},
+        ]
+    )
+    result = patch_claim(pdf, [ClaimEdit("add_modifier", "J2501", "59")])
+    assert (result.results[0].applied, result.results[0].applied_lines) == (True, 1)
+    assert [[m.text for m in ln.modifiers] for ln in service_lines(result.pdf)] == [
+        ["KX", "59"],
+        ["KX", "59"],
+    ]
+
+
+# --- Box 21 diagnosis codes -------------------------------------------------------
+
+
+@pytest.mark.parametrize("dx_dots", [True, False])
+def test_diagnosis_code_can_be_removed_or_replaced(dx_dots):
+    pdf = build_claim(LINES, dx=("N18.5", "N20.0", "D50.9"), dx_dots=dx_dots)
+    result = patch_claim(
+        pdf,
+        [
+            ClaimEdit("remove_line", "D50.9"),
+            ClaimEdit("change_code", "N20.0", "N20.1"),
+            ClaimEdit("add_modifier", "N18.5", "59"),  # modifiers are for service lines
+        ],
+    )
+    assert [(r.applied, r.reason, r.note) for r in result.results] == [
+        (True, None, "check_dx_pointers"),
+        (True, None, None),
+        (False, "not_a_service_line", None),
+    ]
+    texts = [w["text"] for w in words(result.pdf)]
+    gone, was, now = ("D50.9", "N20.0", "N20.1") if dx_dots else ("D509", "N200", "N201")
+    assert gone not in texts and was not in texts and now in texts
+    # Service lines untouched; the form's own slot labels stay.
+    assert [ln.cpt.text for ln in service_lines(result.pdf)] == ["99213", "20610", "J3301"]
+    assert "C." in texts
+
+
+def test_diagnosis_lookup_never_touches_a_service_row_or_an_unknown_code():
+    pdf = build_claim(LINES, dx=("N18.5",))
+    result = patch_claim(
+        pdf, [ClaimEdit("remove_line", "N18.9"), ClaimEdit("change_code", "N18.5", "abc")]
+    )
+    assert [r.reason for r in result.results] == ["line_not_found", "bad_value"]
+    assert result.pdf == pdf
+
+
+# --- real-export traits -----------------------------------------------------------
+
+
+def test_text_free_form_background_is_fine():
+    # "With form" exports draw the red CMS-1500 as a form XObject with no text;
+    # only text inside an XObject would throw the char numbering off.
+    pdf = build_claim(LINES, background=True)
+    result = patch_claim(pdf, [ClaimEdit("change_units", "20610", "1")])
+    assert result.results[0].applied
+    assert service_lines(result.pdf)[1].units.text == "1"
+
+
+@pytest.mark.parametrize("spacing", ["0.4 Tc", "2 Tw", "90 Tz", "0.3 Tc 1.5 Tw 110 Tz"])
+def test_character_and_word_spacing_are_reproduced_exactly(spacing):
+    # Billing systems set Tc/Tw/Tz; the TJ adjustment for a removed glyph has
+    # to include them or the rest of the row shifts (caught by verification).
+    pdf = build_claim(LINES, style="row", spacing=spacing)
+    result = patch_claim(
+        pdf, [ClaimEdit("change_units", "20610", "1"), ClaimEdit("change_code", "J3301", "J3302")]
+    )
+    assert all(r.applied for r in result.results)
+    assert words_at_row(result.pdf, 1) == [("1" if w == "3" else w) for w in words_at_row(pdf, 1)]
+    assert service_lines(result.pdf)[2].cpt.text == "J3302"
+
+
+def test_rewritten_streams_are_compressed():
+    pdf = build_claim(LINES, compress=True)
+    result = patch_claim(pdf, [ClaimEdit("change_units", "20610", "1")])
+    assert b"/FlateDecode" in result.pdf

@@ -52,7 +52,9 @@ import {
   defaultChoice,
   type EditChoice,
   isClaimEdit,
+  isProcedureCode,
   modifierOptions,
+  noteText,
   skipReasonText,
 } from "@/lib/precheck-findings";
 
@@ -813,7 +815,14 @@ function CorrectedClaimCard({
                   className="mt-0.5 size-4 shrink-0"
                   style={{ color: "var(--ok)" }}
                 />
-                <span>{resultText(r)}</span>
+                <span>
+                  {resultText(r)}
+                  {noteText(r.note) && (
+                    <span className="block text-xs text-muted-foreground">
+                      {noteText(r.note)}
+                    </span>
+                  )}
+                </span>
               </li>
             ))}
           </ul>
@@ -853,15 +862,26 @@ function CorrectedClaimCard({
 
 function resultText(r: CorrectedClaimDetail["results"][number]): string {
   const code = r.target ?? "line";
+  // A code on several service lines (one per date) is edited on each.
+  const lines =
+    r.applied && (r.applied_lines ?? 0) > 1
+      ? ` (${r.applied_lines} lines)`
+      : "";
+  // Diagnosis codes live in Box 21, not on a service line.
+  const dx = r.target !== null && !isProcedureCode(r.target);
   switch (r.kind) {
     case "remove_line":
-      return `Removed the ${code} line`;
+      return dx
+        ? `Removed diagnosis ${code}`
+        : `Removed the ${code} line${lines}`;
     case "add_modifier":
-      return `Added modifier ${r.value} to ${code}`;
+      return `Added modifier ${r.value} to ${code}${lines}`;
     case "change_units":
-      return `Set ${code} units to ${r.value}`;
+      return `Set ${code} units to ${r.value}${lines}`;
     case "change_code":
-      return `Changed ${code} to ${r.value}`;
+      return dx
+        ? `Changed diagnosis ${code} to ${r.value}`
+        : `Changed ${code} to ${r.value}${lines}`;
     default:
       return `${humanize(r.kind)} ${code}`;
   }

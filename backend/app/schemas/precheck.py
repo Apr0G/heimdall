@@ -197,7 +197,8 @@ class RiskFinding(BaseModel):
 _EDIT_VALUE_RE = {
     "add_modifier": re.compile(r"^[A-Z0-9]{2}$"),
     "change_units": re.compile(r"^[1-9]\d{0,2}$"),
-    "change_code": re.compile(r"^(?:\d{5}|\d{4}[FTU]|[A-Z]\d{4})$"),
+    # CPT/HCPCS, or an ICD-10-CM code for a Box 21 (diagnosis) correction.
+    "change_code": re.compile(r"^(?:\d{5}|\d{4}[FTU]|[A-Z]\d{4}|[A-TV-Z]\d{2}(?:\.?\d{1,4})?)$"),
 }
 
 

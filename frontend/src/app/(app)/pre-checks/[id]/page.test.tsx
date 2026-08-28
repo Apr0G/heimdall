@@ -305,6 +305,25 @@ describe("pre-check report page", () => {
               applied: false,
               reason: "no_room",
             },
+            {
+              index: 2,
+              kind: "change_units",
+              target: "J2501",
+              value: "2",
+              applied: true,
+              reason: null,
+              applied_lines: 2,
+            },
+            {
+              index: 3,
+              kind: "remove_line",
+              target: "D50.9",
+              value: null,
+              applied: true,
+              reason: null,
+              applied_lines: 1,
+              note: "check_dx_pointers",
+            },
           ],
           total_updated: null,
           downloadable: true,
@@ -321,6 +340,13 @@ describe("pre-check report page", () => {
     expect(screen.getByText("Added modifier XS to 20610")).toBeInTheDocument();
     expect(
       screen.getByText(/Set J3301 units to 1 — No space in the box/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Set J2501 units to 2 (2 lines)"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Removed diagnosis D50.9")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Check the diagnosis pointers/),
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Download PDF/ }));
     await waitFor(() =>
