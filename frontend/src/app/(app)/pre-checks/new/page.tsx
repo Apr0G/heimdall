@@ -112,6 +112,18 @@ export default function NewPreCheckPage() {
           Check a claim before you submit it. Upload the draft claim and the
           clinical notes — Heimdall flags likely denials. PDF only.
         </p>
+        <p
+          className="mt-3 rounded-md bg-muted p-3 text-xs leading-relaxed text-muted-foreground"
+          style={{ borderLeft: "2px solid var(--warn)" }}
+        >
+          <span className="font-medium text-foreground">
+            Want a corrected claim back?
+          </span>{" "}
+          Export the draft claim from your billing software as a PDF. A scanned
+          or photographed claim can still be checked, but Heimdall can&rsquo;t
+          edit it for you — you&rsquo;ll get the list of changes to apply
+          yourself.
+        </p>
       </div>
       <Card>
         <CardContent className="space-y-6 pt-6">

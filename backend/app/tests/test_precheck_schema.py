@@ -134,6 +134,31 @@ class TestProposedEditsFilter:
         assert len(result.proposed_edits) == 10
         assert len(result.proposed_edits[0].instruction) == 160
 
+    def test_value_is_normalised_per_kind_or_dropped(self):
+        result = RiskReviewResult.model_validate(
+            {
+                "findings": [],
+                "proposed_edits": [
+                    _edit("add_modifier", value=" xs "),
+                    _edit("change_units", value="2"),
+                    _edit("change_units", value="0"),  # units start at 1
+                    _edit("change_code", value="99213"),
+                    _edit("change_code", value="99213; DROP"),
+                    _edit("remove_line", value="99213"),  # no value for a removal
+                    _edit("documentation", value="anything"),
+                ],
+            }
+        )
+        assert [e.value for e in result.proposed_edits] == [
+            "XS",
+            "2",
+            None,
+            "99213",
+            None,
+            None,
+            None,
+        ]
+
     def test_non_list_tolerated(self):
         assert (
             RiskReviewResult.model_validate({"findings": [], "proposed_edits": "no"}).proposed_edits

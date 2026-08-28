@@ -44,6 +44,8 @@ CASE_ROUTES = [
     ("GET", "/api/cases/{case_id}", None),
     ("GET", "/api/cases/{case_id}/status", None),
     ("GET", "/api/cases/{case_id}/letter.pdf", None),
+    ("GET", "/api/cases/{case_id}/corrected-claim/download-url", None),
+    ("POST", "/api/cases/{case_id}/corrected-claim", {"selections": [{"index": 0}]}),
     ("POST", "/api/cases/{case_id}/mark-submitted", None),
     ("POST", "/api/cases/{case_id}/outcome", {"result": "overturned"}),
     ("POST", "/api/cases/{case_id}/retry", None),

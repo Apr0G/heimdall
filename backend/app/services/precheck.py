@@ -224,6 +224,9 @@ def deterministic_edits(result: ncci.NcciResult) -> list[dict]:
                         f"Add modifier 59/XS/XE to {hit.column2} if distinct from "
                         f"{hit.column1} — otherwise remove the line"
                     ),
+                    # 59 is the default the UI offers; the biller picks the
+                    # X{E,S,P,U} modifier when a specific one fits.
+                    "value": "59",
                     "source": "ncci",
                 }
             )
@@ -236,6 +239,7 @@ def deterministic_edits(result: ncci.NcciResult) -> list[dict]:
                         f"Remove {hit.column2} — never payable with {hit.column1} "
                         "on the same day"
                     ),
+                    "value": None,
                     "source": "ncci",
                 }
             )
@@ -248,6 +252,7 @@ def deterministic_edits(result: ncci.NcciResult) -> list[dict]:
                     f"Reduce {violation.hcpcs} from {violation.units_billed} to "
                     f"≤{violation.mue_value} units/day"
                 ),
+                "value": str(violation.mue_value),
                 "source": "ncci",
             }
         )

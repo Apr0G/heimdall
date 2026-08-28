@@ -87,6 +87,9 @@ class TestDeterministicEdits:
         ]
         assert all(e["source"] == "ncci" for e in edits)
         assert "≤2 units/day" in edits[2]["instruction"]
+        # The applier writes `value` onto the PDF: default modifier, no value
+        # for a removal, the MUE limit for a unit cut.
+        assert [e["value"] for e in edits] == ["59", None, "2"]
 
     def test_no_data_no_edits(self):
         assert deterministic_edits(NcciResult()) == []

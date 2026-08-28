@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import type { ProposedEdit, RiskFinding } from "./cases";
-import { attachEditsToFindings } from "./precheck-findings";
+import {
+  attachEditsToFindings,
+  buildSelections,
+  choiceIsComplete,
+  defaultChoice,
+  isClaimEdit,
+  modifierOptions,
+  skipReasonText,
+} from "./precheck-findings";
 
 const finding = (over: Partial<RiskFinding>): RiskFinding => ({
   check_id: "ncci_ptp",
@@ -18,6 +26,7 @@ const edit = (over: Partial<ProposedEdit>): ProposedEdit => ({
   kind: "add_modifier",
   target: null,
   instruction: "do the thing",
+  value: null,
   source: "ncci",
   ...over,
 });
@@ -85,5 +94,107 @@ describe("attachEditsToFindings", () => {
       edit({ kind: "change_code", target: "99215", source: "model" }),
     ];
     expect(attachEditsToFindings(findings, edits).size).toBe(0);
+  });
+});
+
+describe("corrected-claim selection helpers", () => {
+  const ncciModifier = edit({
+    kind: "add_modifier",
+    target: "20610",
+    value: "59",
+  });
+  const modelModifier = edit({
+    kind: "add_modifier",
+    target: "99213",
+    value: "25",
+    source: "model",
+  });
+  const units = edit({ kind: "change_units", target: "J3301", value: "2" });
+  const code = edit({
+    kind: "change_code",
+    target: "99214",
+    value: null,
+    source: "model",
+  });
+  const removal = edit({ kind: "remove_line", target: "10002", value: null });
+  const note = edit({
+    kind: "documentation",
+    target: null,
+    value: null,
+    source: "model",
+  });
+
+  it("only claim edits with a target are selectable", () => {
+    expect([ncciModifier, units, code, removal, note].map(isClaimEdit)).toEqual(
+      [true, true, true, true, false],
+    );
+    expect(isClaimEdit(edit({ kind: "change_units", target: " " }))).toBe(
+      false,
+    );
+  });
+
+  it("defaults to the report's value, or 59 for an open modifier choice", () => {
+    expect(defaultChoice(ncciModifier)).toEqual({ value: "59", remove: false });
+    expect(
+      defaultChoice(edit({ kind: "add_modifier", target: "1", value: null }))
+        .value,
+    ).toBe("59");
+    expect(defaultChoice(code)).toEqual({ value: "", remove: false });
+  });
+
+  it("offers the report's modifier first, then the NCCI set, without duplicates", () => {
+    expect(modifierOptions(modelModifier)).toEqual([
+      "25",
+      "59",
+      "XE",
+      "XS",
+      "XP",
+      "XU",
+    ]);
+    expect(modifierOptions(ncciModifier)).toEqual([
+      "59",
+      "XE",
+      "XS",
+      "XP",
+      "XU",
+    ]);
+  });
+
+  it("holds the button until every chosen edit has a valid value", () => {
+    expect(choiceIsComplete(code, { value: "", remove: false })).toBe(false);
+    expect(choiceIsComplete(code, { value: "99213", remove: false })).toBe(
+      true,
+    );
+    expect(choiceIsComplete(code, { value: "", remove: true })).toBe(true);
+    expect(choiceIsComplete(units, { value: "0", remove: false })).toBe(false);
+    expect(choiceIsComplete(units, { value: "12", remove: false })).toBe(true);
+    expect(choiceIsComplete(ncciModifier, { value: "x", remove: false })).toBe(
+      false,
+    );
+    expect(choiceIsComplete(removal, { value: "", remove: false })).toBe(true);
+  });
+
+  it("builds the request in index order, sending only what the server needs", () => {
+    const edits = [ncciModifier, units, code, removal];
+    const chosen = new Map([
+      [3, { value: "", remove: false }],
+      [0, { value: "xs", remove: false }],
+      [2, { value: "99213", remove: true }],
+      [1, { value: " 1 ", remove: false }],
+    ]);
+    expect(buildSelections(edits, chosen)).toEqual([
+      { index: 0, value: "XS" },
+      { index: 1, value: "1" },
+      { index: 2, remove: true },
+      { index: 3 },
+    ]);
+  });
+
+  it("translates skip reasons and falls back for unknown ones", () => {
+    expect(skipReasonText("no_room")).toBe(
+      "No space in the box for this value",
+    );
+    expect(skipReasonText("something_new")).toBe("Couldn't apply this change");
+    expect(skipReasonText(null)).toBe("Couldn't apply this change");
   });
 });

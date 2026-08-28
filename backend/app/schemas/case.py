@@ -151,6 +151,8 @@ class ProposedEditDetail(BaseModel):
     kind: str  # remove_line | add_modifier | change_units | change_code | documentation
     target: str | None = None
     instruction: str
+    # New modifier / units / code the edit writes; None when the biller chooses.
+    value: str | None = None
     source: str  # "ncci" | "model"
 
 
@@ -164,6 +166,45 @@ class RiskReportDetail(BaseModel):
     # NCCI checks skipped (the report says so via an info finding).
     ncci_version_tag: str | None
     created_at: datetime
+
+
+class CorrectedClaimSelection(BaseModel):
+    """One chosen edit: its index in risk_report.proposed_edits, plus the value
+    to write when the doctor picked one (a modifier, a unit count, a code).
+    Kind and target are never client-supplied — they come from the report."""
+
+    index: int = Field(ge=0, le=99)
+    value: str | None = Field(default=None, max_length=8)
+    # "Remove the line instead": the conservative alternative to any claim
+    # edit (an NCCI bundling edit reads "add a modifier if distinct — otherwise
+    # remove the line", and only the doctor knows which).
+    remove: bool = False
+
+
+class CorrectedClaimRequest(BaseModel):
+    selections: list[CorrectedClaimSelection] = Field(min_length=1, max_length=20)
+
+
+class CorrectedClaimEditResult(BaseModel):
+    index: int
+    kind: str
+    target: str | None
+    value: str | None
+    applied: bool
+    reason: str | None  # claim_patch skip reason code
+
+
+class CorrectedClaimDetail(BaseModel):
+    id: UUID
+    version: int
+    results: list[CorrectedClaimEditResult]
+    # None = no charge changed; False = a line was removed but the Box 28 total
+    # could not be located, so the user must fix it by hand.
+    total_updated: bool | None
+    # False when nothing could be applied — there is no file to download.
+    downloadable: bool
+    created_at: datetime
+    downloaded_at: datetime | None
 
 
 class LetterDetail(BaseModel):
@@ -212,6 +253,11 @@ class CaseDetailResponse(BaseModel):
     outcome: OutcomeDetail | None
     # Pre-check cases only: the latest risk report. Always None for appeals.
     risk_report: RiskReportDetail | None = None
+    # Pre-check cases only: whether the draft claim has a text layer the
+    # patcher can edit (a scanned claim gets the edits-only view), and the
+    # latest corrected version if one was made.
+    claim_editable: bool = False
+    corrected_claim: CorrectedClaimDetail | None = None
 
 
 class CaseStatusResponse(BaseModel):

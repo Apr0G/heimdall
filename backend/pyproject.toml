@@ -16,6 +16,7 @@ dependencies = [
     "httpx>=0.27",
     "python-multipart>=0.0.9",         # FastAPI form/multipart parsing
     "pypdf>=6.13.3",                   # detect digital vs scanned PDFs; 6.13.3 fixes GHSA-jm82-fx9c-mx94
+    "pdfplumber>=0.11",                # word positions for in-place CMS-1500 edits (services/claim_patch.py); MIT, unlike AGPL PyMuPDF
     "slowapi>=0.1.9",                  # layered rate limiting (security hardening)
     "redis>=5.0",                      # rate-limit storage backend (prod; in-memory in dev)
     "setuptools>=83",                  # not imported; floors the interpreter's copy past PYSEC-2026-3447 so the lock (and pip-audit) cover it

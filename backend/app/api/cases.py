@@ -27,6 +27,7 @@ from app.models import (
     Analysis,
     AppealLetter,
     Case,
+    CorrectedClaim,
     Document,
     Extraction,
     Outcome,
@@ -43,9 +44,13 @@ from app.schemas.case import (
     CaseStatusResponse,
     CaseSummaryResponse,
     CaseType,
+    CorrectedClaimDetail,
+    CorrectedClaimEditResult,
+    CorrectedClaimRequest,
     CreateCaseRequest,
     CreateCaseResponse,
     DocumentDetail,
+    DownloadUrlResponse,
     ExtractionDetail,
     LetterDetail,
     OutcomeDetail,
@@ -61,9 +66,11 @@ from app.schemas.case import (
     UploadUrlsRequest,
     UploadUrlsResponse,
 )
+from app.services import corrected_claim as corrected_claim_service
 from app.services import pdf_gen
 from app.services.analysis import SUPPLEMENTAL_DOC_TYPES
 from app.services.audit import log_audit, log_read, safe_ip
+from app.services.claim_patch import ClaimPatchError
 from app.services.extraction import deadline_note
 from app.services.pipeline import run_full_pipeline, run_precheck_pipeline, run_reanalysis
 from app.services.s3 import (
@@ -72,6 +79,7 @@ from app.services.s3 import (
     case_document_key,
     head_object,
     move_object,
+    presigned_get_url,
     presigned_put_url,
     temp_upload_key,
 )
@@ -606,6 +614,11 @@ async def get_case(
         if case.case_type == "pre_check"
         else None
     )
+    corrected = (
+        await corrected_claim_service.latest_corrected_claim(session, case_id)
+        if case.case_type == "pre_check"
+        else None
+    )
 
     letter_details = [
         LetterDetail(
@@ -714,7 +727,125 @@ async def get_case(
             if risk_report
             else None
         ),
+        claim_editable=(
+            case.case_type == "pre_check"
+            and case.status == "ready"
+            and corrected_claim_service.claim_document_editable(list(documents))
+        ),
+        corrected_claim=_corrected_claim_detail(corrected) if corrected else None,
     )
+
+
+def _corrected_claim_detail(row: CorrectedClaim) -> CorrectedClaimDetail:
+    return CorrectedClaimDetail(
+        id=row.id,
+        version=row.version,
+        results=[CorrectedClaimEditResult(**r) for r in (row.results or [])],
+        total_updated=row.total_updated,
+        downloadable=row.s3_key is not None,
+        created_at=row.created_at,
+        downloaded_at=row.downloaded_at,
+    )
+
+
+# User-facing text per refusal code. Codes, never document content.
+_NOT_EDITABLE_MESSAGES = {
+    "not_ready": "The pre-check must finish before its claim can be corrected.",
+    "no_report": "No risk report exists for this pre-check yet.",
+    "no_claim_document": "This pre-check has no draft claim document.",
+    "scanned": (
+        "This claim was uploaded as a scan, so Heimdall can't edit it. "
+        "Apply the changes in your billing system, or upload the claim as a "
+        "PDF exported from your billing software."
+    ),
+    "tampered": "The draft claim no longer matches the file that was analysed.",
+}
+
+
+@router.post(
+    "/{case_id}/corrected-claim",
+    response_model=CorrectedClaimDetail,
+    status_code=status.HTTP_201_CREATED,
+)
+@ai_limiter.limit(_settings.rate_limit_ai)
+async def create_corrected_claim(
+    case_id: UUID,
+    body: CorrectedClaimRequest,
+    request: Request,
+    response: Response,  # slowapi injects rate-limit headers here
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> CorrectedClaimDetail:
+    """Apply the selected proposed edits to the draft claim PDF in place and
+    store the result as a new corrected-claim version. No model call — but
+    parsing an adversarial 25 MB PDF is real CPU, hence the expensive-op limiter."""
+    case = await _get_owned_case(session, case_id, current_user)
+    selections = [
+        corrected_claim_service.Selection(index=s.index, value=s.value, remove=s.remove)
+        for s in body.selections
+    ]
+    try:
+        row = await corrected_claim_service.create_corrected_claim(
+            session, case, selections, current_user
+        )
+    except corrected_claim_service.ClaimNotEditable as exc:
+        raise HTTPException(
+            status_code=409, detail=_NOT_EDITABLE_MESSAGES.get(exc.code, exc.code)
+        ) from None
+    except corrected_claim_service.InvalidSelection as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid edit selection: {exc}") from None
+    except ClaimPatchError as exc:
+        # The document as a whole couldn't be handled (layout the parser can't
+        # read, or the post-edit verification failed). Nothing was stored.
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Heimdall couldn't edit this PDF automatically "
+                f"({exc.code.replace('_', ' ')}). Apply the changes in your billing system."
+            ),
+        ) from None
+
+    applied = sum(1 for r in row.results if r["applied"])
+    await log_audit(
+        session,
+        action="corrected_claim_create",
+        resource_type="case",
+        resource_id=case.id,
+        user_id=current_user.id,
+        practice_id=current_user.practice_id,
+        ip=safe_ip(client_ip(request)),
+        user_agent=request.headers.get("user-agent"),
+        metadata={
+            "version": row.version,
+            "selected": len(row.results),
+            "applied": applied,
+            "total_updated": row.total_updated,
+        },
+    )
+    await session.commit()
+    await session.refresh(row)
+    return _corrected_claim_detail(row)
+
+
+@router.get("/{case_id}/corrected-claim/download-url", response_model=DownloadUrlResponse)
+async def corrected_claim_download_url(
+    case_id: UUID,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> DownloadUrlResponse:
+    """Short-lived presigned GET for the latest corrected claim. Same shape as
+    the source-document download: the backend never streams the body."""
+    case = await _get_owned_case(session, case_id, current_user)
+    row = await corrected_claim_service.latest_corrected_claim(session, case.id)
+    if row is None or row.s3_key is None:
+        raise HTTPException(status_code=404, detail="No corrected claim for this case")
+    if row.downloaded_at is None:
+        row.downloaded_at = datetime.now(UTC)
+    # PHI export audit — the corrected claim carries the patient/claim detail.
+    await log_read(session, request, current_user, "corrected_claim_download", "case", case_id)
+    url = await run_in_threadpool(presigned_get_url, row.s3_key)
+    return DownloadUrlResponse(url=url)
 
 
 @router.get("/{case_id}/status", response_model=CaseStatusPollResponse)

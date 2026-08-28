@@ -29,6 +29,11 @@ clean-claim guarantee.
   pipeline architecture. Pre-checks run deterministic CMS NCCI edits (PTP
   bundling + MUE unit limits, `backend/app/services/ncci.py`) plus an AI
   documentation-vs-codes review, and write a denial-risk report (`risk_reports`).
+  When the draft claim is a born-digital PDF, the doctor can tick the proposed
+  edits and get the same PDF back with them applied in place — no model call,
+  old glyphs removed and the result re-read and verified
+  (`backend/app/services/claim_patch.py`, `corrected_claims`). Scanned claims
+  get the edits list only.
 - **Database** — PostgreSQL (AWS RDS). All money stored as integer cents.
   NCCI reference tables (`ncci_ptp_edits`, `ncci_mue`, `ncci_loads` — no PHI,
   no tenant column) are refreshed monthly by the `load-ncci` workflow.

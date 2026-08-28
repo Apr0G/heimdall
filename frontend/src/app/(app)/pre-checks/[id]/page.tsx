@@ -3,7 +3,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ChevronDownIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  DownloadIcon,
+  ScanLineIcon,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { RiskBadge, StatusBadge } from "@/components/case-badges";
@@ -22,19 +27,34 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { carcMeaning } from "@/lib/carc-codes";
 import {
   type CaseDetail,
+  type CorrectedClaimDetail,
+  createCorrectedClaim,
   fetchCase,
   fetchCaseStatus,
+  fetchCorrectedClaimDownloadUrl,
   type ProposedEdit,
   retryCase,
   type RiskFinding,
 } from "@/lib/cases";
 import { pipelineErrorMessage, toastError } from "@/lib/errors";
 import { formatCents, formatDate, humanize } from "@/lib/format";
-import { attachEditsToFindings } from "@/lib/precheck-findings";
+import {
+  attachEditsToFindings,
+  buildSelections,
+  choiceIsComplete,
+  defaultChoice,
+  type EditChoice,
+  isClaimEdit,
+  modifierOptions,
+  skipReasonText,
+} from "@/lib/precheck-findings";
 
 const SEVERITY_ORDER = ["high", "medium", "low", "info"] as const;
 
@@ -151,7 +171,10 @@ export default function PreCheckDetailPage() {
         <>
           <HeaderCard c={data} />
           <RiskSummaryCard c={data} />
-          <FindingsCard c={data} />
+          <FindingsCard c={data} onCorrected={invalidate} />
+          {data.corrected_claim && (
+            <CorrectedClaimCard c={data} corrected={data.corrected_claim} />
+          )}
           <DocumentsCard documents={data.documents} />
           <ReportFooter c={data} />
         </>
@@ -243,22 +266,86 @@ const EDIT_GLYPH: Record<string, { glyph: string; token: string }> = {
   documentation: { glyph: "✎", token: "--info" },
 };
 
-function FindingsCard({ c }: { c: CaseDetail }) {
+function FindingsCard({
+  c,
+  onCorrected,
+}: {
+  c: CaseDetail;
+  onCorrected: () => void;
+}) {
   const report = c.risk_report;
   // `expanded` is the user's explicit choice; null = per-row default (closed).
   const [expanded, setExpanded] = useState<boolean | null>(null);
+  // Edit index -> the doctor's choice for it. Only claim-kind edits get here.
+  const [chosen, setChosen] = useState<Map<number, EditChoice>>(new Map());
+
+  const apply = useMutation({
+    mutationFn: (edits: ProposedEdit[]) =>
+      createCorrectedClaim(c.id, buildSelections(edits, chosen)),
+    onSuccess: () => {
+      setChosen(new Map());
+      onCorrected();
+    },
+    onError: (e) => toastError(e, "Couldn't create the corrected claim."),
+  });
+
   if (!report || report.findings.length === 0) return null;
 
-  const edits = attachEditsToFindings(
-    report.findings,
-    report.proposed_edits ?? [],
+  const edits = report.proposed_edits ?? [];
+  const editByFinding = attachEditsToFindings(report.findings, edits);
+  // Finding index -> index of its edit in proposed_edits (what the API takes).
+  const editIndexByFinding = new Map<number, number>();
+  for (const [findingIndex, edit] of editByFinding) {
+    editIndexByFinding.set(findingIndex, edits.indexOf(edit));
+  }
+  const selectable = new Set(
+    Array.from(editIndexByFinding.values()).filter((i) =>
+      isClaimEdit(edits[i]),
+    ),
   );
+  const editable = Boolean(c.claim_editable) && selectable.size > 0;
+  const allChosen = selectable.size > 0 && chosen.size === selectable.size;
+  const complete = Array.from(chosen.entries()).every(([i, choice]) =>
+    choiceIsComplete(edits[i], choice),
+  );
+
   const groups = SEVERITY_ORDER.map((severity) => ({
     severity,
     findings: report.findings
       .map((f, index) => ({ f, index }))
       .filter(({ f }) => f.severity === severity),
   })).filter((g) => g.findings.length > 0);
+
+  function toggle(editIndex: number, on: boolean) {
+    setChosen((prev) => {
+      const next = new Map(prev);
+      if (on) {
+        next.set(
+          editIndex,
+          prev.get(editIndex) ?? defaultChoice(edits[editIndex]),
+        );
+      } else {
+        next.delete(editIndex);
+      }
+      return next;
+    });
+  }
+
+  function choose(editIndex: number, choice: EditChoice) {
+    setChosen((prev) => new Map(prev).set(editIndex, choice));
+  }
+
+  function selectAll(on: boolean) {
+    setChosen((prev) => {
+      const next = new Map<number, EditChoice>();
+      if (on) {
+        for (const i of selectable) {
+          next.set(i, prev.get(i) ?? defaultChoice(edits[i]));
+        }
+      }
+      return next;
+    });
+  }
 
   return (
     <Card>
@@ -282,6 +369,12 @@ function FindingsCard({ c }: { c: CaseDetail }) {
         </CardAction>
       </CardHeader>
       <CardContent className="space-y-5">
+        {editable && (
+          <p className="text-sm text-muted-foreground">
+            Tick the changes you want made to the claim, then create a corrected
+            PDF. Findings without a checkbox are documentation work or notes.
+          </p>
+        )}
         {groups.map((group) => (
           <div key={group.severity}>
             <div
@@ -293,24 +386,95 @@ function FindingsCard({ c }: { c: CaseDetail }) {
               {SEVERITY_META[group.severity].label} ({group.findings.length})
             </div>
             <div className="space-y-2">
-              {group.findings.map(({ f, index }) => (
-                <Finding
-                  // Keyed on the toggle so a native <details> re-mounts and
-                  // picks up the new default; a user can still open/close
-                  // rows individually afterwards.
-                  key={`${f.check_id}-${index}-${expanded}`}
-                  f={f}
-                  edit={edits.get(index)}
-                  defaultOpen={expanded ?? false}
-                />
-              ))}
+              {group.findings.map(({ f, index }) => {
+                const editIndex = editIndexByFinding.get(index);
+                const edit =
+                  editIndex === undefined ? undefined : edits[editIndex];
+                const canSelect =
+                  editable &&
+                  editIndex !== undefined &&
+                  selectable.has(editIndex);
+                return (
+                  <Finding
+                    // Keyed on the toggle so a native <details> re-mounts and
+                    // picks up the new default; a user can still open/close
+                    // rows individually afterwards.
+                    key={`${f.check_id}-${index}-${expanded}`}
+                    f={f}
+                    edit={edit}
+                    defaultOpen={expanded ?? false}
+                    selectable={canSelect}
+                    choice={
+                      editIndex === undefined
+                        ? undefined
+                        : chosen.get(editIndex)
+                    }
+                    onToggle={
+                      canSelect
+                        ? (on) => toggle(editIndex as number, on)
+                        : undefined
+                    }
+                    onChoose={
+                      canSelect
+                        ? (choice) => choose(editIndex as number, choice)
+                        : undefined
+                    }
+                  />
+                );
+              })}
             </div>
           </div>
         ))}
-        <p className="border-t border-border pt-4 text-xs text-muted-foreground">
+
+        {editable ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+            <span className="text-sm text-muted-foreground">
+              {chosen.size === 0
+                ? "No changes selected"
+                : `${chosen.size} of ${selectable.size} change${
+                    selectable.size === 1 ? "" : "s"
+                  } selected`}
+            </span>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => selectAll(!allChosen)}
+              >
+                {allChosen ? "Clear" : "Select all"}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={chosen.size === 0 || !complete || apply.isPending}
+                onClick={() => apply.mutate(edits)}
+              >
+                {apply.isPending
+                  ? "Creating…"
+                  : `Create corrected PDF${
+                      chosen.size ? ` (${chosen.size})` : ""
+                    }`}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          c.claim_editable === false &&
+          selectable.size > 0 && (
+            <div className="flex items-start gap-2.5 rounded-md bg-muted p-3 text-xs leading-relaxed text-muted-foreground">
+              <ScanLineIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+              <span>
+                This claim was uploaded as a scan, so Heimdall can&rsquo;t edit
+                it for you. Apply these changes in your billing system — or
+                re-run the pre-check with the claim exported from your billing
+                software as a PDF to get a corrected copy back.
+              </span>
+            </div>
+          )
+        )}
+        <p className="text-xs text-muted-foreground">
           Open a finding to see what the payer would object to and how to fix
-          it. Apply what fits in your billing system — you decide what&rsquo;s
-          clinically right.
+          it. Apply what fits — you decide what&rsquo;s clinically right.
         </p>
       </CardContent>
     </Card>
@@ -321,110 +485,148 @@ function Finding({
   f,
   edit,
   defaultOpen,
+  selectable,
+  choice,
+  onToggle,
+  onChoose,
 }: {
   f: RiskFinding;
   edit: ProposedEdit | undefined;
   defaultOpen: boolean;
+  selectable: boolean;
+  choice: EditChoice | undefined;
+  onToggle?: (on: boolean) => void;
+  onChoose?: (choice: EditChoice) => void;
 }) {
   const token = SEVERITY_META[f.severity]?.token ?? "--neutral";
   const hasDetail = Boolean(f.explanation || f.suggested_fix || edit);
   const muted = f.severity === "info";
+  const checked = Boolean(choice);
   return (
-    <details
-      className={`group overflow-hidden rounded-md border border-border bg-card ${
-        muted ? "opacity-80 open:opacity-100" : ""
-      }`}
-      style={{ borderLeft: `3px solid var(${token})` }}
-      open={hasDetail && defaultOpen}
-    >
-      <summary
-        className={`flex items-start gap-3 px-3.5 py-3 marker:content-none [&::-webkit-details-marker]:hidden ${
-          hasDetail
-            ? "cursor-pointer select-none transition-colors hover:bg-muted/60 group-open:bg-muted/40"
-            : "pointer-events-none"
-        }`}
-      >
-        <div className="min-w-0 flex-1">
-          <div className="text-sm leading-snug font-semibold">{f.title}</div>
-          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-            <span>
-              {f.source === "ncci"
-                ? "CMS NCCI edit tables"
-                : "AI documentation review"}
-            </span>
-            {f.predicted_carc && (
-              <>
-                <span aria-hidden>·</span>
-                <span>
-                  Would deny as{" "}
-                  <Badge
-                    variant="outline"
-                    className="font-mono"
-                    title={carcMeaning(f.predicted_carc)}
-                  >
-                    {f.predicted_carc}
-                  </Badge>
-                </span>
-              </>
-            )}
-          </div>
-        </div>
-        {hasDetail && (
-          <ChevronDownIcon
-            aria-hidden
-            className="mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180"
+    <div className="flex items-start gap-2.5">
+      {selectable && (
+        // Outside the <details> so a click here never toggles the row.
+        <span className="flex h-11 shrink-0 items-center">
+          <Checkbox
+            aria-label={`Include this change: ${f.title}`}
+            checked={checked}
+            onCheckedChange={(on) => onToggle?.(Boolean(on))}
           />
-        )}
-      </summary>
-      {hasDetail && (
-        <div className="grid gap-4 border-t border-border px-3.5 py-4 md:grid-cols-2">
-          <section>
-            <h4 className="mb-1.5 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
-              What&rsquo;s wrong
-            </h4>
-            {f.explanation ? (
-              <p className="text-sm leading-relaxed">{f.explanation}</p>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                No further detail for this flag.
-              </p>
-            )}
-            {f.predicted_carc && (
-              <p className="mt-2 text-xs text-muted-foreground">
-                <span className="font-mono">{f.predicted_carc}</span> —{" "}
-                {carcMeaning(f.predicted_carc)}
-              </p>
-            )}
-          </section>
-          <section
-            className="rounded-md p-3"
-            style={{
-              background: `color-mix(in oklab, var(${token}) 7%, var(--card))`,
-              border: `1px solid color-mix(in oklab, var(${token}) 25%, var(--border))`,
-            }}
-          >
-            <h4
-              className="mb-1.5 text-[11px] font-semibold tracking-wide uppercase"
-              style={{ color: `var(${token})` }}
-            >
-              How to fix it
-            </h4>
-            {edit && <EditChip edit={edit} />}
-            {f.suggested_fix ? (
-              <p className={`text-sm leading-relaxed ${edit ? "mt-2.5" : ""}`}>
-                {f.suggested_fix}
-              </p>
-            ) : (
-              !edit && (
-                <p className="text-sm text-muted-foreground">
-                  Nothing to change — this is for your awareness.
-                </p>
-              )
-            )}
-          </section>
-        </div>
+        </span>
       )}
-    </details>
+      <details
+        className={`group min-w-0 flex-1 overflow-hidden rounded-md border bg-card ${
+          muted ? "opacity-80 open:opacity-100" : ""
+        } ${checked ? "border-primary/40" : "border-border"}`}
+        style={{ borderLeft: `3px solid var(${token})` }}
+        open={hasDetail && defaultOpen}
+      >
+        <summary
+          className={`flex items-start gap-3 px-3.5 py-3 marker:content-none [&::-webkit-details-marker]:hidden ${
+            hasDetail
+              ? "cursor-pointer select-none transition-colors hover:bg-muted/60 group-open:bg-muted/40"
+              : "pointer-events-none"
+          }`}
+        >
+          <div className="min-w-0 flex-1">
+            <div className="text-sm leading-snug font-semibold">{f.title}</div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+              <span>
+                {f.source === "ncci"
+                  ? "CMS NCCI edit tables"
+                  : "AI documentation review"}
+              </span>
+              {f.predicted_carc && (
+                <>
+                  <span aria-hidden>·</span>
+                  <span>
+                    Would deny as{" "}
+                    <Badge
+                      variant="outline"
+                      className="font-mono"
+                      title={carcMeaning(f.predicted_carc)}
+                    >
+                      {f.predicted_carc}
+                    </Badge>
+                  </span>
+                </>
+              )}
+              {checked && choice && edit && (
+                <>
+                  <span aria-hidden>·</span>
+                  <span className="font-medium text-foreground">
+                    {choiceSummary(edit, choice)}
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
+          {hasDetail && (
+            <ChevronDownIcon
+              aria-hidden
+              className="mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180"
+            />
+          )}
+        </summary>
+        {hasDetail && (
+          <div className="grid gap-4 border-t border-border px-3.5 py-4 md:grid-cols-2">
+            <section>
+              <h4 className="mb-1.5 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+                What&rsquo;s wrong
+              </h4>
+              {f.explanation ? (
+                <p className="text-sm leading-relaxed">{f.explanation}</p>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  No further detail for this flag.
+                </p>
+              )}
+              {f.predicted_carc && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  <span className="font-mono">{f.predicted_carc}</span> —{" "}
+                  {carcMeaning(f.predicted_carc)}
+                </p>
+              )}
+            </section>
+            <section
+              className="rounded-md p-3"
+              style={{
+                background: `color-mix(in oklab, var(${token}) 7%, var(--card))`,
+                border: `1px solid color-mix(in oklab, var(${token}) 25%, var(--border))`,
+              }}
+            >
+              <h4
+                className="mb-1.5 text-[11px] font-semibold tracking-wide uppercase"
+                style={{ color: `var(${token})` }}
+              >
+                How to fix it
+              </h4>
+              {edit && <EditChip edit={edit} />}
+              {f.suggested_fix ? (
+                <p
+                  className={`text-sm leading-relaxed ${edit ? "mt-2.5" : ""}`}
+                >
+                  {f.suggested_fix}
+                </p>
+              ) : (
+                !edit && (
+                  <p className="text-sm text-muted-foreground">
+                    Nothing to change — this is for your awareness.
+                  </p>
+                )
+              )}
+              {selectable && edit && checked && choice && onChoose && (
+                <ChoiceControls
+                  edit={edit}
+                  choice={choice}
+                  onChoose={onChoose}
+                />
+              )}
+            </section>
+          </div>
+        )}
+      </details>
+    </div>
   );
 }
 
@@ -452,6 +654,189 @@ function EditChip({ edit }: { edit: ProposedEdit }) {
       </span>
     </div>
   );
+}
+
+function choiceSummary(edit: ProposedEdit, choice: EditChoice): string {
+  if (choice.remove || edit.kind === "remove_line") {
+    return `Will remove ${edit.target}`;
+  }
+  if (edit.kind === "add_modifier") {
+    return `Will add modifier ${choice.value || "…"}`;
+  }
+  if (edit.kind === "change_units") {
+    return `Will set units to ${choice.value || "…"}`;
+  }
+  return `Will change ${edit.target} to ${choice.value || "…"}`;
+}
+
+// What exactly gets written, when the doctor has a say: which modifier, how
+// many units, which code — or the conservative alternative of dropping the line.
+function ChoiceControls({
+  edit,
+  choice,
+  onChoose,
+}: {
+  edit: ProposedEdit;
+  choice: EditChoice;
+  onChoose: (choice: EditChoice) => void;
+}) {
+  if (edit.kind === "remove_line") return null;
+  const label =
+    edit.kind === "add_modifier"
+      ? "Modifier to add"
+      : edit.kind === "change_units"
+        ? "New unit count"
+        : "New code";
+  return (
+    <div className="mt-3 space-y-2 border-t border-border/60 pt-3">
+      <label className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="w-28 text-muted-foreground">{label}</span>
+        {edit.kind === "add_modifier" ? (
+          <NativeSelect
+            className="h-7 w-24 text-xs"
+            value={choice.value}
+            disabled={choice.remove}
+            onChange={(e) => onChoose({ ...choice, value: e.target.value })}
+          >
+            {modifierOptions(edit).map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </NativeSelect>
+        ) : (
+          <Input
+            className="h-7 w-24 font-mono text-xs"
+            inputMode={edit.kind === "change_units" ? "numeric" : "text"}
+            maxLength={edit.kind === "change_units" ? 3 : 5}
+            value={choice.value}
+            disabled={choice.remove}
+            aria-invalid={!choice.remove && !choiceIsComplete(edit, choice)}
+            onChange={(e) => onChoose({ ...choice, value: e.target.value })}
+          />
+        )}
+      </label>
+      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Checkbox
+          checked={choice.remove}
+          onCheckedChange={(on) => onChoose({ ...choice, remove: Boolean(on) })}
+        />
+        Remove the {edit.target} line instead
+      </label>
+    </div>
+  );
+}
+
+function CorrectedClaimCard({
+  c,
+  corrected,
+}: {
+  c: CaseDetail;
+  corrected: CorrectedClaimDetail;
+}) {
+  const [opening, setOpening] = useState(false);
+  const applied = corrected.results.filter((r) => r.applied);
+  const skipped = corrected.results.filter((r) => !r.applied);
+
+  async function download() {
+    setOpening(true);
+    try {
+      const url = await fetchCorrectedClaimDownloadUrl(c.id);
+      window.open(url, "_blank", "noopener");
+    } catch (e) {
+      toastError(e, "Couldn't open the corrected claim.");
+    } finally {
+      setOpening(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex flex-wrap items-center gap-2">
+          Corrected claim
+          <span className="text-xs font-normal text-muted-foreground">
+            v{corrected.version} ·{" "}
+            {formatDate(corrected.created_at.slice(0, 10))}
+          </span>
+        </CardTitle>
+        {corrected.downloadable && (
+          <CardAction>
+            <Button size="sm" onClick={download} disabled={opening}>
+              <DownloadIcon data-icon="inline-start" />
+              {opening ? "Opening…" : "Download PDF"}
+            </Button>
+          </CardAction>
+        )}
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {!corrected.downloadable && (
+          <p className="text-sm">
+            None of the selected changes could be applied to this PDF, so there
+            is nothing to download. Apply them in your billing system.
+          </p>
+        )}
+        {applied.length > 0 && (
+          <ul className="space-y-1.5 text-sm">
+            {applied.map((r) => (
+              <li key={r.index} className="flex items-start gap-2">
+                <CheckIcon
+                  aria-hidden
+                  className="mt-0.5 size-4 shrink-0"
+                  style={{ color: "var(--ok)" }}
+                />
+                <span>{resultText(r)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {skipped.length > 0 && (
+          <ul className="space-y-1.5 text-sm text-muted-foreground">
+            {skipped.map((r) => (
+              <li key={r.index} className="flex items-start gap-2">
+                <span aria-hidden className="mt-0.5 w-4 shrink-0 text-center">
+                  –
+                </span>
+                <span>
+                  {resultText(r)} — {skipReasonText(r.reason)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {corrected.total_updated === false && (
+          <p
+            className="rounded-md bg-muted p-2.5 text-xs leading-relaxed text-muted-foreground"
+            style={{ borderLeft: "2px solid var(--warn)" }}
+          >
+            A line was removed but the total charge (Box 28) couldn&rsquo;t be
+            located on this form — update it by hand.
+          </p>
+        )}
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          For review — check every changed cell against the note, then re-key
+          the claim in your billing system. This PDF is not for submission to
+          the payer, and a corrected claim is not a guarantee of payment.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function resultText(r: CorrectedClaimDetail["results"][number]): string {
+  const code = r.target ?? "line";
+  switch (r.kind) {
+    case "remove_line":
+      return `Removed the ${code} line`;
+    case "add_modifier":
+      return `Added modifier ${r.value} to ${code}`;
+    case "change_units":
+      return `Set ${code} units to ${r.value}`;
+    case "change_code":
+      return `Changed ${code} to ${r.value}`;
+    default:
+      return `${humanize(r.kind)} ${code}`;
+  }
 }
 
 function ReportFooter({ c }: { c: CaseDetail }) {

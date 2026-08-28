@@ -6,6 +6,7 @@ but fail loudly on unit errors (floats for money) and drop rather than trust
 anything outside the known vocabulary (check ids, severities).
 """
 
+import re
 from datetime import date
 from typing import Literal
 
@@ -190,6 +191,24 @@ class RiskFinding(BaseModel):
         return _clip(value, 500)
 
 
+# The value an edit writes onto the claim, by kind. Anything else is dropped to
+# None (the edit survives as prose; only the one-click apply loses it), and the
+# same patterns gate client-chosen values server-side in services/claim_patch.py.
+_EDIT_VALUE_RE = {
+    "add_modifier": re.compile(r"^[A-Z0-9]{2}$"),
+    "change_units": re.compile(r"^[1-9]\d{0,2}$"),
+    "change_code": re.compile(r"^(?:\d{5}|\d{4}[FTU]|[A-Z]\d{4})$"),
+}
+
+
+def normalize_edit_value(kind: str, value: object) -> str | None:
+    pattern = _EDIT_VALUE_RE.get(kind)
+    if pattern is None or value is None:
+        return None
+    text = str(value).strip().upper()
+    return text if pattern.match(text) else None
+
+
 class ProposedEdit(BaseModel):
     """One concrete change, stated as a diff line — apply-in-the-PM brief.
     `source` is stamped server-side; the deterministic engine's edits merge
@@ -199,12 +218,20 @@ class ProposedEdit(BaseModel):
     # The code/line the edit applies to (e.g. "20610"); None for note tasks.
     target: str | None = Field(default=None, max_length=16)
     instruction: str = Field(min_length=1)
+    # The new modifier / unit count / code, so the edit can be applied to the
+    # PDF without re-parsing the instruction. None = the biller decides.
+    value: str | None = None
     source: str = "model"
 
     @field_validator("target", mode="before")
     @classmethod
     def _clip_target(cls, value: object) -> str | None:
         return _clip(value, 16)
+
+    @model_validator(mode="after")
+    def _normalize_value(self) -> "ProposedEdit":
+        object.__setattr__(self, "value", normalize_edit_value(self.kind, self.value))
+        return self
 
     @field_validator("instruction", mode="before")
     @classmethod

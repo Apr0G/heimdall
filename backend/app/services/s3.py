@@ -53,6 +53,12 @@ def case_document_key(practice_id: uuid.UUID, case_id: uuid.UUID, doc_type: str)
     return f"practices/{practice_id}/cases/{case_id}/{doc_type}/{uuid.uuid4()}.pdf"
 
 
+def corrected_claim_key(practice_id: uuid.UUID, case_id: uuid.UUID, version: int) -> str:
+    """Under the case's own prefix so practice disposal, the S3 purge, and the
+    lifecycle rule all cover it like a source document."""
+    return f"practices/{practice_id}/cases/{case_id}/corrected-claim/v{version}-{uuid.uuid4()}.pdf"
+
+
 def presigned_put_url(key: str, content_type: str = "application/pdf", expires: int = 900) -> str:
     return _get_client().generate_presigned_url(
         "put_object",
@@ -122,6 +128,12 @@ def get_bytes(key: str) -> bytes:
                 raise
             time.sleep(1.5 * (attempt + 1))
     raise RuntimeError("unreachable")  # for type-checkers; the loop always returns or raises
+
+
+def put_bytes(key: str, data: bytes, content_type: str) -> None:
+    _get_client().put_object(
+        Bucket=settings.s3_bucket_name, Key=key, Body=data, ContentType=content_type
+    )
 
 
 def put_text(key: str, text: str) -> None:

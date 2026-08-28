@@ -142,7 +142,36 @@ export type ProposedEdit = {
   kind: string; // remove_line | add_modifier | change_units | change_code | documentation
   target: string | null;
   instruction: string;
+  // New modifier / units / code the edit writes; null when the biller chooses.
+  value: string | null;
   source: string; // "ncci" | "model"
+};
+
+export type CorrectedClaimEditResult = {
+  index: number;
+  kind: string;
+  target: string | null;
+  value: string | null;
+  applied: boolean;
+  reason: string | null;
+};
+
+export type CorrectedClaimDetail = {
+  id: string;
+  version: number;
+  results: CorrectedClaimEditResult[];
+  // null = no charge changed; false = a line was removed but the Box 28 total
+  // couldn't be located, so the user must fix it by hand.
+  total_updated: boolean | null;
+  downloadable: boolean;
+  created_at: string;
+  downloaded_at: string | null;
+};
+
+export type CorrectedClaimSelection = {
+  index: number;
+  value?: string | null;
+  remove?: boolean;
 };
 
 export type RiskReportDetail = {
@@ -180,6 +209,9 @@ export type CaseDetail = {
   outcome: OutcomeDetail | null;
   // Pre-check cases only; always null for appeals.
   risk_report?: RiskReportDetail | null;
+  // Pre-check only: the draft claim has a text layer the patcher can edit.
+  claim_editable?: boolean;
+  corrected_claim?: CorrectedClaimDetail | null;
 };
 
 export type OutcomePayload = {
@@ -214,6 +246,26 @@ export async function retryCase(
 ): Promise<{ id: string; status: string }> {
   const res = await api.post(`/api/cases/${id}/retry`);
   return res.data;
+}
+
+export async function createCorrectedClaim(
+  id: string,
+  selections: CorrectedClaimSelection[],
+): Promise<CorrectedClaimDetail> {
+  const res = await api.post<CorrectedClaimDetail>(
+    `/api/cases/${id}/corrected-claim`,
+    { selections },
+  );
+  return res.data;
+}
+
+export async function fetchCorrectedClaimDownloadUrl(
+  id: string,
+): Promise<string> {
+  const res = await api.get<{ url: string }>(
+    `/api/cases/${id}/corrected-claim/download-url`,
+  );
+  return res.data.url;
 }
 
 export async function fetchDocumentDownloadUrl(

@@ -3,7 +3,7 @@ import json
 from app.prompts.text import CLINICAL_MAX_CHARS, prepare, prepare_json_text
 
 # Bump VERSION on ANY change to the prompt text or schema. model_runs records it.
-VERSION = "pc_review_v2"
+VERSION = "pc_review_v3"
 
 SYSTEM = """You are a pre-submission claims documentation auditor. Given the \
 structured data extracted from a DRAFT claim (not yet submitted), the findings \
@@ -41,6 +41,10 @@ note task.
   - instruction: ONE short imperative line, diff-style — e.g. \
 "Change 99214 to 99213 (note supports low MDM)" or \
 "Document the separate E/M assessment, or remove modifier 25".
+  - value: the exact new value the edit writes on the claim — the modifier \
+(e.g. "25", "XS") for add_modifier, the new unit count (e.g. "2") for \
+change_units, the new CPT/HCPCS (e.g. "99213") for change_code; null for \
+remove_line, documentation, or when the biller must choose.
   - Derive edits ONLY from your own findings. Do NOT emit edits for the \
 deterministic NCCI findings you were given — those edits are generated \
 separately. One edit per change; no duplicates; [] if the claim needs nothing.

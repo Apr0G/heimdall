@@ -228,7 +228,7 @@ async def test_precheck_pipeline_end_to_end(sessions, tenant, monkeypatch):
         assert [r.purpose for r in runs] == ["extraction", "pre_check_review"]
         assert all(r.status == "success" for r in runs)
         assert runs[0].prompt_version == "pc_extract_v1"
-        assert runs[1].prompt_version == "pc_review_v2"
+        assert runs[1].prompt_version == "pc_review_v3"
 
 
 async def test_precheck_pipeline_no_billable_lines_errors(sessions, tenant, monkeypatch):
