@@ -224,6 +224,64 @@ describe("pre-check report page", () => {
     );
   });
 
+  it("explains why the button is disabled when a ticked change needs a value", async () => {
+    const d = detail();
+    // An AI re-level edit with no concrete new code: the doctor must type one.
+    d.risk_report!.findings.push({
+      check_id: "em_level_mdm",
+      severity: "medium",
+      title: "99214 documentation supports 99213",
+      predicted_carc: "CO-150",
+      explanation: "MDM is low.",
+      suggested_fix: "Re-level the visit.",
+      source: "model",
+    });
+    d.risk_report!.proposed_edits!.push({
+      kind: "change_code",
+      target: "99214",
+      instruction: "Change 99214 to the level the note supports",
+      value: null,
+      source: "model",
+    });
+    cases.fetchCase.mockResolvedValue(d);
+    cases.createCorrectedClaim.mockResolvedValue({
+      id: "cc-1",
+      version: 1,
+      results: [],
+      total_updated: null,
+      downloadable: true,
+      created_at: "2026-08-28T10:00:00Z",
+      downloaded_at: null,
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText(/20610 will be denied/);
+
+    await user.click(screen.getByRole("button", { name: "Select all" }));
+    const create = screen.getByRole("button", { name: /Create corrected PDF/ });
+    expect(create).toBeDisabled();
+    expect(
+      screen.getByText(/Fill in the new value for 1 selected change/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Needs a value/)).toBeInTheDocument();
+
+    // The row opened itself; typing a valid code unblocks the button.
+    const input = screen
+      .getAllByRole("textbox")
+      .find((el) => (el as HTMLInputElement).value === "")!;
+    await user.type(input, "99213");
+    expect(screen.queryByText(/Needs a value/)).not.toBeInTheDocument();
+    expect(create).toBeEnabled();
+    await user.click(create);
+    await waitFor(() =>
+      expect(cases.createCorrectedClaim).toHaveBeenCalledWith("case-1", [
+        { index: 0, value: "59" },
+        { index: 1, value: "1" },
+        { index: 3, value: "99213" },
+      ]),
+    );
+  });
+
   it("shows the corrected claim with its outcome and a download", async () => {
     cases.fetchCase.mockResolvedValue(
       detail({

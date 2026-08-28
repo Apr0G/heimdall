@@ -305,9 +305,15 @@ function FindingsCard({
   );
   const editable = Boolean(c.claim_editable) && selectable.size > 0;
   const allChosen = selectable.size > 0 && chosen.size === selectable.size;
-  const complete = Array.from(chosen.entries()).every(([i, choice]) =>
-    choiceIsComplete(edits[i], choice),
+  // Ticked changes still missing a value (e.g. an AI "change the code" edit
+  // with no concrete new code). They block the button until filled in, so the
+  // rows open themselves and the footer says what's blocking.
+  const incomplete = new Set(
+    Array.from(chosen.entries())
+      .filter(([i, choice]) => !choiceIsComplete(edits[i], choice))
+      .map(([i]) => i),
   );
+  const complete = incomplete.size === 0;
 
   const groups = SEVERITY_ORDER.map((severity) => ({
     severity,
@@ -409,6 +415,9 @@ function FindingsCard({
                         ? undefined
                         : chosen.get(editIndex)
                     }
+                    needsValue={
+                      editIndex !== undefined && incomplete.has(editIndex)
+                    }
                     onToggle={
                       canSelect
                         ? (on) => toggle(editIndex as number, on)
@@ -434,6 +443,12 @@ function FindingsCard({
                 : `${chosen.size} of ${selectable.size} change${
                     selectable.size === 1 ? "" : "s"
                   } selected`}
+              {!complete && (
+                <span className="block" style={{ color: "var(--warn)" }}>
+                  Fill in the new value for {incomplete.size} selected change
+                  {incomplete.size === 1 ? "" : "s"} above to continue.
+                </span>
+              )}
             </span>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -487,6 +502,7 @@ function Finding({
   defaultOpen,
   selectable,
   choice,
+  needsValue,
   onToggle,
   onChoose,
 }: {
@@ -495,6 +511,7 @@ function Finding({
   defaultOpen: boolean;
   selectable: boolean;
   choice: EditChoice | undefined;
+  needsValue: boolean;
   onToggle?: (on: boolean) => void;
   onChoose?: (choice: EditChoice) => void;
 }) {
@@ -519,7 +536,9 @@ function Finding({
           muted ? "opacity-80 open:opacity-100" : ""
         } ${checked ? "border-primary/40" : "border-border"}`}
         style={{ borderLeft: `3px solid var(${token})` }}
-        open={hasDetail && defaultOpen}
+        // A ticked change that still needs a value opens itself so the input
+        // is in view; the user can close it again by hand.
+        open={hasDetail && (defaultOpen || needsValue)}
       >
         <summary
           className={`flex items-start gap-3 px-3.5 py-3 marker:content-none [&::-webkit-details-marker]:hidden ${
@@ -554,9 +573,18 @@ function Finding({
               {checked && choice && edit && (
                 <>
                   <span aria-hidden>·</span>
-                  <span className="font-medium text-foreground">
-                    {choiceSummary(edit, choice)}
-                  </span>
+                  {needsValue ? (
+                    <span
+                      className="font-medium"
+                      style={{ color: "var(--warn)" }}
+                    >
+                      Needs a value — enter it below
+                    </span>
+                  ) : (
+                    <span className="font-medium text-foreground">
+                      {choiceSummary(edit, choice)}
+                    </span>
+                  )}
                 </>
               )}
             </div>
