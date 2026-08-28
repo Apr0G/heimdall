@@ -155,17 +155,25 @@ async def test_apply_selected_edits_produces_a_downloadable_corrected_claim(sess
 
         resp = await client.post(
             f"/api/cases/{case_id}/corrected-claim",
-            json={"selections": [{"index": 0, "value": "XS"}, {"index": 1}]},
+            json={"selections": [{"index": 0, "value": "XS"}, {"index": 1, "charge": "scale"}]},
         )
         assert resp.status_code == 201, resp.text
         body = resp.json()
         assert body["version"] == 1
         assert body["downloadable"] is True
-        assert body["total_updated"] is None
+        # J3301: 2 units at $45.00 → scaled to 1 unit = $22.50, total re-summed.
+        assert body["total_updated"] is True
         assert [(r["index"], r["value"], r["applied"]) for r in body["results"]] == [
             (0, "XS", True),
             (1, "1", True),
         ]
+        assert (
+            body["results"][1]["charge_before_cents"],
+            body["results"][1]["charge_after_cents"],
+        ) == (
+            4500,
+            2250,
+        )
 
         # The stored PDF is the doctor's claim with exactly those two changes.
         assert len(fake_s3) == 1

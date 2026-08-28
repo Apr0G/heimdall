@@ -313,7 +313,7 @@ def test_shaded_half_row_label_is_not_data():
 def test_change_units_replaces_only_that_cell(style):
     pdf = build_claim(LINES, style=style)
     before = words_at_row(pdf, 1)
-    result = patch_claim(pdf, [ClaimEdit("change_units", "20610", "1")])
+    result = patch_claim(pdf, [ClaimEdit("change_units", "20610", "1", charge="keep")])
     assert result.results[0].applied
     after = words_at_row(result.pdf, 1)
     assert before.index("3") == after.index("1")
@@ -617,7 +617,11 @@ def test_character_and_word_spacing_are_reproduced_exactly(spacing):
     # to include them or the rest of the row shifts (caught by verification).
     pdf = build_claim(LINES, style="row", spacing=spacing)
     result = patch_claim(
-        pdf, [ClaimEdit("change_units", "20610", "1"), ClaimEdit("change_code", "J3301", "J3302")]
+        pdf,
+        [
+            ClaimEdit("change_units", "20610", "1", charge="keep"),
+            ClaimEdit("change_code", "J3301", "J3302"),
+        ],
     )
     assert all(r.applied for r in result.results)
     assert words_at_row(result.pdf, 1) == [("1" if w == "3" else w) for w in words_at_row(pdf, 1)]
@@ -650,22 +654,23 @@ def test_dollar_sign_on_split_charges_and_total():
 
 
 def test_blank_units_cell_means_one_unit_and_can_still_be_changed():
-    # TMHP's samples leave 24G empty on every line.
+    # TMHP's samples leave 24G empty on every line (one unit implied).
     blank = [dict(ln, units=None) for ln in LINES]
     pdf = build_claim(blank)
     lines = service_lines(pdf)
     assert [ln.units for ln in lines] == [None, None, None]
-    # No line on the page shows where the units column is: refuse, don't guess.
-    result = patch_claim(pdf, [ClaimEdit("change_units", "20610", "2")])
-    assert result.results[0].reason == "no_units_cell"
-    # With one sibling line carrying a count, the column is known and the
-    # new value lands there.
+    # No line shows where the column is: the form keeps a fixed gap between
+    # the charge box and the units box, so the count lands just right of 24F.
+    result = patch_claim(pdf, [ClaimEdit("change_units", "20610", "2", charge="keep")])
+    assert result.results[0].applied
+    line = service_lines(result.pdf)[1]
+    assert line.units is not None and line.units.text == "2"
+    assert line.charge.words[-1].x1 < line.units.x0 < line.charge.words[-1].x1 + 3 * 9
+    # With a sibling line carrying a count, its column wins.
     mixed = [dict(LINES[0], units=None), dict(LINES[1], units=None), LINES[2]]
     pdf = build_claim(mixed)
-    result = patch_claim(pdf, [ClaimEdit("change_units", "20610", "2")])
-    assert result.results[0].applied
+    result = patch_claim(pdf, [ClaimEdit("change_units", "20610", "2", charge="keep")])
     lines = service_lines(result.pdf)
-    assert lines[1].units is not None and lines[1].units.text == "2"
     assert abs(lines[1].units.x0 - lines[2].units.x0) < 1
 
 
@@ -705,3 +710,63 @@ def test_drawn_values_match_the_colour_of_the_data_they_replace():
     with pdfplumber.open(io.BytesIO(result.pdf)) as doc:
         colours = {tuple(round(v, 2) for v in c["non_stroking_color"]) for c in doc.pages[0].chars}
     assert colours == {(0, 0.5, 0)}
+
+
+# --- 24F follows 24G ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("money", ["split", "single", "dollar"])
+def test_unit_cut_scales_the_charge_and_the_total_by_default(money):
+    # 20610: 3 units at $150.00 → $50.00 per unit → 1 unit = $50.00; total 315 → 215.
+    pdf = build_claim(LINES, money=money)
+    result = patch_claim(pdf, [ClaimEdit("change_units", "20610", "1")])
+    r = result.results[0]
+    assert (r.applied, r.charge_before_cents, r.charge_after_cents, r.note) == (
+        True,
+        15000,
+        5000,
+        None,
+    )
+    lines = service_lines(result.pdf)
+    assert (lines[1].units.text, lines[1].charge.cents) == ("1", 5000)
+    assert [ln.charge.cents for ln in lines] == [12000, 5000, 4500]
+    assert result.total_updated is True
+    texts = [w["text"] for w in words(result.pdf)]
+    expected_total = {"split": "215", "single": "215.00", "dollar": "$215.00"}[money]
+    assert expected_total in texts
+
+
+def test_keep_leaves_the_charge_and_the_total_alone():
+    pdf = build_claim(LINES)
+    result = patch_claim(pdf, [ClaimEdit("change_units", "20610", "1", charge="keep")])
+    r = result.results[0]
+    assert (r.charge_before_cents, r.charge_after_cents) == (None, None)
+    assert [ln.charge.cents for ln in service_lines(result.pdf)] == [12000, 15000, 4500]
+    assert result.total_updated is None
+
+
+def test_scaling_is_refused_when_the_per_unit_price_is_not_whole_cents():
+    # $100.00 over 3 units is $33.33… per unit: the charge wasn't built from
+    # these units, so leave it and say so rather than invent an amount.
+    pdf = build_claim([{"cpt": "20610", "cents": 10000, "units": 3}], money="single")
+    result = patch_claim(pdf, [ClaimEdit("change_units", "20610", "1")])
+    r = result.results[0]
+    assert (r.applied, r.note, r.charge_after_cents) == (True, "charge_not_scaled", None)
+    assert service_lines(result.pdf)[0].charge.cents == 10000
+    assert result.total_updated is None
+
+
+def test_scaling_applies_per_line_and_removal_and_scaling_share_one_total():
+    pdf = build_claim(MULTI, money="single")  # J2501 ×2 @ $22.00/5u, J3370 @ $10.95/10u ×2
+    result = patch_claim(
+        pdf, [ClaimEdit("change_units", "J2501", "2"), ClaimEdit("remove_line", "J3370")]
+    )
+    r = result.results[0]
+    assert (r.applied_lines, r.charge_before_cents, r.charge_after_cents) == (2, 4400, 1760)
+    lines = service_lines(result.pdf)
+    assert [(ln.cpt.text, ln.units.text, ln.charge.cents) for ln in lines] == [
+        ("J2501", "2", 880),
+        ("J2501", "2", 880),
+    ]
+    assert result.total_updated is True
+    assert "17.60" in [w["text"] for w in words(result.pdf)]

@@ -158,6 +158,9 @@ export type CorrectedClaimEditResult = {
   applied_lines?: number;
   // Advisory for an applied edit, e.g. check_dx_pointers after a Box 21 removal.
   note?: string | null;
+  // Scaled unit change: the line charge before and after, in cents.
+  charge_before_cents?: number | null;
+  charge_after_cents?: number | null;
 };
 
 export type CorrectedClaimDetail = {
@@ -176,6 +179,8 @@ export type CorrectedClaimSelection = {
   index: number;
   value?: string | null;
   remove?: boolean;
+  // Unit changes: "scale" the line charge with the units (default) or "keep" it.
+  charge?: "scale" | "keep";
 };
 
 export type RiskReportDetail = {

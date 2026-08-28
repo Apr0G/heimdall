@@ -276,7 +276,7 @@ describe("pre-check report page", () => {
     await waitFor(() =>
       expect(cases.createCorrectedClaim).toHaveBeenCalledWith("case-1", [
         { index: 0, value: "59" },
-        { index: 1, value: "1" },
+        { index: 1, value: "1", charge: "scale" },
         { index: 3, value: "99213" },
       ]),
     );
@@ -313,6 +313,8 @@ describe("pre-check report page", () => {
               applied: true,
               reason: null,
               applied_lines: 2,
+              charge_before_cents: 4400,
+              charge_after_cents: 1760,
             },
             {
               index: 3,
@@ -342,7 +344,9 @@ describe("pre-check report page", () => {
       screen.getByText(/Set J3301 units to 1 — No space in the box/),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Set J2501 units to 2 (2 lines)"),
+      screen.getByText(
+        "Set J2501 units to 2 (2 lines) · charge $44.00 → $17.60",
+      ),
     ).toBeInTheDocument();
     expect(screen.getByText("Removed diagnosis D50.9")).toBeInTheDocument();
     expect(

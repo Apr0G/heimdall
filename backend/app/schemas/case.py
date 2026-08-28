@@ -179,6 +179,10 @@ class CorrectedClaimSelection(BaseModel):
     # edit (an NCCI bundling edit reads "add a modifier if distinct — otherwise
     # remove the line", and only the doctor knows which).
     remove: bool = False
+    # Unit changes only: rewrite the line charge as price-per-unit × new units
+    # ("scale", how billing systems build 24F) or leave it ("keep", for a
+    # units typo). Box 28 is recomputed either way.
+    charge: Literal["scale", "keep"] = "scale"
 
 
 class CorrectedClaimRequest(BaseModel):
@@ -193,7 +197,9 @@ class CorrectedClaimEditResult(BaseModel):
     applied: bool
     reason: str | None  # claim_patch skip reason code
     applied_lines: int = 0  # a code can sit on several service lines
-    note: str | None = None  # advisory for an applied edit (check_dx_pointers)
+    note: str | None = None  # advisory: check_dx_pointers, charge_not_scaled
+    charge_before_cents: int | None = None  # scaled unit change: 24F before/after
+    charge_after_cents: int | None = None
 
 
 class CorrectedClaimDetail(BaseModel):

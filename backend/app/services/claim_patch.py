@@ -106,11 +106,18 @@ class ClaimPatchError(RuntimeError):
         super().__init__(code if detail is None else f"{code}: {detail}")
 
 
+CHARGE_CHOICES = ("scale", "keep")
+
+
 @dataclass(frozen=True)
 class ClaimEdit:
     kind: str
     target: str  # the CPT/HCPCS on the line the edit applies to
     value: str | None = None  # new modifier / units / code; unused for remove_line
+    # change_units only: "scale" rewrites 24F as price-per-unit × new units
+    # (how billing systems build the charge); "keep" leaves the charge when the
+    # units were a data-entry slip. Only the practice knows which — see the UI.
+    charge: str = "scale"
 
 
 @dataclass(frozen=True)
@@ -125,8 +132,12 @@ class EditResult:
     # A code can sit on several service lines (one per date); the edit applies
     # to each line it fits, and this says how many it reached.
     applied_lines: int = 0
-    # Advisory for an applied edit, e.g. check_dx_pointers after a Box 21 removal.
+    # Advisory for an applied edit: check_dx_pointers after a Box 21 removal,
+    # charge_not_scaled when the per-unit price didn't divide to the cent.
     note: str | None = None
+    # change_units with charge="scale": the line charge before and after (cents).
+    charge_before_cents: int | None = None
+    charge_after_cents: int | None = None
 
 
 @dataclass
@@ -170,6 +181,9 @@ class _PageText:
     # Per char (stream order, spaces included): glyph advance in thousandths
     # of text space — what a TJ adjustment needs to reproduce it exactly.
     advances: list[float]
+    # Per char: (text, x0, baseline) — what verification compares, so word
+    # grouping (which depends on gaps the extractor sees) plays no part.
+    chars: list[tuple[str, float, float]]
 
 
 @dataclass
@@ -251,9 +265,9 @@ def patch_claim(pdf_bytes: bytes, edits: Sequence[ClaimEdit]) -> PatchResult:
             results.append(_apply_to_dx(edit, dx_words[0], pages_words, ctx))
 
     total_updated: bool | None = None
-    if removed_lines:
+    if removed_lines or ctx.charges:
         total_updated = _update_total(
-            pages_words, lines, removed_lines, per_page, expected_removed, expected_added
+            pages_words, lines, removed_lines, ctx, per_page, expected_removed, expected_added
         )
 
     # A page whose every edit was skipped has an empty entry; don't rewrite it.
@@ -262,7 +276,7 @@ def patch_claim(pdf_bytes: bytes, edits: Sequence[ClaimEdit]) -> PatchResult:
         return PatchResult(pdf=pdf_bytes, results=results, total_updated=None, pages_changed=0)
 
     patched = _rewrite(pdf_bytes, pages, per_page)
-    _verify(patched, pages_words, expected_removed, expected_added)
+    _verify(patched, pages, per_page)
     return PatchResult(
         pdf=patched, results=results, total_updated=total_updated, pages_changed=len(per_page)
     )
@@ -275,10 +289,21 @@ class _ApplyContext:
     expected_added: list[tuple[int, str, float, float]]
     removed_lines: list[_ServiceLine]
     lines: list[_ServiceLine] = field(default_factory=list)
+    # Current charge per line (id(line) -> cents) after scaling, for Box 28.
+    charges: dict[int, int] = field(default_factory=dict)
 
-    def units_column_x(self, page: int) -> float | None:
+    def units_column_x(self, page: int, line: _ServiceLine) -> float:
+        """Where 24G starts: from a sibling line that prints a count, else at
+        the fixed distance the form keeps between the charge box and the
+        units box (a blank 24G on every line is the common case)."""
         xs = [ln.units.origin_x for ln in self.lines if ln.page == page and ln.units is not None]
-        return min(xs) if xs else None
+        if xs:
+            return min(xs)
+        last_charge = line.charge.words[-1]
+        return last_charge.x1 + 1.6 * last_charge.size
+
+    def current_cents(self, line: _ServiceLine) -> int:
+        return self.charges.get(id(line), line.charge.cents)
 
     def remove_word(self, word: _Word) -> None:
         self.page_edits(word.page).remove.update(word.chars)
@@ -342,15 +367,73 @@ def _apply_to_lines(edit: ClaimEdit, lines: list[_ServiceLine], ctx: _ApplyConte
 
     applied = 0
     reasons: list[str] = []
+    note: str | None = None
+    before_cents = after_cents = 0
     for line in candidates:
         reason = _apply_to_line(edit, value, line, ctx)
-        if reason is None:
-            applied += 1
-        else:
+        if reason is not None:
             reasons.append(reason)
+            continue
+        applied += 1
+        if edit.kind == "change_units" and edit.charge == "scale":
+            scaled = _scale_charge(line, value, ctx)
+            if scaled is None:
+                note = "charge_not_scaled"
+            else:
+                before_cents += ctx.current_cents(line)
+                after_cents += scaled
+                ctx.charges[id(line)] = scaled
     if applied == 0:
         return EditResult(edit, False, reasons[0] if reasons else "line_not_found")
-    return EditResult(edit, True, applied_lines=applied)
+    if edit.kind == "change_units" and edit.charge == "scale" and note is None:
+        return EditResult(
+            edit,
+            True,
+            applied_lines=applied,
+            charge_before_cents=before_cents,
+            charge_after_cents=after_cents,
+        )
+    return EditResult(edit, True, applied_lines=applied, note=note)
+
+
+def _scale_charge(line: _ServiceLine, new_units: str, ctx: _ApplyContext) -> int | None:
+    """Rewrite 24F as (charge ÷ old units) × new units. Only when the per-unit
+    price is a whole number of cents — otherwise the charge was not built from
+    these units and scaling would invent an amount. Returns the new cents."""
+    old_units = _units_value(line)
+    cents = ctx.current_cents(line)
+    if old_units <= 0 or old_units != int(old_units) or cents * int(new_units) % int(old_units):
+        return None
+    new_cents = cents * int(new_units) // int(old_units)
+    if new_cents == cents:
+        return cents
+    texts = _format_money(new_cents, like=line.charge)
+    dollars = line.charge.words[0]
+    x = dollars.x1 - _text_width(texts[0], dollars.size)  # money is right-aligned
+    left = [w for w in line.row_words if w.x1 <= dollars.x0 + 0.1]
+    if left and x < max(w.x1 for w in left) + 1:
+        return None
+    for word in line.charge.words:
+        ctx.remove_word(word)
+    for page, px, py, size, text, like in _money_overlays(line.charge, texts, x):
+        ctx.draw(page, px, py, size, text, like=like, line=line)
+    return new_cents
+
+
+def _money_overlays(
+    charge: _Charge, texts: list[str], dollars_x: float
+) -> list[tuple[int, float, float, float, str, _Word]]:
+    """Where to draw a rewritten amount. Split money ("13" "45") is one printed
+    string with a space glyph between the halves; the extractor splits words on
+    whitespace in stream order, so the replacement must carry a space too —
+    dollars right-aligned where they were, cents left-aligned where they were."""
+    dollars = charge.words[0]
+    out = [(dollars.page, dollars_x, dollars.origin_y, dollars.size, texts[0], dollars)]
+    if charge.split:
+        cents = charge.words[1]
+        out.append((dollars.page, dollars.x1, dollars.origin_y, dollars.size, " ", dollars))
+        out.append((cents.page, cents.origin_x, cents.origin_y, cents.size, texts[1], cents))
+    return out
 
 
 def _apply_to_line(
@@ -376,11 +459,8 @@ def _apply_to_line(
         return None
 
     if edit.kind == "change_units" and line.units is None:
-        # Blank 24G (one unit implied): write the new count where the units
-        # column is on this page, learned from a sibling line that has one.
-        column_x = ctx.units_column_x(line.page)
-        if column_x is None:
-            return "no_units_cell"
+        # Blank 24G (one unit implied): write the new count in the units column.
+        column_x = ctx.units_column_x(line.page, line)
         anchor = line.cpt
         after = [w for w in line.row_words if w.x0 > column_x]
         limit = after[0].x0 - 1 if after else column_x + _text_width(value, anchor.size)
@@ -510,7 +590,8 @@ def _load_pages(pdf_bytes: bytes) -> list[_PageText]:
                 advances = [
                     (c["x1"] - c["x0"]) / c["size"] * 1000 if c["size"] else 0.0 for c in page.chars
                 ]
-                pages.append(_PageText(words=words, advances=advances))
+                chars = [(c["text"], float(c["x0"]), float(c["matrix"][5])) for c in page.chars]
+                pages.append(_PageText(words=words, advances=advances, chars=chars))
     except ClaimPatchError:
         raise
     except Exception as exc:  # noqa: BLE001 — parser messages can quote document text
@@ -678,19 +759,22 @@ def _update_total(
     pages_words: list[list[_Word]],
     lines: list[_ServiceLine],
     removed: list[_ServiceLine],
+    ctx: _ApplyContext,
     per_page: dict[int, _PageEdits],
     expected_removed: list[_Word],
     expected_added: list[tuple[int, str, float, float]],
 ) -> bool:
-    """Recompute Box 28 after line removals. Only attempted on single-page
-    claims (multi-page claims carry per-page or cumulative totals — ambiguous),
-    and only when exactly one money token off the service rows equals the old
-    total; otherwise the caller tells the user to fix the total by hand."""
+    """Recompute Box 28 after removals or scaled charges. Only attempted on
+    single-page claims (multi-page claims carry per-page or cumulative totals —
+    ambiguous), and only when exactly one money token off the service rows
+    equals the old total; otherwise the caller tells the user to fix it."""
     if len(pages_words) != 1:
         return False
     page = 0
     old_total = sum(line.charge.cents for line in lines)
-    new_total = old_total - sum(line.charge.cents for line in removed)
+    new_total = sum(ctx.current_cents(line) for line in lines if line not in removed)
+    if new_total == old_total:
+        return True
     in_rows = {idx for line in lines for w in line.row_words for idx in w.chars}
     words = sorted(
         (w for w in pages_words[page] if w.upright and w.chars[0] not in in_rows),
@@ -706,24 +790,14 @@ def _update_total(
     total = candidates[0]
     new_text = _format_money(new_total, like=total)
     pe = per_page.setdefault(page, _PageEdits())
-    for old_word, text in zip(total.words, new_text, strict=True):
+    for old_word in total.words:
         pe.remove.update(old_word.chars)
         expected_removed.append(old_word)
-        # Money is right-aligned in its box: keep the right edge where it was.
-        width = _text_width(text, old_word.size)
-        x = old_word.x1 - width
-        pe.overlays.append(
-            _Overlay(
-                page,
-                x,
-                old_word.origin_y,
-                old_word.size,
-                text,
-                color=old_word.color,
-                italic=old_word.italic,
-            )
-        )
-        expected_added.append((page, text, x, old_word.origin_y))
+    dollars = total.words[0]
+    dollars_x = dollars.x1 - _text_width(new_text[0], dollars.size)
+    for _, px, py, size, text, like in _money_overlays(total, new_text, dollars_x):
+        pe.overlays.append(_Overlay(page, px, py, size, text, color=like.color, italic=like.italic))
+        expected_added.append((page, text, px, py))
     return True
 
 
@@ -1006,43 +1080,51 @@ def _ensure_overlay_font(page, writer: PdfWriter) -> None:
 # --- verification -----------------------------------------------------------
 
 
-def _verify(
-    patched: bytes,
-    original_pages: list[list[_Word]],
-    removed: list[_Word],
-    added: list[tuple[int, str, float, float]],
-) -> None:
-    """Every original word survives at its position except the removed ones;
-    every added word appears where we drew it; nothing else. Words are
-    compared by (page, text, x0, baseline) with a small tolerance — the
-    baseline, because that is what the overlay sets exactly; a glyph box top
-    depends on the font's ascent and Helvetica's differs from the original's."""
-    actual = [page.words for page in _load_pages(patched)]
-    removed_ids = {(w.page, id(w)) for w in removed}
-    expected: list[tuple[int, str, float, float]] = [
-        (w.page, w.text, w.x0, w.origin_y)
-        for page_words in original_pages
-        for w in page_words
-        if (w.page, id(w)) not in removed_ids
-    ]
-    expected.extend(added)
-    pool = [(w.page, w.text, w.x0, w.origin_y) for page_words in actual for w in page_words]
-
+def _verify(patched: bytes, original: list[_PageText], per_page: dict[int, _PageEdits]) -> None:
+    """Every original character survives at its position except the removed
+    ones; every character we drew appears where we put it; nothing else.
+    Compared per character by (page, text, x0, baseline) — the baseline
+    because that is what the overlay sets exactly, and characters rather than
+    words because word grouping depends on gaps the extractor happens to see."""
+    actual = _load_pages(patched)
+    if len(actual) != len(original):
+        raise ClaimPatchError("verification_failed", "page count")
     unmatched = 0
-    for page, text, x0, base in expected:
-        hit = None
-        for i, (p, t, ax, abase) in enumerate(pool):
-            if (
-                p == page
-                and t == text
-                and abs(ax - x0) <= _POSITION_TOLERANCE
-                and abs(abase - base) <= _POSITION_TOLERANCE
-            ):
-                hit = i
-                break
-        if hit is None:
-            unmatched += 1
-        else:
-            pool.pop(hit)
-    if unmatched or pool:
-        raise ClaimPatchError("verification_failed", f"missing={unmatched} unexpected={len(pool)}")
+    unexpected = 0
+    for page_index, page in enumerate(original):
+        pe = per_page.get(page_index)
+        removed = pe.remove if pe else set()
+        expected = [
+            (text, x0, base)
+            for idx, (text, x0, base) in enumerate(page.chars)
+            if idx not in removed and text.strip()
+        ]
+        for ov in pe.overlays if pe else []:
+            x = ov.x
+            for ch in ov.text:
+                if ch.strip():  # a drawn space is a separator, not a glyph to find
+                    expected.append((ch, x, ov.y))
+                x += _text_width(ch, ov.size)
+        pool = [(text, x0, base) for text, x0, base in actual[page_index].chars if text.strip()]
+        # Bucket by text so matching stays linear-ish on a 40k-char page.
+        buckets: dict[str, list[tuple[float, float]]] = {}
+        for text, x0, base in pool:
+            buckets.setdefault(text, []).append((x0, base))
+        for text, x0, base in expected:
+            candidates = buckets.get(text, [])
+            hit = next(
+                (
+                    i
+                    for i, (ax, abase) in enumerate(candidates)
+                    if abs(ax - x0) <= _POSITION_TOLERANCE
+                    and abs(abase - base) <= _POSITION_TOLERANCE
+                ),
+                None,
+            )
+            if hit is None:
+                unmatched += 1
+            else:
+                candidates.pop(hit)
+        unexpected += sum(len(v) for v in buckets.values())
+    if unmatched or unexpected:
+        raise ClaimPatchError("verification_failed", f"missing={unmatched} unexpected={unexpected}")

@@ -57,7 +57,16 @@ export const CLAIM_EDIT_KINDS = new Set([
 // NCCI-associated modifiers — the ones a bundling edit can be bypassed with.
 export const MODIFIER_OPTIONS = ["59", "XE", "XS", "XP", "XU"];
 
-export type EditChoice = { value: string; remove: boolean };
+export type ChargeChoice = "scale" | "keep";
+
+// `charge` matters for unit changes only: "scale" rewrites the line charge as
+// price-per-unit × new units (how billing systems build 24F); "keep" leaves it
+// for a units typo. Only the practice knows which.
+export type EditChoice = {
+  value: string;
+  remove: boolean;
+  charge: ChargeChoice;
+};
 
 export function isClaimEdit(edit: ProposedEdit): boolean {
   return CLAIM_EDIT_KINDS.has(edit.kind) && Boolean(edit.target?.trim());
@@ -68,7 +77,7 @@ export function isClaimEdit(edit: ProposedEdit): boolean {
 export function defaultChoice(edit: ProposedEdit): EditChoice {
   const value =
     edit.value ?? (edit.kind === "add_modifier" ? MODIFIER_OPTIONS[0] : "");
-  return { value, remove: false };
+  return { value, remove: false, charge: "scale" };
 }
 
 export function modifierOptions(edit: ProposedEdit): string[] {
@@ -111,7 +120,10 @@ export function buildSelections(
       const edit = edits[index];
       if (choice.remove) return { index, remove: true };
       if (edit.kind === "remove_line") return { index };
-      return { index, value: choice.value.trim().toUpperCase() };
+      const value = choice.value.trim().toUpperCase();
+      if (edit.kind === "change_units")
+        return { index, value, charge: choice.charge };
+      return { index, value };
     });
 }
 
@@ -136,6 +148,8 @@ export function skipReasonText(reason: string | null): string {
 export const NOTE_TEXT: Record<string, string> = {
   check_dx_pointers:
     "Check the diagnosis pointers (Box 24E) on any line that referenced it",
+  charge_not_scaled:
+    "Charge left as it was — the per-unit price didn't divide to the cent, so set it and the total by hand",
 };
 
 export function noteText(note: string | null | undefined): string | null {

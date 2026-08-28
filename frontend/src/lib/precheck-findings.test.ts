@@ -4,6 +4,7 @@ import type { ProposedEdit, RiskFinding } from "./cases";
 import {
   attachEditsToFindings,
   buildSelections,
+  type EditChoice,
   choiceIsComplete,
   defaultChoice,
   isClaimEdit,
@@ -134,12 +135,20 @@ describe("corrected-claim selection helpers", () => {
   });
 
   it("defaults to the report's value, or 59 for an open modifier choice", () => {
-    expect(defaultChoice(ncciModifier)).toEqual({ value: "59", remove: false });
+    expect(defaultChoice(ncciModifier)).toEqual({
+      value: "59",
+      remove: false,
+      charge: "scale",
+    });
     expect(
       defaultChoice(edit({ kind: "add_modifier", target: "1", value: null }))
         .value,
     ).toBe("59");
-    expect(defaultChoice(code)).toEqual({ value: "", remove: false });
+    expect(defaultChoice(code)).toEqual({
+      value: "",
+      remove: false,
+      charge: "scale",
+    });
   });
 
   it("offers the report's modifier first, then the NCCI set, without duplicates", () => {
@@ -161,33 +170,57 @@ describe("corrected-claim selection helpers", () => {
   });
 
   it("holds the button until every chosen edit has a valid value", () => {
-    expect(choiceIsComplete(code, { value: "", remove: false })).toBe(false);
-    expect(choiceIsComplete(code, { value: "99213", remove: false })).toBe(
-      true,
-    );
-    expect(choiceIsComplete(code, { value: "", remove: true })).toBe(true);
-    expect(choiceIsComplete(units, { value: "0", remove: false })).toBe(false);
-    expect(choiceIsComplete(units, { value: "12", remove: false })).toBe(true);
-    expect(choiceIsComplete(ncciModifier, { value: "x", remove: false })).toBe(
-      false,
-    );
-    expect(choiceIsComplete(removal, { value: "", remove: false })).toBe(true);
+    expect(
+      choiceIsComplete(code, { value: "", remove: false, charge: "scale" }),
+    ).toBe(false);
+    expect(
+      choiceIsComplete(code, {
+        value: "99213",
+        remove: false,
+        charge: "scale",
+      }),
+    ).toBe(true);
+    expect(
+      choiceIsComplete(code, { value: "", remove: true, charge: "scale" }),
+    ).toBe(true);
+    expect(
+      choiceIsComplete(units, { value: "0", remove: false, charge: "scale" }),
+    ).toBe(false);
+    expect(
+      choiceIsComplete(units, { value: "12", remove: false, charge: "scale" }),
+    ).toBe(true);
+    expect(
+      choiceIsComplete(ncciModifier, {
+        value: "x",
+        remove: false,
+        charge: "scale",
+      }),
+    ).toBe(false);
+    expect(
+      choiceIsComplete(removal, { value: "", remove: false, charge: "scale" }),
+    ).toBe(true);
   });
 
   it("builds the request in index order, sending only what the server needs", () => {
     const edits = [ncciModifier, units, code, removal];
-    const chosen = new Map([
-      [3, { value: "", remove: false }],
-      [0, { value: "xs", remove: false }],
-      [2, { value: "99213", remove: true }],
-      [1, { value: " 1 ", remove: false }],
+    const chosen = new Map<number, EditChoice>([
+      [3, { value: "", remove: false, charge: "scale" }],
+      [0, { value: "xs", remove: false, charge: "scale" }],
+      [2, { value: "99213", remove: true, charge: "scale" }],
+      [1, { value: " 1 ", remove: false, charge: "scale" }],
     ]);
     expect(buildSelections(edits, chosen)).toEqual([
       { index: 0, value: "XS" },
-      { index: 1, value: "1" },
+      { index: 1, value: "1", charge: "scale" },
       { index: 2, remove: true },
       { index: 3 },
     ]);
+    chosen.set(1, { value: "1", remove: false, charge: "keep" });
+    expect(buildSelections(edits, chosen)[1]).toEqual({
+      index: 1,
+      value: "1",
+      charge: "keep",
+    });
   });
 
   it("translates skip reasons and falls back for unknown ones", () => {

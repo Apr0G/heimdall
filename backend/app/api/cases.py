@@ -781,7 +781,9 @@ async def create_corrected_claim(
     parsing an adversarial 25 MB PDF is real CPU, hence the expensive-op limiter."""
     case = await _get_owned_case(session, case_id, current_user)
     selections = [
-        corrected_claim_service.Selection(index=s.index, value=s.value, remove=s.remove)
+        corrected_claim_service.Selection(
+            index=s.index, value=s.value, remove=s.remove, charge=s.charge
+        )
         for s in body.selections
     ]
     try:

@@ -48,6 +48,7 @@ import { formatCents, formatDate, humanize } from "@/lib/format";
 import {
   attachEditsToFindings,
   buildSelections,
+  type ChargeChoice,
   choiceIsComplete,
   defaultChoice,
   type EditChoice,
@@ -694,7 +695,9 @@ function choiceSummary(edit: ProposedEdit, choice: EditChoice): string {
     return `Will add modifier ${choice.value || "…"}`;
   }
   if (edit.kind === "change_units") {
-    return `Will set units to ${choice.value || "…"}`;
+    return `Will set units to ${choice.value || "…"}${
+      choice.charge === "keep" ? ", keep the charge" : ", scale the charge"
+    }`;
   }
   return `Will change ${edit.target} to ${choice.value || "…"}`;
 }
@@ -746,6 +749,22 @@ function ChoiceControls({
           />
         )}
       </label>
+      {edit.kind === "change_units" && (
+        <label className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="w-28 text-muted-foreground">Line charge</span>
+          <NativeSelect
+            className="h-7 w-64 text-xs"
+            value={choice.charge}
+            disabled={choice.remove}
+            onChange={(e) =>
+              onChoose({ ...choice, charge: e.target.value as ChargeChoice })
+            }
+          >
+            <option value="scale">Scale with the units (price × units)</option>
+            <option value="keep">Keep as billed (units were a typo)</option>
+          </NativeSelect>
+        </label>
+      )}
       <label className="flex items-center gap-2 text-xs text-muted-foreground">
         <Checkbox
           checked={choice.remove}
@@ -876,8 +895,13 @@ function resultText(r: CorrectedClaimDetail["results"][number]): string {
         : `Removed the ${code} line${lines}`;
     case "add_modifier":
       return `Added modifier ${r.value} to ${code}${lines}`;
-    case "change_units":
-      return `Set ${code} units to ${r.value}${lines}`;
+    case "change_units": {
+      const charge =
+        r.charge_before_cents != null && r.charge_after_cents != null
+          ? ` · charge ${formatCents(r.charge_before_cents)} → ${formatCents(r.charge_after_cents)}`
+          : "";
+      return `Set ${code} units to ${r.value}${lines}${charge}`;
+    }
     case "change_code":
       return dx
         ? `Changed diagnosis ${code} to ${r.value}`

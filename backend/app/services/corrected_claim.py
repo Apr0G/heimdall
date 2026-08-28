@@ -57,6 +57,7 @@ class Selection:
     index: int
     value: str | None = None
     remove: bool = False  # remove the whole line instead of applying the edit
+    charge: str = "scale"  # change_units: "scale" the line charge with the units, or "keep"
 
 
 def claim_document_editable(documents: list[Document]) -> bool:
@@ -96,7 +97,10 @@ def resolve_selections(
             value = normalize_edit_value(kind, raw)
             if value is None:
                 raise InvalidSelection("bad_value", sel.index)
-        resolved.append((sel.index, ClaimEdit(kind=kind, target=target, value=value)))
+        charge = sel.charge if sel.charge in claim_patch.CHARGE_CHOICES else "scale"
+        resolved.append(
+            (sel.index, ClaimEdit(kind=kind, target=target, value=value, charge=charge))
+        )
     return resolved
 
 
@@ -113,6 +117,8 @@ def _result_rows(resolved: list[tuple[int, ClaimEdit]], patched: PatchResult) ->
                 "reason": outcome.reason,
                 "applied_lines": outcome.applied_lines,
                 "note": outcome.note,
+                "charge_before_cents": outcome.charge_before_cents,
+                "charge_after_cents": outcome.charge_after_cents,
             }
         )
     return rows
