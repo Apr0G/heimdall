@@ -38,11 +38,13 @@ export default async function RootLayout({
       className={`${publicSans.variable} ${jetbrainsMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        {/* Apply the saved theme before paint to avoid a light-mode flash. */}
+        {/* Apply the theme before paint to avoid a flash. Dark is the default
+            for everyone — including first-time visitors and browsers that ask
+            for light — unless this visitor has explicitly toggled to light. */}
         <script
           nonce={nonce}
           dangerouslySetInnerHTML={{
-            __html: `try{var t=localStorage.getItem('heimdall_theme');if(t==='dark'||(!t&&matchMedia('(prefers-color-scheme: dark)').matches)){document.documentElement.classList.add('dark')}}catch(e){}`,
+            __html: `try{if(localStorage.getItem('heimdall_theme')!=='light'){document.documentElement.classList.add('dark')}}catch(e){document.documentElement.classList.add('dark')}`,
           }}
         />
         <Providers>
