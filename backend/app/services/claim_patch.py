@@ -58,10 +58,13 @@ _MODIFIER_RE = re.compile(r"^[A-Z0-9]{2}$")
 # ICD-10-CM as printed in Box 21 — with or without the decimal (the paper form
 # omits it: "D509"). U is excluded (reserved chapter), same as CMS's own list.
 _ICD10_RE = re.compile(r"^[A-TV-Z]\d{2}(?:\.?\d{1,4})?$")
-_DX_POINTER_RE = re.compile(r"^[A-L]{1,4}$")
-_UNITS_RE = re.compile(r"^\d{1,3}$")
+# Box 24E: letters A–L on the 02/12 form (printed "AB", "A,B"), digits 1–4 on
+# the older 08/05 form some payers' samples still show.
+_DX_POINTER_RE = re.compile(r"^(?:[A-L](?:,?[A-L]){0,3}|[1-4](?:,?[1-4]){0,3})$")
+# Box 24G as printed: whole units, or decimals for time/drug units ("1.5").
+_UNITS_RE = re.compile(r"^\d{1,3}(?:\.\d{1,2})?$")
 _MONEY_SINGLE_RE = re.compile(r"^\$?\d{1,3}(?:,\d{3})*\.\d{2}$|^\$?\d{1,7}\.\d{2}$")
-_MONEY_DOLLARS_RE = re.compile(r"^\d{1,7}$")
+_MONEY_DOLLARS_RE = re.compile(r"^\$?\d{1,7}$")
 _MONEY_CENTS_RE = re.compile(r"^\d{2}$")
 # Loose "looks like claim data, not a form label" test for the shaded half-row.
 _DATA_TOKEN_RE = re.compile(r"^[A-Z0-9.,$/-]{1,12}$")
@@ -88,6 +91,8 @@ _HELVETICA_WIDTHS = {
     " ": 278,
 }
 _OVERLAY_FONT_KEY = "/HdClaimPatchHelv"
+_OVERLAY_ITALIC_FONT_KEY = "/HdClaimPatchHelvOb"
+_COLOR_OPERATOR = {1: b"g", 3: b"rg", 4: b"k"}
 _POSITION_TOLERANCE = 1.5  # points; pdfminer float noise is far below this
 
 
@@ -114,7 +119,8 @@ class EditResult:
     applied: bool
     # Reason codes for a skipped edit: unsupported_kind, line_not_found,
     # ambiguous_line, modifier_slots_full, already_present, no_room, bad_value,
-    # not_a_service_line (a modifier/units edit aimed at a diagnosis code).
+    # not_a_service_line (a modifier/units edit aimed at a diagnosis code),
+    # no_units_cell (blank 24G and no sibling line shows where the column is).
     reason: str | None = None
     # A code can sit on several service lines (one per date); the edit applies
     # to each line it fits, and this says how many it reached.
@@ -148,6 +154,10 @@ class _Word:
     origin_x: float  # glyph origin of the first char, PDF user space
     origin_y: float
     chars: list[int]  # indices into the page's char list, stream order
+    # Fill colour as the content stream set it (gray / RGB / CMYK tuple) and
+    # whether the face is italic — so a drawn value matches its neighbours.
+    color: tuple[float, ...] = (0.0,)
+    italic: bool = False
 
     @property
     def upright(self) -> bool:
@@ -176,7 +186,7 @@ class _ServiceLine:
     modifiers: list[_Word]
     pointer: _Word
     charge: _Charge
-    units: _Word
+    units: _Word | None  # a blank 24G means one unit
     row_words: list[_Word]  # everything in the data band, sorted by x
     shaded_words: list[_Word]  # data tokens in the half-row above (24J qualifier etc.)
 
@@ -185,9 +195,12 @@ class _ServiceLine:
 class _Overlay:
     page: int
     x: float
-    y: float
+    y: float  # baseline, PDF user space
     size: float
     text: str
+    line: object = None  # the service line it was drawn on, if any
+    color: tuple[float, ...] = (0.0,)
+    italic: bool = False
 
 
 @dataclass
@@ -213,12 +226,12 @@ def patch_claim(pdf_bytes: bytes, edits: Sequence[ClaimEdit]) -> PatchResult:
     results: list[EditResult] = []
     removed_lines: list[_ServiceLine] = []
     expected_removed: list[_Word] = []
-    expected_added: list[tuple[int, str, float, float]] = []  # page, text, x0, top
+    expected_added: list[tuple[int, str, float, float]] = []  # page, text, x0, baseline
 
     def page_edits(page: int) -> _PageEdits:
         return per_page.setdefault(page, _PageEdits())
 
-    ctx = _ApplyContext(page_edits, expected_removed, expected_added, removed_lines)
+    ctx = _ApplyContext(page_edits, expected_removed, expected_added, removed_lines, lines)
 
     for edit in edits:
         if edit.kind not in EDIT_KINDS:
@@ -261,14 +274,43 @@ class _ApplyContext:
     expected_removed: list[_Word]
     expected_added: list[tuple[int, str, float, float]]
     removed_lines: list[_ServiceLine]
+    lines: list[_ServiceLine] = field(default_factory=list)
+
+    def units_column_x(self, page: int) -> float | None:
+        xs = [ln.units.origin_x for ln in self.lines if ln.page == page and ln.units is not None]
+        return min(xs) if xs else None
 
     def remove_word(self, word: _Word) -> None:
         self.page_edits(word.page).remove.update(word.chars)
         self.expected_removed.append(word)
 
-    def draw(self, page: int, x: float, y: float, size: float, top: float, text: str) -> None:
-        self.page_edits(page).overlays.append(_Overlay(page, x, y, size, text))
-        self.expected_added.append((page, text, x, top))
+    def draw(
+        self,
+        page: int,
+        x: float,
+        y: float,
+        size: float,
+        text: str,
+        *,
+        like: _Word,
+        line: _ServiceLine | None = None,
+    ) -> None:
+        """Draw `text` at (x, y) styled like the word it replaces or sits next to."""
+        overlay = _Overlay(page, x, y, size, text, line=line, color=like.color, italic=like.italic)
+        self.page_edits(page).overlays.append(overlay)
+        self.expected_added.append((page, text, x, y))
+
+    def remove_line(self, line: _ServiceLine) -> None:
+        """Take every word of the line — and anything an earlier edit drew on
+        it, or a changed code / added modifier would float on the blank row."""
+        for word in line.row_words + line.shaded_words:
+            self.remove_word(word)
+        pe = self.page_edits(line.page)
+        dropped = [o for o in pe.overlays if o.line is line]
+        pe.overlays = [o for o in pe.overlays if o.line is not line]
+        for o in dropped:
+            self.expected_added.remove((o.page, o.text, o.x, o.y))
+        self.removed_lines.append(line)
 
 
 def _apply_to_lines(edit: ClaimEdit, lines: list[_ServiceLine], ctx: _ApplyContext) -> EditResult:
@@ -278,9 +320,7 @@ def _apply_to_lines(edit: ClaimEdit, lines: list[_ServiceLine], ctx: _ApplyConte
     failures (no room, slots full) don't block the other lines."""
     if edit.kind == "remove_line":
         for line in lines:
-            for word in line.row_words + line.shaded_words:
-                ctx.remove_word(word)
-            ctx.removed_lines.append(line)
+            ctx.remove_line(line)
         return EditResult(edit, True, applied_lines=len(lines))
 
     value = _validated_value(edit)
@@ -288,10 +328,10 @@ def _apply_to_lines(edit: ClaimEdit, lines: list[_ServiceLine], ctx: _ApplyConte
         return EditResult(edit, False, "bad_value")
 
     if edit.kind == "change_units":
-        current = [line for line in lines if line.units.text != value]
+        current = [line for line in lines if _units_value(line) != float(value)]
         if not current:
             return EditResult(edit, False, "already_present")
-        over = [line for line in current if int(line.units.text) > int(value)]
+        over = [line for line in current if _units_value(line) > int(value)]
         candidates = over or current
     elif edit.kind == "add_modifier":
         candidates = [line for line in lines if all(m.text != value for m in line.modifiers)]
@@ -332,10 +372,25 @@ def _apply_to_line(
         x = anchor.x1 + gap
         if x + _text_width(value, anchor.size) > line.pointer.x0 - 1:
             return "no_room"
-        ctx.draw(line.page, x, anchor.origin_y, anchor.size, anchor.top, value)
+        ctx.draw(line.page, x, anchor.origin_y, anchor.size, value, like=anchor, line=line)
+        return None
+
+    if edit.kind == "change_units" and line.units is None:
+        # Blank 24G (one unit implied): write the new count where the units
+        # column is on this page, learned from a sibling line that has one.
+        column_x = ctx.units_column_x(line.page)
+        if column_x is None:
+            return "no_units_cell"
+        anchor = line.cpt
+        after = [w for w in line.row_words if w.x0 > column_x]
+        limit = after[0].x0 - 1 if after else column_x + _text_width(value, anchor.size)
+        if column_x + _text_width(value, anchor.size) > limit:
+            return "no_room"
+        ctx.draw(line.page, column_x, anchor.origin_y, anchor.size, value, like=anchor, line=line)
         return None
 
     old = line.units if edit.kind == "change_units" else line.cpt
+    assert old is not None
     if old.text == value:
         return "already_present"
     width = _text_width(value, old.size)
@@ -344,7 +399,7 @@ def _apply_to_line(
     if old.origin_x + width > limit:
         return "no_room"
     ctx.remove_word(old)
-    ctx.draw(line.page, old.origin_x, old.origin_y, old.size, old.top, value)
+    ctx.draw(line.page, old.origin_x, old.origin_y, old.size, value, like=old, line=line)
     return None
 
 
@@ -400,7 +455,7 @@ def _apply_to_dx(
     if word.origin_x + width > limit:
         return EditResult(edit, False, "no_room")
     ctx.remove_word(word)
-    ctx.draw(word.page, word.origin_x, word.origin_y, word.size, word.top, value)
+    ctx.draw(word.page, word.origin_x, word.origin_y, word.size, value, like=word)
     return EditResult(edit, True, applied_lines=1)
 
 
@@ -448,6 +503,8 @@ def _load_pages(pdf_bytes: bytes) -> list[_PageText]:
                             origin_x=float(matrix[4]),
                             origin_y=float(matrix[5]),
                             chars=[index_of[id(c)] for c in chars],
+                            color=_fill_color(first),
+                            italic=_is_italic(str(first.get("fontname") or "")),
                         )
                     )
                 advances = [
@@ -459,6 +516,25 @@ def _load_pages(pdf_bytes: bytes) -> list[_PageText]:
     except Exception as exc:  # noqa: BLE001 — parser messages can quote document text
         raise ClaimPatchError("unsupported_pdf", type(exc).__name__) from None
     return pages
+
+
+def _fill_color(char: dict) -> tuple[float, ...]:
+    """The glyph's non-stroking colour as a 1/3/4-tuple (gray/RGB/CMYK), or
+    black when it's anything more exotic (pattern, separation)."""
+    raw = char.get("non_stroking_color")
+    if isinstance(raw, int | float):
+        raw = (raw,)
+    if isinstance(raw, list | tuple) and len(raw) in (1, 3, 4):
+        try:
+            return tuple(min(1.0, max(0.0, float(v))) for v in raw)
+        except (TypeError, ValueError):
+            pass
+    return (0.0,)
+
+
+def _is_italic(fontname: str) -> bool:
+    lowered = fontname.lower()
+    return "italic" in lowered or "oblique" in lowered
 
 
 def _find_service_lines(words: list[_Word]) -> list[_ServiceLine]:
@@ -505,12 +581,12 @@ def _find_service_lines(words: list[_Word]) -> list[_ServiceLine]:
 
 def _parse_right_of_code(
     right: list[_Word],
-) -> tuple[list[_Word], _Word, _Charge, _Word] | None:
+) -> tuple[list[_Word], _Word, _Charge, _Word | None] | None:
     """Box 24 cells after the code: 0–4 modifiers, dx pointer, charge, units.
     Modifiers and pointers overlap lexically ("AB" is a valid instance of
     both), so try each modifier count and keep the first full parse."""
     for count in range(0, MAX_MODIFIERS + 1):
-        if len(right) < count + 3:
+        if len(right) < count + 2:
             break
         modifiers = right[:count]
         if not all(_MODIFIER_RE.match(m.text) for m in modifiers):
@@ -522,9 +598,10 @@ def _parse_right_of_code(
         if charge is None:
             continue
         rest = right[count + 1 + consumed :]
-        if not rest or not _UNITS_RE.match(rest[0].text):
-            continue
-        return modifiers, pointer, charge, rest[0]
+        # A blank units cell is common ("1" implied); anything else there
+        # (EPSDT flag, NPI) is not a units value.
+        units = rest[0] if rest and _UNITS_RE.match(rest[0].text) else None
+        return modifiers, pointer, charge, units
     return None
 
 
@@ -538,7 +615,11 @@ def _parse_charge(words: list[_Word]) -> tuple[_Charge | None, int]:
         cents_word = words[1]
         if _MONEY_CENTS_RE.match(cents_word.text) and _adjacent(head, cents_word):
             return (
-                _Charge([head, cents_word], int(head.text) * 100 + int(cents_word.text), True),
+                _Charge(
+                    [head, cents_word],
+                    int(head.text.replace("$", "")) * 100 + int(cents_word.text),
+                    True,
+                ),
                 2,
             )
     return None, 0
@@ -552,6 +633,10 @@ def _adjacent(a: _Word, b: _Word) -> bool:
 def _money_to_cents(text: str) -> int:
     dollars, cents = text.replace("$", "").replace(",", "").split(".")
     return int(dollars) * 100 + int(cents)
+
+
+def _units_value(line: _ServiceLine) -> float:
+    return float(line.units.text) if line.units is not None else 1.0
 
 
 def _next_word_right(row: list[_Word], word: _Word) -> _Word | None:
@@ -582,7 +667,8 @@ def _text_width(text: str, size: float) -> float:
 def _format_money(cents: int, like: _Charge) -> list[str]:
     dollars, rem = divmod(cents, 100)
     if like.split:
-        return [str(dollars), f"{rem:02d}"]
+        prefix = "$" if like.words[0].text.startswith("$") else ""
+        return [f"{prefix}{dollars}", f"{rem:02d}"]
     sample = like.words[0].text
     body = f"{dollars:,}.{rem:02d}" if "," in sample else f"{dollars}.{rem:02d}"
     return [("$" + body) if sample.startswith("$") else body]
@@ -626,8 +712,18 @@ def _update_total(
         # Money is right-aligned in its box: keep the right edge where it was.
         width = _text_width(text, old_word.size)
         x = old_word.x1 - width
-        pe.overlays.append(_Overlay(page, x, old_word.origin_y, old_word.size, text))
-        expected_added.append((page, text, x, old_word.top))
+        pe.overlays.append(
+            _Overlay(
+                page,
+                x,
+                old_word.origin_y,
+                old_word.size,
+                text,
+                color=old_word.color,
+                italic=old_word.italic,
+            )
+        )
+        expected_added.append((page, text, x, old_word.origin_y))
     return True
 
 
@@ -858,8 +954,9 @@ def _overlay_ops(overlays: Iterable[_Overlay]) -> list:
     ops: list = []
     for ov in overlays:
         ops.append(([], b"BT"))
-        ops.append(([NumberObject(0)], b"g"))
-        ops.append(([NameObject(_OVERLAY_FONT_KEY), FloatObject(ov.size)], b"Tf"))
+        ops.append(([FloatObject(v) for v in ov.color], _COLOR_OPERATOR[len(ov.color)]))
+        font = _OVERLAY_ITALIC_FONT_KEY if ov.italic else _OVERLAY_FONT_KEY
+        ops.append(([NameObject(font), FloatObject(ov.size)], b"Tf"))
         ops.append(
             (
                 [
@@ -889,17 +986,21 @@ def _ensure_overlay_font(page, writer: PdfWriter) -> None:
         fonts = DictionaryObject()
         resources[NameObject("/Font")] = fonts
     fonts = fonts.get_object()
-    if _OVERLAY_FONT_KEY in fonts:
-        return
-    font = DictionaryObject(
-        {
-            NameObject("/Type"): NameObject("/Font"),
-            NameObject("/Subtype"): NameObject("/Type1"),
-            NameObject("/BaseFont"): NameObject("/Helvetica"),
-            NameObject("/Encoding"): NameObject("/WinAnsiEncoding"),
-        }
-    )
-    fonts[NameObject(_OVERLAY_FONT_KEY)] = writer._add_object(font)
+    for key, base in (
+        (_OVERLAY_FONT_KEY, "/Helvetica"),
+        (_OVERLAY_ITALIC_FONT_KEY, "/Helvetica-Oblique"),
+    ):
+        if key in fonts:
+            continue
+        font = DictionaryObject(
+            {
+                NameObject("/Type"): NameObject("/Font"),
+                NameObject("/Subtype"): NameObject("/Type1"),
+                NameObject("/BaseFont"): NameObject(base),
+                NameObject("/Encoding"): NameObject("/WinAnsiEncoding"),
+            }
+        )
+        fonts[NameObject(key)] = writer._add_object(font)
 
 
 # --- verification -----------------------------------------------------------
@@ -913,27 +1014,29 @@ def _verify(
 ) -> None:
     """Every original word survives at its position except the removed ones;
     every added word appears where we drew it; nothing else. Words are
-    compared by (page, text, x0, top) with a small tolerance."""
+    compared by (page, text, x0, baseline) with a small tolerance — the
+    baseline, because that is what the overlay sets exactly; a glyph box top
+    depends on the font's ascent and Helvetica's differs from the original's."""
     actual = [page.words for page in _load_pages(patched)]
     removed_ids = {(w.page, id(w)) for w in removed}
     expected: list[tuple[int, str, float, float]] = [
-        (w.page, w.text, w.x0, w.top)
+        (w.page, w.text, w.x0, w.origin_y)
         for page_words in original_pages
         for w in page_words
         if (w.page, id(w)) not in removed_ids
     ]
     expected.extend(added)
-    pool = [(w.page, w.text, w.x0, w.top) for page_words in actual for w in page_words]
+    pool = [(w.page, w.text, w.x0, w.origin_y) for page_words in actual for w in page_words]
 
     unmatched = 0
-    for page, text, x0, top in expected:
+    for page, text, x0, base in expected:
         hit = None
-        for i, (p, t, ax, atop) in enumerate(pool):
+        for i, (p, t, ax, abase) in enumerate(pool):
             if (
                 p == page
                 and t == text
                 and abs(ax - x0) <= _POSITION_TOLERANCE
-                and abs(atop - top) <= _POSITION_TOLERANCE
+                and abs(abase - base) <= _POSITION_TOLERANCE
             ):
                 hit = i
                 break

@@ -24,8 +24,11 @@ def _esc(text: str) -> str:
 _SPACING = ""  # set per build_claim call; keeps the cell helpers' signatures small
 
 
+_STYLE = ""  # e.g. "0 0.5 0 rg" — colour for the data cells
+
+
 def _tj(text: str, x: float, y: float, size: int = 9) -> str:
-    return f"BT /F1 {size} Tf {_SPACING} 1 0 0 1 {x} {y} Tm ({_esc(text)}) Tj ET\n"
+    return f"BT {_STYLE} /F1 {size} Tf {_SPACING} 1 0 0 1 {x} {y} Tm ({_esc(text)}) Tj ET\n"
 
 
 def _tj_array(parts: list, x: float, y: float, size: int = 9) -> str:
@@ -58,6 +61,8 @@ def build_claim(
     style: str = "cells",
     form: bool = True,
     money: str = "split",  # split ("150" "00") | single ("150.00") | dollar ("$1,150.00")
+    pointer_style: str = "plain",  # plain ("AB") | comma ("A,B") | numeric ("1")
+    dollar_sign: bool = False,  # split money printed "$250" "00"
     dx: tuple[str, ...] = ("M17.11", "M25.561"),
     dx_dots: bool = True,  # the paper form prints Box 21 without decimals ("D509")
     total_label: str = "TOTAL CHARGE",
@@ -65,18 +70,20 @@ def build_claim(
     xobject: bool = False,
     background: bool = False,  # drawn form background as a text-free form XObject
     spacing: str = "",  # extra text-state ops, e.g. "0.3 Tc 95 Tz 1 Tw"
+    color_ops: str = "",  # colour ops for every cell, e.g. "0 0.5 0 rg"
     compress: bool = False,
 ) -> bytes:
     """Synthetic claim: every value is fake (CPT/HCPCS are real code *formats*,
     the NPI is all zeros)."""
 
-    global _SPACING
+    global _SPACING, _STYLE
     _SPACING = spacing
+    _STYLE = color_ops
 
     def money_words(cents: int) -> list[str]:
         dollars, rem = divmod(cents, 100)
         if money == "split":
-            return [str(dollars), f"{rem:02d}"]
+            return [f"{'$' if dollar_sign else ''}{dollars}", f"{rem:02d}"]
         if money == "dollar":
             return [f"${dollars:,}.{rem:02d}"]
         return [f"{dollars}.{rem:02d}"]
@@ -108,12 +115,18 @@ def build_claim(
             cells.append((line["cpt"], X["cpt"]))
             for m, mx in zip(line.get("mods", []), X["mods"], strict=False):
                 cells.append((m, mx))
-            cells.append((line.get("ptr", "A"), X["ptr"]))
+            ptr = line.get("ptr", "A")
+            if pointer_style == "comma":
+                ptr = ",".join(ptr)
+            elif pointer_style == "numeric":
+                ptr = "".join(str("ABCD".index(c) + 1) for c in ptr)
+            cells.append((ptr, X["ptr"]))
             mw = money_words(line["cents"])
             cells.append((mw[0], X["charge"]))
             if len(mw) == 2:
                 cells.append((mw[1], X["cents"]))
-            cells.append((str(line.get("units", 1)), X["units"]))
+            if line.get("units", 1) is not None:  # None = blank 24G cell
+                cells.append((str(line.get("units", 1)), X["units"]))
             cells.append(("0000000000", X["npi"]))
             if style == "cells":
                 for text, x in cells:
@@ -615,3 +628,80 @@ def test_rewritten_streams_are_compressed():
     pdf = build_claim(LINES, compress=True)
     result = patch_claim(pdf, [ClaimEdit("change_units", "20610", "1")])
     assert b"/FlateDecode" in result.pdf
+
+
+# --- formats seen in payer samples --------------------------------------------------
+
+
+@pytest.mark.parametrize("pointer_style", ["comma", "numeric"])
+def test_pointer_variants_parse(pointer_style):
+    # VSP prints "A,B"; ForwardHealth's 08/05-era samples use digits.
+    pdf = build_claim(LINES, pointer_style=pointer_style)
+    assert [ln.cpt.text for ln in service_lines(pdf)] == ["99213", "20610", "J3301"]
+
+
+def test_dollar_sign_on_split_charges_and_total():
+    # IBX prints "$250" "00" — and the recomputed total keeps the sign.
+    pdf = build_claim(LINES, dollar_sign=True)
+    assert [ln.charge.cents for ln in service_lines(pdf)] == [12000, 15000, 4500]
+    result = patch_claim(pdf, [ClaimEdit("remove_line", "20610")])
+    assert result.total_updated is True
+    assert "$165" in [w["text"] for w in words(result.pdf)]
+
+
+def test_blank_units_cell_means_one_unit_and_can_still_be_changed():
+    # TMHP's samples leave 24G empty on every line.
+    blank = [dict(ln, units=None) for ln in LINES]
+    pdf = build_claim(blank)
+    lines = service_lines(pdf)
+    assert [ln.units for ln in lines] == [None, None, None]
+    # No line on the page shows where the units column is: refuse, don't guess.
+    result = patch_claim(pdf, [ClaimEdit("change_units", "20610", "2")])
+    assert result.results[0].reason == "no_units_cell"
+    # With one sibling line carrying a count, the column is known and the
+    # new value lands there.
+    mixed = [dict(LINES[0], units=None), dict(LINES[1], units=None), LINES[2]]
+    pdf = build_claim(mixed)
+    result = patch_claim(pdf, [ClaimEdit("change_units", "20610", "2")])
+    assert result.results[0].applied
+    lines = service_lines(result.pdf)
+    assert lines[1].units is not None and lines[1].units.text == "2"
+    assert abs(lines[1].units.x0 - lines[2].units.x0) < 1
+
+
+def test_decimal_units_parse_and_compare_numerically():
+    pdf = build_claim([{"cpt": "97110", "cents": 6000, "units": "1.5"}], money="single")
+    assert service_lines(pdf)[0].units.text == "1.5"
+    result = patch_claim(pdf, [ClaimEdit("change_units", "97110", "1")])
+    assert result.results[0].applied
+    assert service_lines(result.pdf)[0].units.text == "1"
+
+
+def test_removing_a_line_discards_what_earlier_edits_drew_on_it():
+    # change the code, add a modifier, then remove the line: the new code and
+    # modifier must not be left floating on the blank row.
+    pdf = build_claim(LINES)
+    result = patch_claim(
+        pdf,
+        [
+            ClaimEdit("change_code", "20610", "20611"),
+            ClaimEdit("add_modifier", "20610", "59"),
+            ClaimEdit("remove_line", "20610"),
+        ],
+    )
+    assert [r.applied for r in result.results] == [True, True, True]
+    assert words_at_row(result.pdf, 1) == []
+    texts = [w["text"] for w in words(result.pdf)]
+    assert "20611" not in texts and "59" not in texts
+    assert result.total_updated is True
+
+
+def test_drawn_values_match_the_colour_of_the_data_they_replace():
+    # IBX prints claim data in green; a black replacement would stand out.
+    pdf = build_claim(LINES, color_ops="0 0.5 0 rg")
+    result = patch_claim(
+        pdf, [ClaimEdit("change_units", "20610", "1"), ClaimEdit("add_modifier", "20610", "59")]
+    )
+    with pdfplumber.open(io.BytesIO(result.pdf)) as doc:
+        colours = {tuple(round(v, 2) for v in c["non_stroking_color"]) for c in doc.pages[0].chars}
+    assert colours == {(0, 0.5, 0)}
