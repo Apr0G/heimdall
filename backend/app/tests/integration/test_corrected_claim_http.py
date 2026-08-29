@@ -3,6 +3,7 @@ the in-place patcher (S3 stubbed with a synthetic claim PDF), the scanned-claim
 refusal, and the download URL. All data synthetic (hard rule 1).
 """
 
+import asyncio
 import uuid
 
 import pytest
@@ -228,6 +229,57 @@ async def test_apply_selected_edits_produces_a_downloadable_corrected_claim(sess
         ).all()
         assert actions.count("corrected_claim_create") == 2
         assert "corrected_claim_download" in actions
+
+
+async def test_apply_is_checked_against_the_report_the_doctor_read(sessions, fake_s3):
+    """LOW-11: selections are indexes into ONE report's edit list, so a client
+    that says which report it read is refused when that is no longer the latest."""
+    user = await _user(sessions)
+    case_id = await _precheck_case(sessions, user, ocr_status="not_needed")
+    async with _client(sessions, user) as client:
+        detail = (await client.get(f"/api/cases/{case_id}")).json()
+        report_id = detail["risk_report"]["id"]
+        uuid.UUID(report_id)  # a real id, echoed back by the client
+
+        stale = await client.post(
+            f"/api/cases/{case_id}/corrected-claim",
+            json={"selections": [{"index": 0}], "risk_report_id": str(uuid.uuid4())},
+        )
+        assert stale.status_code == 409
+        assert stale.json()["detail"] == "report_changed"
+        assert fake_s3 == {}  # refused before any patching or upload
+
+        current = await client.post(
+            f"/api/cases/{case_id}/corrected-claim",
+            json={"selections": [{"index": 0}], "risk_report_id": report_id},
+        )
+        assert current.status_code == 201, current.text
+
+
+async def test_concurrent_applies_get_distinct_versions(sessions, fake_s3):
+    """LOW-05: a double-click used to have both requests read max(version)=0,
+    both upload version 1, and the loser die on the unique constraint — an
+    untranslated 500 with an orphaned PHI PDF in S3. The row lock on the case
+    serialises the version allocation."""
+    user = await _user(sessions)
+    case_id = await _precheck_case(sessions, user, ocr_status="not_needed")
+
+    async def apply():
+        async with _client(sessions, user) as client:
+            return await client.post(
+                f"/api/cases/{case_id}/corrected-claim", json={"selections": [{"index": 0}]}
+            )
+
+    first, second = await asyncio.gather(apply(), apply())
+    assert {first.status_code, second.status_code} == {201}, (first.text, second.text)
+    assert {first.json()["version"], second.json()["version"]} == {1, 2}
+    async with sessions() as s:
+        rows = (
+            await s.scalars(select(CorrectedClaim).where(CorrectedClaim.case_id == case_id))
+        ).all()
+    assert sorted(r.version for r in rows) == [1, 2]
+    # One PDF per committed version; nothing orphaned.
+    assert set(fake_s3) == {r.s3_key for r in rows}
 
 
 async def test_scanned_claim_is_refused_with_guidance(sessions, fake_s3):

@@ -19,6 +19,7 @@ fail on it.
 Needs a real PostgreSQL (TEST_DATABASE_URL); CI runs it against postgres:17.
 """
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -389,6 +390,92 @@ async def test_content_disposition_survives_non_latin1_initials(
     disposition = resp.headers["content-disposition"]
     disposition.encode("latin-1")  # must not raise
     assert "filename*=UTF-8''" in disposition
+
+
+# --- LOW-01: doctor-driven status changes are one conditional UPDATE ---------
+
+
+async def test_outcome_on_a_ready_case_is_409_and_writes_nothing(sessions, owner, owned_case):
+    case_id = owned_case["case_id"]
+    async with _client(sessions, owner) as client:
+        resp = await client.post(f"/api/cases/{case_id}/outcome", json={"result": "overturned"})
+    assert resp.status_code == 409
+    async with sessions() as s:
+        assert (await s.get(Case, case_id)).status == "ready"
+        assert await s.scalar(select(Outcome).where(Outcome.case_id == case_id)) is None
+
+
+async def test_mark_submitted_is_idempotent_on_submitted_at(sessions, owner, owned_case):
+    case_id = owned_case["case_id"]
+    async with _client(sessions, owner) as client:
+        first = await client.post(f"/api/cases/{case_id}/mark-submitted")
+        assert first.status_code == 200 and first.json()["status"] == "submitted"
+        async with sessions() as s:
+            stamped = (await s.get(Case, case_id)).submitted_at
+        assert stamped is not None
+        second = await client.post(f"/api/cases/{case_id}/mark-submitted")
+        assert second.status_code == 200
+    async with sessions() as s:
+        case = await s.get(Case, case_id)
+    assert case.status == "submitted" and case.submitted_at == stamped
+
+
+async def test_mark_submitted_loses_to_a_concurrent_reanalyze_claim(sessions, owner, owned_case):
+    """The two-tab race. One tab's reanalyze claim has flipped the row to
+    `processing` but not yet committed when the other tab marks it submitted.
+    Read-then-write let the second tab see `ready`, write `submitted` +
+    `submitted_at`, and finalize a letter the pipeline was about to supersede.
+    Now the transition blocks on the row lock, re-evaluates against the
+    committed `processing`, and 409s — the letter stays a draft."""
+    from app.api.cases import _claim_for_pipeline
+
+    case_id = owned_case["case_id"]
+
+    async def claim_and_hold():
+        async with sessions() as s:
+            run_id = await _claim_for_pipeline(
+                s, case_id, owner, when=Case.status == "ready", conflict="x"
+            )
+            await asyncio.sleep(0.3)  # hold the row lock while the other tab submits
+            await s.commit()
+            return run_id
+
+    async def submit():
+        await asyncio.sleep(0.05)
+        async with _client(sessions, owner) as client:
+            return await client.post(f"/api/cases/{case_id}/mark-submitted")
+
+    run_id, resp = await asyncio.gather(claim_and_hold(), submit())
+    assert resp.status_code == 409
+
+    async with sessions() as s:
+        case = await s.get(Case, case_id)
+        letter = await s.scalar(select(AppealLetter).where(AppealLetter.case_id == case_id))
+    assert (case.status, case.pipeline_run_id, case.submitted_at) == ("processing", run_id, None)
+    assert letter.status == "draft" and letter.finalized_at is None
+
+
+# --- LOW-04: a re-reported outcome is a new report -----------------------------
+
+
+async def test_outcome_re_report_moves_reported_at(sessions, owner, owned_case):
+    case_id = owned_case["case_id"]
+    async with _client(sessions, owner) as client:
+        await client.post(f"/api/cases/{case_id}/mark-submitted")
+        assert (
+            await client.post(f"/api/cases/{case_id}/outcome", json={"result": "pending"})
+        ).status_code == 200
+        async with sessions() as s:
+            first = await s.scalar(select(Outcome.reported_at).where(Outcome.case_id == case_id))
+        await asyncio.sleep(0.01)
+        resp = await client.post(
+            f"/api/cases/{case_id}/outcome",
+            json={"result": "overturned", "amount_recovered_cents": 45000},
+        )
+        assert resp.status_code == 200 and resp.json()["status"] == "resolved"
+    async with sessions() as s:
+        row = await s.scalar(select(Outcome).where(Outcome.case_id == case_id))
+    assert row.result == "overturned" and row.reported_at > first
 
 
 # --- MED-20: the outcome upsert must not race its unique constraint ----------

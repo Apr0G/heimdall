@@ -115,6 +115,13 @@ def move_object(src_key: str, dst_key: str) -> None:
     client.delete_object(Bucket=bucket, Key=src_key)
 
 
+def delete_object(key: str) -> None:
+    """Remove one object. Used only to undo our own writes (an upload moved into
+    a case whose creation then failed, a corrected claim whose row never
+    committed) — never as a user-facing delete, which stays an operator job."""
+    _get_client().delete_object(Bucket=settings.s3_bucket_name, Key=key)
+
+
 def get_bytes(key: str) -> bytes:
     """Read an object's bytes — internal processing only (e.g. pypdf), never for
     serving file bodies to clients. Retries transient ClientErrors: an object

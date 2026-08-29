@@ -1,3 +1,4 @@
+import logging
 import re
 from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
@@ -15,6 +16,7 @@ from fastapi import (
 )
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
@@ -77,12 +79,15 @@ from app.services.s3 import (
     PRECHECK_DOC_TYPES,
     REQUIRED_DOC_TYPES,
     case_document_key,
+    delete_object,
     head_object,
     move_object,
     presigned_get_url,
     presigned_put_url,
     temp_upload_key,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/cases", tags=["cases"])
 
@@ -434,6 +439,75 @@ def _pipeline_for(case_type: str):
     return run_precheck_pipeline if case_type == "pre_check" else run_full_pipeline
 
 
+async def _delete_moved_uploads(keys: list[str]) -> None:
+    """Best-effort undo of `move_object` for uploads whose case will never
+    commit. Failures are logged (key only — practice/case ids, never content)
+    and swallowed: the original exception is what the caller must surface."""
+    for key in keys:
+        try:
+            await run_in_threadpool(delete_object, key)
+        except Exception:  # noqa: BLE001 — cleanup must not mask the real failure
+            logger.warning("could not delete orphaned upload", extra={"context": {"s3_key": key}})
+
+
+async def _attach_uploads(
+    session: AsyncSession,
+    case: Case,
+    documents: list,
+    user: User,
+    *,
+    ip: str | None,
+    user_agent: str | None,
+    audit_extra: dict | None = None,
+) -> None:
+    """Move each validated temp upload to its final case key, record the
+    Document row and its audit entry.
+
+    The DB rows roll back with the request if anything fails, but S3 has no
+    transaction: an exception after the first move (a 413 on the re-check, an
+    S3 error on a later document) used to strand every already-moved object
+    under practices/ with no Document row pointing at it — PHI that nothing
+    lists and nothing disposes. So every moved key is tracked and deleted
+    before the exception propagates.
+    """
+    moved: list[str] = []
+    try:
+        for doc in documents:
+            final_key = case_document_key(user.practice_id, case.id, doc.doc_type)
+            await run_in_threadpool(move_object, doc.s3_key, final_key)
+            moved.append(final_key)
+            head = await run_in_threadpool(head_object, final_key)
+            # The cap was checked on the temp key, but the presigned PUT stays
+            # writable until the move — re-check the object that actually landed,
+            # before the pipeline reads the whole body into memory.
+            _assert_within_upload_cap(head, doc.doc_type)
+            session.add(
+                Document(
+                    case_id=case.id,
+                    doc_type=doc.doc_type,
+                    s3_key=final_key,
+                    original_filename=doc.filename,
+                    mime_type="application/pdf",
+                    file_size_bytes=head.get("ContentLength") if head else None,
+                    uploaded_by=user.id,
+                )
+            )
+            await log_audit(
+                session,
+                action="document_upload",
+                resource_type="case",
+                resource_id=case.id,
+                user_id=user.id,
+                practice_id=user.practice_id,
+                ip=ip,
+                user_agent=user_agent,
+                metadata={"doc_type": doc.doc_type, **(audit_extra or {})},
+            )
+    except Exception:
+        await _delete_moved_uploads(moved)
+        raise
+
+
 @router.post("/upload-urls", response_model=UploadUrlsResponse)
 async def create_upload_urls(
     body: UploadUrlsRequest,
@@ -490,36 +564,7 @@ async def create_case(
     ip = safe_ip(client_ip(request))
     user_agent = request.headers.get("user-agent")
 
-    for doc in body.documents:
-        final_key = case_document_key(current_user.practice_id, case.id, doc.doc_type)
-        await run_in_threadpool(move_object, doc.s3_key, final_key)
-        head = await run_in_threadpool(head_object, final_key)
-        # The cap was checked on the temp key, but the presigned PUT stays
-        # writable until the move — re-check the object that actually landed,
-        # before the pipeline reads the whole body into memory.
-        _assert_within_upload_cap(head, doc.doc_type)
-        session.add(
-            Document(
-                case_id=case.id,
-                doc_type=doc.doc_type,
-                s3_key=final_key,
-                original_filename=doc.filename,
-                mime_type="application/pdf",
-                file_size_bytes=head.get("ContentLength") if head else None,
-                uploaded_by=current_user.id,
-            )
-        )
-        await log_audit(
-            session,
-            action="document_upload",
-            resource_type="case",
-            resource_id=case.id,
-            user_id=current_user.id,
-            practice_id=current_user.practice_id,
-            ip=ip,
-            user_agent=user_agent,
-            metadata={"doc_type": doc.doc_type},
-        )
+    await _attach_uploads(session, case, body.documents, current_user, ip=ip, user_agent=user_agent)
 
     await log_audit(
         session,
@@ -582,6 +627,45 @@ def _claim_stmt(case_id: UUID, practice_id: UUID, run_id: UUID, when):
         .returning(Case.id)
         .execution_options(synchronize_session=False)
     )
+
+
+def _transition_stmt(case_id: UUID, practice_id: UUID, allowed: tuple[str, ...], **values):
+    """A doctor-driven status change as ONE conditional UPDATE, same shape as
+    `_claim_stmt`: the allowed-from statuses live in the WHERE (with the tenant
+    filter) and RETURNING tells the caller whether the row was actually moved."""
+    return (
+        update(Case)
+        .where(Case.id == case_id, Case.practice_id == practice_id, Case.status.in_(allowed))
+        .values(**values)
+        .returning(Case.id)
+        .execution_options(synchronize_session=False)
+    )
+
+
+async def _transition_case(
+    session: AsyncSession,
+    case_id: UUID,
+    user: User,
+    *,
+    allowed: tuple[str, ...],
+    conflict: str,
+    **values,
+) -> None:
+    """Move a case between doctor-driven statuses atomically, or 409.
+
+    The check-then-act it replaces let a mark-submitted race a reanalyze in
+    another tab: both read `ready`, the reanalyze claim flipped the row to
+    `processing`, and this handler then wrote `submitted` (plus a finalized
+    letter) over it — or the pipeline later wrote `ready` over `submitted`
+    with `submitted_at` set. The status guard now lives in the UPDATE's WHERE,
+    so the loser blocks on the row lock, re-evaluates against the committed
+    row, matches nothing and gets a 409. The lock is held until the caller's
+    commit, so the letter finalisation that follows is inside the same
+    critical section.
+    """
+    moved = await session.scalar(_transition_stmt(case_id, user.practice_id, allowed, **values))
+    if moved is None:
+        raise HTTPException(status_code=409, detail=conflict)
 
 
 async def _latest(session: AsyncSession, model, case_id: UUID, order):
@@ -722,6 +806,7 @@ async def get_case(
         ),
         risk_report=(
             RiskReportDetail(
+                id=risk_report.id,
                 overall_risk_band=risk_report.overall_risk_band,
                 findings=[RiskFindingDetail(**f) for f in risk_report.findings],
                 proposed_edits=[
@@ -774,6 +859,8 @@ _NOT_EDITABLE_MESSAGES = {
         "PDF exported from your billing software."
     ),
     "tampered": "The draft claim no longer matches the file that was analysed.",
+    # `report_changed` is deliberately absent: the code itself is the detail,
+    # because the client keys on it to reload the report rather than show text.
 }
 
 
@@ -803,11 +890,18 @@ async def create_corrected_claim(
     ]
     try:
         row = await corrected_claim_service.create_corrected_claim(
-            session, case, selections, current_user
+            session, case, selections, current_user, risk_report_id=body.risk_report_id
         )
     except corrected_claim_service.ClaimNotEditable as exc:
         raise HTTPException(
             status_code=409, detail=_NOT_EDITABLE_MESSAGES.get(exc.code, exc.code)
+        ) from None
+    except IntegrityError:
+        # Two applies raced past the version lock (the service already removed
+        # its own PDF). The transaction is dead, so nothing else can be written.
+        raise HTTPException(
+            status_code=409,
+            detail="Another correction was just applied to this claim. Reload and try again.",
         ) from None
     except corrected_claim_service.InvalidSelection as exc:
         raise HTTPException(status_code=422, detail=f"Invalid edit selection: {exc}") from None
@@ -888,12 +982,17 @@ async def mark_submitted(
 ) -> CaseStatusResponse:
     case = await _get_owned_case(session, case_id, current_user)
     _require_appeal_case(case)
-    if case.status not in {"ready", "submitted"}:
-        raise HTTPException(status_code=409, detail="Only a ready case can be marked submitted")
-    case.status = "submitted"
     now = datetime.now(UTC)
-    if case.submitted_at is None:
-        case.submitted_at = now
+    # Idempotent: a second click keeps the original submitted_at.
+    await _transition_case(
+        session,
+        case_id,
+        current_user,
+        allowed=("ready", "submitted"),
+        conflict="Only a ready case can be marked submitted",
+        status="submitted",
+        submitted_at=func.coalesce(Case.submitted_at, now),
+    )
 
     # Finalize the letter the practice actually sent. This is what makes
     # `finalized_at` real, and it is what export_corpus's "prefer the finalized
@@ -916,7 +1015,9 @@ async def mark_submitted(
         user_agent=request.headers.get("user-agent"),
     )
     await session.commit()
-    return CaseStatusResponse(id=case.id, status=case.status)
+    # The transition wrote status via Core UPDATE (synchronize_session=False),
+    # so the ORM copy is stale — report the value just committed.
+    return CaseStatusResponse(id=case_id, status="submitted")
 
 
 @router.post("/{case_id}/outcome", response_model=CaseStatusResponse)
@@ -931,10 +1032,18 @@ async def upsert_outcome(
     # value is already a 422 before this handler runs.
     case = await _get_owned_case(session, case_id, current_user)
     _require_appeal_case(case)
-    if case.status not in {"submitted", "resolved"}:
-        raise HTTPException(
-            status_code=409, detail="Mark the case submitted before logging an outcome"
-        )
+    new_status = case_status_after_outcome(body.result)
+    # Status first: it takes the row lock, so the outcome row below can't be
+    # written against a case a concurrent reanalyze is flipping back to
+    # `processing`.
+    await _transition_case(
+        session,
+        case_id,
+        current_user,
+        allowed=("submitted", "resolved"),
+        conflict="Mark the case submitted before logging an outcome",
+        status=new_status,
+    )
 
     # A real upsert, matching this endpoint's name. The previous SELECT-then-INSERT
     # raced `outcomes.case_id`'s unique constraint: a double-clicked submit or a
@@ -950,12 +1059,15 @@ async def upsert_outcome(
         "reported_by": current_user.id,
     }
     await session.execute(
-        pg_insert(Outcome)
-        .values(case_id=case_id, source="user_reported", **values)
-        .on_conflict_do_update(index_elements=["case_id"], set_=values)
+        pg_insert(Outcome).values(case_id=case_id, source="user_reported", **values)
+        # A re-report is a new report: `reported_at` moves with it (the INSERT
+        # keeps the column default), so the row reflects when the practice last
+        # told us the result, not when it first did.
+        .on_conflict_do_update(
+            index_elements=["case_id"], set_={**values, "reported_at": func.now()}
+        )
     )
 
-    case.status = case_status_after_outcome(body.result)
     await log_audit(
         session,
         action="case_outcome_report",
@@ -968,7 +1080,8 @@ async def upsert_outcome(
         metadata={"result": body.result},
     )
     await session.commit()
-    return CaseStatusResponse(id=case.id, status=case.status)
+    # ORM copy is stale after the Core transition UPDATE — report the committed value.
+    return CaseStatusResponse(id=case_id, status=new_status)
 
 
 @router.post("/{case_id}/retry", response_model=CaseStatusResponse)
@@ -1171,36 +1284,15 @@ async def reanalyze_case(
 
     ip = safe_ip(client_ip(request))
     user_agent = request.headers.get("user-agent")
-    for doc in body.documents:
-        final_key = case_document_key(current_user.practice_id, case.id, doc.doc_type)
-        await run_in_threadpool(move_object, doc.s3_key, final_key)
-        head = await run_in_threadpool(head_object, final_key)
-        # The cap was checked on the temp key, but the presigned PUT stays
-        # writable until the move — re-check the object that actually landed,
-        # before the pipeline reads the whole body into memory.
-        _assert_within_upload_cap(head, doc.doc_type)
-        session.add(
-            Document(
-                case_id=case.id,
-                doc_type=doc.doc_type,
-                s3_key=final_key,
-                original_filename=doc.filename,
-                mime_type="application/pdf",
-                file_size_bytes=head.get("ContentLength") if head else None,
-                uploaded_by=current_user.id,
-            )
-        )
-        await log_audit(
-            session,
-            action="document_upload",
-            resource_type="case",
-            resource_id=case.id,
-            user_id=current_user.id,
-            practice_id=current_user.practice_id,
-            ip=ip,
-            user_agent=user_agent,
-            metadata={"doc_type": doc.doc_type, "reanalyze": True},
-        )
+    await _attach_uploads(
+        session,
+        case,
+        body.documents,
+        current_user,
+        ip=ip,
+        user_agent=user_agent,
+        audit_extra={"reanalyze": True},
+    )
 
     await log_audit(
         session,

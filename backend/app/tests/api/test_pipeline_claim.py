@@ -11,7 +11,7 @@ import uuid
 from sqlalchemy import or_, update
 from sqlalchemy.dialects import postgresql
 
-from app.api.cases import STALE_PROCESSING, _claim_stmt, _stalled_sql
+from app.api.cases import STALE_PROCESSING, _claim_stmt, _stalled_sql, _transition_stmt
 from app.models import Case
 
 CASE = uuid.UUID("00000000-0000-0000-0000-000000000001")
@@ -77,3 +77,20 @@ def test_stall_window_is_shared_with_the_python_helper():
     params = _compile(update(Case).where(_stalled_sql()).values(status="processing")).params
     assert STALE_PROCESSING in params.values()
     assert STALE_PROCESSING.total_seconds() > 0
+
+
+# --- LOW-01: doctor-driven transitions use the same conditional-UPDATE shape --
+
+
+def test_status_transition_is_conditional_tenant_scoped_and_detectable():
+    stmt = _transition_stmt(CASE, PRACTICE, ("ready", "submitted"), status="submitted")
+    sql = _sql(stmt)
+    assert "update cases set" in sql
+    where = sql.split("where", 1)[1]
+    # The allowed-from statuses are evaluated by the database, not Python.
+    assert "cases.status in" in where
+    # Hard rule 3: the transition cannot flip another practice's case.
+    assert "cases.practice_id" in where and "cases.id" in where
+    assert "returning" in sql
+    params = _compile(stmt).params
+    assert PRACTICE in params.values() and CASE in params.values()

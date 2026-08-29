@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
@@ -34,7 +35,7 @@ EDITABLE_OCR_STATUS = "not_needed"
 
 class ClaimNotEditable(Exception):
     """The case can't produce a corrected PDF. ``code`` is one of: not_ready,
-    no_report, no_claim_document, scanned, tampered."""
+    no_report, no_claim_document, scanned, tampered, report_changed."""
 
     def __init__(self, code: str) -> None:
         self.code = code
@@ -164,11 +165,18 @@ async def latest_corrected_claim(session: AsyncSession, case_id: UUID) -> Correc
 
 
 async def create_corrected_claim(
-    session: AsyncSession, case: Case, selections: list[Selection], user: User
+    session: AsyncSession,
+    case: Case,
+    selections: list[Selection],
+    user: User,
+    *,
+    risk_report_id: UUID | None = None,
 ) -> CorrectedClaim:
     """Patch the draft claim with the selected edits and record a new version.
     Does not commit — the router owns the transaction. Raises ClaimNotEditable,
-    InvalidSelection, or claim_patch.ClaimPatchError."""
+    InvalidSelection, claim_patch.ClaimPatchError, or (only if two applies
+    defeat the version lock) sqlalchemy IntegrityError with the PDF already
+    removed from S3."""
     if case.case_type != "pre_check" or case.status != "ready":
         raise ClaimNotEditable("not_ready")
     report = await session.scalar(
@@ -179,6 +187,11 @@ async def create_corrected_claim(
     )
     if report is None:
         raise ClaimNotEditable("no_report")
+    # Selections are indexes into ONE report's edit list. A client that says
+    # which report it read must be applying against that same report — if a
+    # newer one exists, index 2 may now be a different edit entirely.
+    if risk_report_id is not None and report.id != risk_report_id:
+        raise ClaimNotEditable("report_changed")
     doc = await session.scalar(
         select(Document)
         .where(Document.case_id == case.id, Document.doc_type == EDITABLE_DOC_TYPE)
@@ -200,6 +213,17 @@ async def create_corrected_claim(
 
     patched = await run_in_threadpool(claim_patch.patch_claim, data, [e for _, e in resolved])
 
+    # Serialise version allocation on the case row: two applies in flight
+    # (a double-click) both read max(version) and both insert max+1, and the
+    # loser dies on uq_corrected_claims_case_version AFTER its PDF is in S3.
+    # The lock is taken after the CPU-heavy patch so it is held only across
+    # the version read, the S3 put and the insert, and it is released by the
+    # router's commit. Tenant-scoped like every other Case query.
+    await session.scalar(
+        select(Case.id)
+        .where(Case.id == case.id, Case.practice_id == case.practice_id)
+        .with_for_update()
+    )
     version = (
         await session.scalar(
             select(func.coalesce(func.max(CorrectedClaim.version), 0)).where(
@@ -223,7 +247,21 @@ async def create_corrected_claim(
         created_by=user.id,
     )
     session.add(row)
-    await session.flush()
+    try:
+        await session.flush()
+    except IntegrityError:
+        # The row will never commit, so the PDF it points at must not outlive
+        # it as an unreferenced PHI object. Best effort: the conflict is what
+        # the caller must surface, not a cleanup failure.
+        if key is not None:
+            try:
+                await run_in_threadpool(s3.delete_object, key)
+            except Exception:  # noqa: BLE001 — cleanup must not mask the conflict
+                logger.warning(
+                    "could not delete orphaned corrected claim",
+                    extra={"context": {"case_id": str(case.id), "version": version}},
+                )
+        raise
     logger.info(
         "corrected claim created",
         extra={

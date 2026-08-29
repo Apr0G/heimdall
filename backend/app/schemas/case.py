@@ -51,9 +51,14 @@ class CaseListResponse(BaseModel):
     page_size: int
 
 
+# Filenames are stored on the Document row and echoed back on the detail page;
+# a bound keeps a hostile client from persisting megabytes per upload slot.
+_FILENAME_MAX = 255
+
+
 class UploadSlotRequest(BaseModel):
     doc_type: str
-    filename: str
+    filename: str = Field(max_length=_FILENAME_MAX)
     content_type: str = "application/pdf"
 
 
@@ -77,7 +82,7 @@ class UploadUrlsResponse(BaseModel):
 class NewCaseDocument(BaseModel):
     doc_type: str
     s3_key: str
-    filename: str
+    filename: str = Field(max_length=_FILENAME_MAX)
 
 
 class CreateCaseRequest(BaseModel):
@@ -165,6 +170,9 @@ class ProposedEditDetail(BaseModel):
 
 
 class RiskReportDetail(BaseModel):
+    # Echoed back in CorrectedClaimRequest.risk_report_id so an apply is
+    # checked against the report the doctor actually read.
+    id: UUID
     overall_risk_band: str | None
     findings: list[RiskFindingDetail]
     proposed_edits: list[ProposedEditDetail] = []
@@ -195,6 +203,11 @@ class CorrectedClaimSelection(BaseModel):
 
 class CorrectedClaimRequest(BaseModel):
     selections: list[CorrectedClaimSelection] = Field(min_length=1, max_length=20)
+    # The report the indexes were chosen from. Optional for older clients; when
+    # sent and it is no longer the latest report, the apply is refused (409
+    # `report_changed`) instead of resolving the indexes against a different
+    # edit list.
+    risk_report_id: UUID | None = None
 
 
 class CorrectedClaimEditResult(BaseModel):
@@ -313,7 +326,9 @@ class OutcomeRequest(BaseModel):
     # the same 100x unit error the extraction schema rejects.
     amount_recovered_cents: StrictInt | None = Field(default=None, ge=0)
     resolution_date: date | None = None
-    notes: str | None = None
+    # Free text, persisted and echoed on the detail page — bounded so it stays
+    # a note, not a dumping ground.
+    notes: str | None = Field(default=None, max_length=2000)
 
 
 class DownloadUrlResponse(BaseModel):
