@@ -166,6 +166,33 @@ class TestProposedEditsFilter:
             None,
         ]
 
+    def test_icd10_shapes_beyond_three_digits_keep_their_value(self):
+        # Every injury/poisoning code carries X placeholders and a 7th
+        # character, gout/neoplasm categories a letter in position 3, and the
+        # U chapter is live — a pattern that drops these loses one-click apply
+        # for exactly the Box 21 corrections a review most often proposes.
+        result = RiskReviewResult.model_validate(
+            {
+                "findings": [],
+                "proposed_edits": [
+                    _edit("change_code", value="S72.001A"),
+                    _edit("change_code", value="t36.0x1a"),
+                    _edit("change_code", value="M1A.0X0"),
+                    _edit("change_code", value="U07.1"),
+                    _edit("change_code", value="S72.001AB"),  # too long
+                    _edit("change_code", value="1A2"),  # not a code shape
+                ],
+            }
+        )
+        assert [e.value for e in result.proposed_edits] == [
+            "S72.001A",
+            "T36.0X1A",
+            "M1A.0X0",
+            "U07.1",
+            None,
+            None,
+        ]
+
     def test_non_list_tolerated(self):
         assert (
             RiskReviewResult.model_validate({"findings": [], "proposed_edits": "no"}).proposed_edits

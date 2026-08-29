@@ -202,8 +202,12 @@ class RiskFinding(BaseModel):
 _EDIT_VALUE_RE = {
     "add_modifier": re.compile(r"^[A-Z0-9]{2}$"),
     "change_units": re.compile(r"^[1-9]\d{0,2}$"),
-    # CPT/HCPCS, or an ICD-10-CM code for a Box 21 (diagnosis) correction.
-    "change_code": re.compile(r"^(?:\d{5}|\d{4}[FTU]|[A-Z]\d{4}|[A-TV-Z]\d{2}(?:\.?\d{1,4})?)$"),
+    # CPT/HCPCS, or an ICD-10-CM code for a Box 21 (diagnosis) correction —
+    # the ICD-10 shape must match services/claim_patch._ICD10_RE (7th-character
+    # extensions, X placeholders, a letter in position 3, the U chapter).
+    "change_code": re.compile(
+        r"^(?:\d{5}|\d{4}[FTU]|[A-Z]\d{4}|[A-Z]\d[A-Z0-9](?:\.?[A-Z0-9]{1,4})?)$"
+    ),
 }
 
 

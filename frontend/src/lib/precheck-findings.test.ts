@@ -10,6 +10,7 @@ import {
   fixTarget,
   isClaimEdit,
   modifierOptions,
+  isDxCode,
   skipReasonText,
 } from "./precheck-findings";
 
@@ -222,6 +223,24 @@ describe("corrected-claim selection helpers", () => {
       value: "1",
       charge: "keep",
     });
+  });
+
+  it("accepts the ICD-10-CM shapes a Box 21 correction can need", () => {
+    for (const code of [
+      "N18.5",
+      "D509",
+      "S72.001A",
+      "T36.0X1A",
+      "M1A.0X0",
+      "U07.1",
+      "Z3A.12",
+    ]) {
+      expect(isDxCode(code)).toBe(true);
+    }
+    // (HCPCS "J3301" is also dx-shaped — callers test isProcedureCode first.)
+    for (const code of ["99213", "N1", "S72.001AB", "abc", "1A2"]) {
+      expect(isDxCode(code)).toBe(false);
+    }
   });
 
   it("translates skip reasons and falls back for unknown ones", () => {

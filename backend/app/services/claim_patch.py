@@ -58,8 +58,11 @@ MAX_MODIFIERS = 4  # Box 24D has four modifier positions
 _CODE_RE = re.compile(r"^(?:\d{5}|\d{4}[FTU]|[A-Z]\d{4})$")
 _MODIFIER_RE = re.compile(r"^[A-Z0-9]{2}$")
 # ICD-10-CM as printed in Box 21 — with or without the decimal (the paper form
-# omits it: "D509"). U is excluded (reserved chapter), same as CMS's own list.
-_ICD10_RE = re.compile(r"^[A-TV-Z]\d{2}(?:\.?\d{1,4})?$")
+# omits it: "D509"). Category: letter, digit, then a digit OR a letter (C4A,
+# M1A, Z3A); up to four alphanumeric extension characters (an "X" placeholder,
+# a 7th-character encounter code: S72.001A, T36.0X1A). The U chapter carries
+# live codes (U07.1 COVID-19, U09.9), so it is not excluded.
+_ICD10_RE = re.compile(r"^[A-Z]\d[A-Z0-9](?:\.?[A-Z0-9]{1,4})?$")
 # Box 24E: letters A–L on the 02/12 form (printed "AB", "A,B"), digits 1–4 on
 # the older 08/05 form some payers' samples still show.
 _DX_POINTER_RE = re.compile(r"^(?:[A-L](?:,?[A-L]){0,3}|[1-4](?:,?[1-4]){0,3})$")

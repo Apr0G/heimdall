@@ -106,8 +106,12 @@ export function isProcedureCode(code: string): boolean {
 }
 
 // ICD-10-CM, with or without the decimal the paper form omits ("D509").
+// Category: letter, digit, then digit or letter (C4A, M1A); up to four
+// alphanumeric extension characters (X placeholders, a 7th-character
+// encounter code: S72.001A, T36.0X1A). The U chapter is live (U07.1). Must
+// match backend schemas/precheck.py and services/claim_patch.py.
 export function isDxCode(code: string): boolean {
-  return /^[A-TV-Z]\d{2}(\.?\d{1,4})?$/.test(code.trim().toUpperCase());
+  return /^[A-Z]\d[A-Z0-9](\.?[A-Z0-9]{1,4})?$/.test(code.trim().toUpperCase());
 }
 
 export function buildSelections(

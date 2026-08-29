@@ -899,3 +899,23 @@ def test_a_second_unit_change_on_a_blank_units_cell_rewrites_the_first():
         (True, None),
         (False, "already_present"),
     ]
+
+
+@pytest.mark.parametrize(
+    ("was", "now"),
+    [
+        ("T36.0X1A", "T36.0X5A"),
+        ("S72.001A", "S72.001D"),
+        ("U07.1", "U09.9"),
+        ("M1A.0X0", "M1A.0X1"),
+    ],
+)
+def test_diagnosis_codes_with_letters_past_the_category_are_editable(was, now):
+    # Every injury/poisoning code carries a 7th character and X placeholders,
+    # COVID lives in the U chapter, and gout/neoplasm categories have a letter
+    # in position 3 — the old pattern refused all of them as "bad_value".
+    pdf = build_claim(LINES, dx=(was, "N18.5"))
+    result = patch_claim(pdf, [ClaimEdit("change_code", was, now)])
+    assert (result.results[0].applied, result.results[0].reason) == (True, None)
+    texts = [w["text"] for w in words(result.pdf)]
+    assert now in texts and was not in texts
