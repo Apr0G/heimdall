@@ -10,11 +10,18 @@ import type {
 // The API keeps findings and edits as parallel lists with no explicit link:
 // the NCCI engine emits both from the same PTP hit / MUE violation, and the
 // review prompt tells the model to derive edits only from its own findings.
-// The stable join key is the edit's `target` code, which both sides name in
-// the finding title ("20610 will be denied as bundled into 99213…"). Each
-// finding takes at most one edit and each edit lands on at most one finding;
-// an edit whose target no finding mentions is simply not shown — its prose
-// `suggested_fix` already covers the same ground.
+// The join key is the edit's `target` code. Every NCCI title LEADS with the
+// code the edit is about ("20610 will be denied as bundled into 99213…",
+// "97110: 6 units exceeds…"), and a bundling title names both codes of the
+// pair — so a mention anywhere is ambiguous, and the first pass takes only a
+// finding whose title starts with the target. The second pass (a review
+// finding worded freely) accepts a mention anywhere. An "info" finding has
+// nothing to fix — a bypassed bundling pair, a skipped check — so it never
+// takes an edit; otherwise a later edit for its partner code would land on
+// it and show a checkbox under "nothing to change". Each finding takes at
+// most one edit and each edit lands on at most one finding; an edit no
+// finding claims is simply not shown — its prose `suggested_fix` already
+// covers the same ground.
 export function attachEditsToFindings(
   findings: RiskFinding[],
   edits: ProposedEdit[],
@@ -23,12 +30,18 @@ export function attachEditsToFindings(
   for (const edit of edits) {
     const target = edit.target?.trim();
     if (!target) continue;
-    const index = findings.findIndex(
-      (finding, i) =>
-        !byFinding.has(i) &&
-        finding.source === edit.source &&
-        mentionsCode(finding.title, target),
+    const open = (finding: RiskFinding, i: number) =>
+      !byFinding.has(i) &&
+      finding.source === edit.source &&
+      finding.severity !== "info";
+    let index = findings.findIndex(
+      (finding, i) => open(finding, i) && leadsWithCode(finding.title, target),
     );
+    if (index === -1) {
+      index = findings.findIndex(
+        (finding, i) => open(finding, i) && mentionsCode(finding.title, target),
+      );
+    }
     if (index !== -1) byFinding.set(index, edit);
   }
   return byFinding;
@@ -37,10 +50,18 @@ export function attachEditsToFindings(
 // Whole-token match so "2061" does not hit "20610". Codes are alphanumeric
 // (CPT "99213", HCPCS "J3301"); anything else around them is a boundary.
 function mentionsCode(text: string, code: string): boolean {
-  const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(^|[^A-Za-z0-9])${escaped}(?![A-Za-z0-9])`, "i").test(
-    text,
-  );
+  return new RegExp(
+    `(^|[^A-Za-z0-9])${escapeRe(code)}(?![A-Za-z0-9])`,
+    "i",
+  ).test(text);
+}
+
+function leadsWithCode(text: string, code: string): boolean {
+  return new RegExp(`^\\s*${escapeRe(code)}(?![A-Za-z0-9])`, "i").test(text);
+}
+
+function escapeRe(code: string): string {
+  return code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 // --- corrected-claim selection --------------------------------------------

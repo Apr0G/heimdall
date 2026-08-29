@@ -64,6 +64,62 @@ describe("attachEditsToFindings", () => {
     ).toBe(1);
   });
 
+  it("prefers the finding whose title leads with the code — a bundling title names both", () => {
+    // 20610 carries modifier 59, so its bundling pair with 99213 is bypassed
+    // (an info finding with no edit); 99213 is also over its MUE. The units
+    // edit for 99213 must land on the MUE finding, not on the bypass notice
+    // whose title merely mentions 99213 as the column-1 partner.
+    const findings = [
+      finding({
+        title: "20610 is bundled into 99213, but a modifier bypasses the edit",
+        severity: "info",
+      }),
+      finding({
+        title: "99213: 3 units exceeds the Medicare MUE limit of 1/day",
+        severity: "medium",
+      }),
+    ];
+    const edits = [edit({ kind: "change_units", target: "99213", value: "1" })];
+    expect(attachEditsToFindings(findings, edits)).toEqual(
+      new Map([[1, edits[0]]]),
+    );
+  });
+
+  it("never attaches an edit to an info finding — there is nothing to fix", () => {
+    const findings = [
+      finding({
+        title: "20610 is bundled into 99213, but a modifier bypasses the edit",
+        severity: "info",
+      }),
+      finding({ title: "20610 will be denied as bundled into 20550" }),
+    ];
+    const edits = [edit({ kind: "remove_line", target: "20610" })];
+    expect(attachEditsToFindings(findings, edits)).toEqual(
+      new Map([[1, edits[0]]]),
+    );
+    expect(attachEditsToFindings([findings[0]], edits).size).toBe(0);
+  });
+
+  it("falls back to a mention anywhere for a freely worded review finding", () => {
+    const findings = [
+      finding({
+        title: "Documentation does not support the level of 99214",
+        source: "model",
+      }),
+    ];
+    const edits = [
+      edit({
+        kind: "change_code",
+        target: "99214",
+        value: "99213",
+        source: "model",
+      }),
+    ];
+    expect(attachEditsToFindings(findings, edits)).toEqual(
+      new Map([[0, edits[0]]]),
+    );
+  });
+
   it("gives each finding at most one edit, and each edit one finding", () => {
     // Two bundling hits on the same column-2 code produce two findings and
     // two edits; they must pair off rather than both landing on the first.
