@@ -565,16 +565,23 @@ async def _claim_for_pipeline(
     claim rolls back with it and the case is not stranded in `processing`.
     """
     run_id = uuid4()
-    claimed = await session.scalar(
+    claimed = await session.scalar(_claim_stmt(case_id, user.practice_id, run_id, when))
+    if claimed is None:
+        raise HTTPException(status_code=409, detail=conflict)
+    return run_id
+
+
+def _claim_stmt(case_id: UUID, practice_id: UUID, run_id: UUID, when):
+    """The claim as a statement, so the unit suite can compile THIS — not a
+    hand-written copy — and pin the WHERE (status guard + tenant filter) and
+    the RETURNING that make it atomic and detectable."""
+    return (
         update(Case)
-        .where(Case.id == case_id, Case.practice_id == user.practice_id, when)
+        .where(Case.id == case_id, Case.practice_id == practice_id, when)
         .values(status="processing", error_message=None, pipeline_run_id=run_id)
         .returning(Case.id)
         .execution_options(synchronize_session=False)
     )
-    if claimed is None:
-        raise HTTPException(status_code=409, detail=conflict)
-    return run_id
 
 
 async def _latest(session: AsyncSession, model, case_id: UUID, order):

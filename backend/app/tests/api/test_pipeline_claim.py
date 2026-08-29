@@ -6,25 +6,30 @@ is what makes the claim atomic — losing the WHERE would silently reintroduce t
 double-pipeline race without failing any behavioural test.
 """
 
+import uuid
+
 from sqlalchemy import or_, update
 from sqlalchemy.dialects import postgresql
 
-from app.api.cases import STALE_PROCESSING, _stalled_sql
+from app.api.cases import STALE_PROCESSING, _claim_stmt, _stalled_sql
 from app.models import Case
+
+CASE = uuid.UUID("00000000-0000-0000-0000-000000000001")
+PRACTICE = uuid.UUID("00000000-0000-0000-0000-00000000000a")
+RUN = uuid.UUID("00000000-0000-0000-0000-00000000000b")
+
+
+def _compile(stmt):
+    return stmt.compile(dialect=postgresql.dialect())
 
 
 def _sql(stmt) -> str:
-    return str(stmt.compile(dialect=postgresql.dialect())).lower()
+    return str(_compile(stmt)).lower()
 
 
 def _claim(when) -> str:
-    """Mirror of _claim_for_pipeline's statement (it needs a live session to run)."""
-    return _sql(
-        update(Case)
-        .where(Case.id == "00000000-0000-0000-0000-000000000001", when)
-        .values(status="processing", pipeline_run_id=None)
-        .returning(Case.id)
-    )
+    # The production statement itself (api.cases._claim_for_pipeline runs it).
+    return _sql(_claim_stmt(CASE, PRACTICE, RUN, when))
 
 
 def test_retry_claim_is_conditional_on_status():
@@ -35,9 +40,23 @@ def test_retry_claim_is_conditional_on_status():
     assert "status" in sql.split("where", 1)[1]
 
 
+def test_retry_claim_is_tenant_scoped_in_the_same_where():
+    # Hard rule 3: the claim must not be able to flip another practice's case.
+    where = _claim(Case.status == "ready").split("where", 1)[1]
+    assert "cases.practice_id" in where and "cases.id" in where
+    params = _compile(_claim_stmt(CASE, PRACTICE, RUN, Case.status == "ready")).params
+    assert PRACTICE in params.values() and CASE in params.values()
+
+
 def test_retry_claim_returns_a_row_so_the_loser_is_detectable():
     # Without RETURNING there is no way to tell "claimed it" from "someone else did".
     assert "returning" in _claim(Case.status == "ready")
+
+
+def test_retry_claim_stamps_the_run_token_and_clears_the_old_error():
+    params = _compile(_claim_stmt(CASE, PRACTICE, RUN, Case.status == "error")).params
+    assert RUN in params.values()
+    assert "error_message" in _claim(Case.status == "error").split("set", 1)[1]
 
 
 def test_stalled_sql_uses_database_clock_not_python():
@@ -53,5 +72,8 @@ def test_stalled_sql_requires_processing_status():
 
 
 def test_stall_window_is_shared_with_the_python_helper():
-    # _stalled_sql() and _is_stalled() must not drift apart.
+    # _stalled_sql() and _is_stalled() must not drift apart: the interval the SQL
+    # binds IS the constant the Python helper compares against.
+    params = _compile(update(Case).where(_stalled_sql()).values(status="processing")).params
+    assert STALE_PROCESSING in params.values()
     assert STALE_PROCESSING.total_seconds() > 0
