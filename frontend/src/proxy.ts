@@ -53,8 +53,12 @@ export function proxy(request: NextRequest) {
   return response;
 }
 
+// Skip Next's own asset routes and root-level static files (favicon, the
+// SVGs in public/). The extension branch is anchored to a single path segment
+// on purpose: `.*\.png$` let `/pre-checks/anything.png` bypass the login
+// redirect and render the app shell without a CSP header.
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|ico)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|[^/]+\\.(?:svg|png|jpg|jpeg|gif|ico)$).*)",
   ],
 };
