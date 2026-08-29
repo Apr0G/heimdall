@@ -18,7 +18,7 @@ import pytest
 from sqlalchemy import select
 
 from app.models import AppealLetter, Case, Document, Extraction, ModelRun
-from app.services import claude_client, document_extractor, pipeline, s3
+from app.services import claude_client, document_extractor, pdf_gen, pipeline, s3
 from app.services.claude_client import _RawCall
 
 pytestmark = pytest.mark.asyncio
@@ -49,10 +49,8 @@ _ANALYSIS = {
     "additional_documents_needed": [],
 }
 _LETTER = {
-    "subject_line": "Appeal of denial for CLM-TEST-0001",
     "body": "To whom it may concern: " + ("This appeal is well supported. " * 30),
     "appeal_type": "level_1_internal",
-    "attachments_referenced": [],
 }
 
 _BY_PURPOSE = {"extraction": _EXTRACTION, "analysis": _ANALYSIS, "letter_draft": _LETTER}
@@ -83,16 +81,15 @@ async def _seed_case(sessions, user, run_id) -> Case:
         return case
 
 
-def _patch_aws(monkeypatch, sessions):
+def _patch_aws(monkeypatch, sessions, *, pepper: str = "test-pepper-not-a-real-secret"):
     from app.core import hashing
     from app.core.config import settings
 
     # A pepper so member-ID hashing actually runs (else it degrades to None).
-    monkeypatch.setattr(settings, "phi_hash_pepper", "test-pepper-not-a-real-secret")
+    monkeypatch.setattr(settings, "phi_hash_pepper", pepper)
     monkeypatch.setattr(hashing, "settings", settings, raising=False)
     monkeypatch.setattr(pipeline, "AsyncSessionLocal", sessions)
     monkeypatch.setattr(claude_client, "AsyncSessionLocal", sessions)
-    monkeypatch.setattr(s3, "get_bytes", lambda key: b"%PDF-1.4 synthetic")
     monkeypatch.setattr(s3, "put_text", lambda key, text: None)
     monkeypatch.setattr(s3, "head_object", lambda key: {"ContentLength": 10})
     monkeypatch.setattr(s3, "extracted_text_key", lambda key: key + ".txt")
@@ -101,9 +98,11 @@ def _patch_aws(monkeypatch, sessions):
     def fake_digital(data):
         return None if b"CLAIMSCAN" in data else "synthetic digital text"
 
-    # Distinguish the scanned doc by its bytes: get_bytes returns marker for claim.
+    # Distinguish the scanned doc by its bytes: the marker is the PDF's text.
+    # Real (if tiny) PDFs, because the pipeline parses the bytes with pypdf for
+    # the page cap before the patched extractor ever sees them.
     def fake_get_bytes(key):
-        return b"%PDF CLAIMSCAN" if "/claim/" in key else b"%PDF-1.4 synthetic"
+        return pdf_gen.render_letter_pdf("CLAIMSCAN" if "/claim/" in key else "synthetic")
 
     monkeypatch.setattr(s3, "get_bytes", fake_get_bytes)
     monkeypatch.setattr(document_extractor, "digital_text_from_bytes", fake_digital)
@@ -165,4 +164,28 @@ async def test_full_pipeline_end_to_end_with_scanned_second_doc(sessions, tenant
             )
         ).all()
         assert [r.purpose for r in runs] == ["extraction", "analysis", "letter_draft"]
-        assert [r.prompt_version for r in runs] == ["extract_v4", "analyze_v6", "letter_v6"]
+        assert [r.prompt_version for r in runs] == [
+            "extract_v4",
+            "analyze_v6",
+            "letter_v7",
+        ]
+
+
+async def test_pipeline_without_a_pepper_omits_the_hash_but_never_the_raw_id(
+    sessions, tenant, monkeypatch
+):
+    """The degrade branch in extraction.py: no PHI_HASH_PEPPER means no
+    member_id_hash (the column has no readers), but the raw member id must
+    still never be persisted, and the case must still reach `ready`."""
+    run_id = uuid.uuid4()
+    case = await _seed_case(sessions, tenant, run_id)
+    _patch_aws(monkeypatch, sessions, pepper="")
+
+    await asyncio.wait_for(pipeline.run_full_pipeline(case.id, run_id), timeout=60)
+
+    async with sessions() as s:
+        fresh = await s.get(Case, case.id)
+        assert fresh.status == "ready"
+        assert fresh.member_id_hash is None
+        extraction = await s.scalar(select(Extraction).where(Extraction.case_id == case.id))
+        assert "member_id" not in (extraction.extracted_json or {})

@@ -29,7 +29,7 @@ def _draft(**overrides) -> dict:
 
 
 def test_prompt_version_is_pinned():
-    assert letter_prompt.VERSION == "letter_v6"
+    assert letter_prompt.VERSION == "letter_v7"
 
 
 def test_unknown_appeal_type_normalized():
@@ -41,10 +41,16 @@ def test_unknown_appeal_type_normalized():
     )
 
 
-def test_nulls_coerced_except_body():
-    result = LetterDraft.model_validate(_draft(subject_line=None, attachments_referenced=None))
-    assert result.subject_line == ""
-    assert result.attachments_referenced == []
+def test_fields_the_letter_never_used_are_ignored_not_required():
+    """letter_v6 asked for subject_line / attachments_referenced and threw them
+    away (LOW-15). A model that still emits them must not fail validation, and a
+    draft without them is complete."""
+    result = LetterDraft.model_validate(
+        _draft(subject_line="Re: anything", attachments_referenced=["denial letter"])
+    )
+    assert not hasattr(result, "subject_line")
+    assert not hasattr(result, "attachments_referenced")
+    assert set(LetterDraft.model_fields) == {"body", "appeal_type"}
 
 
 # --- HIGH-04: an empty body must FAIL, not validate ---------------------------
@@ -78,21 +84,8 @@ def test_minimum_body_length_is_enforced_at_the_boundary():
     assert LetterDraft.model_validate({"body": "x" * MIN_BODY_CHARS}).body
 
 
-def test_attachments_filtered_of_empties():
-    result = LetterDraft.model_validate(
-        _draft(attachments_referenced=["denial letter", "", "clinical notes"])
-    )
-    assert result.attachments_referenced == ["denial letter", "clinical notes"]
-
-
 def test_well_formed_letter_parses():
-    result = LetterDraft.model_validate(
-        _draft(
-            subject_line="Re: Appeal of Denied Claim #CLM-TEST-0001 for J.D., DOS 2026-05-01",
-            appeal_type="level_1_internal",
-            attachments_referenced=["denial letter", "original claim (CMS-1500)"],
-        )
-    )
+    result = LetterDraft.model_validate(_draft(appeal_type="level_1_internal"))
     assert result.body.startswith("To Whom")
     assert result.appeal_type == "level_1_internal"
 
@@ -147,6 +140,6 @@ def test_unknown_appeal_level_falls_back_to_first_level():
     assert "first-level internal appeal" in prompt
 
 
-@pytest.mark.parametrize("value", [["peer_to_peer"], {"level": 1}, 2])
+@pytest.mark.parametrize("value", [["peer_to_peer"], {"level": 1}, 2, None])
 def test_unhashable_appeal_type_degrades_instead_of_raising(value):
     assert LetterDraft.model_validate(_draft(appeal_type=value)).appeal_type == "level_1_internal"
