@@ -96,6 +96,15 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload)
 
 
+# Loggers uvicorn configures with its own plaintext handlers before the app is
+# imported. Starlette's ServerErrorMiddleware re-raises every unhandled
+# exception after our handler has answered the request, and uvicorn then logs
+# "Exception in ASGI application" with the full traceback through these —
+# `str(exc)` and the whole __cause__/__context__ chain, no _safe_exception, no
+# _redact. Clearing the root's handlers never touched them (propagate=False).
+_UVICORN_LOGGERS = ("uvicorn", "uvicorn.error", "uvicorn.access")
+
+
 def setup_logging(level: str = "INFO") -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter())
@@ -103,3 +112,12 @@ def setup_logging(level: str = "INFO") -> None:
     root.handlers.clear()
     root.addHandler(handler)
     root.setLevel(level.upper())
+    # One sink: everything renders through JsonFormatter, including the
+    # tracebacks uvicorn writes for exceptions that escape the app.
+    for name in _UVICORN_LOGGERS:
+        uv = logging.getLogger(name)
+        uv.handlers.clear()
+        uv.propagate = True
+        # A dictConfig/fileConfig elsewhere (alembic's) disables loggers it
+        # doesn't name; these must keep reporting whatever ran before us.
+        uv.disabled = False

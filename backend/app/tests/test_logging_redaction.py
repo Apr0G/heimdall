@@ -1,3 +1,4 @@
+import io
 import json
 import logging
 
@@ -66,3 +67,41 @@ def test_formatter_withholds_untrusted_message_end_to_end():
     record.exc_info = _exc_info(ForeignError("b'(Jane Doe) Tj'"))
     payload = json.loads(JsonFormatter().format(record))
     assert "Jane" not in json.dumps(payload)
+
+
+def test_uvicorn_loggers_render_through_the_json_formatter():
+    """uvicorn installs its own plaintext handlers (propagate=False) before
+    app.main is imported and logs every exception that escapes the ASGI app
+    through them — str(exc) and the cause chain, bypassing _safe_exception."""
+    from app.core.logging import setup_logging
+
+    root = logging.getLogger()
+    uv = logging.getLogger("uvicorn.error")
+    saved = (uv.handlers[:], uv.propagate, root.handlers[:], root.level)
+    plain = io.StringIO()
+    try:
+        uv.handlers = [logging.StreamHandler(plain)]  # what uvicorn's LOGGING_CONFIG does
+        uv.propagate = False
+        setup_logging("INFO")
+        assert uv.handlers == [] and uv.propagate is True
+        # The one remaining sink is the root's JSON handler.
+        (json_handler,) = root.handlers
+        captured = io.StringIO()
+        json_handler.setStream(captured)
+
+        class ParserError(Exception):
+            pass
+
+        ParserError.__module__ = "pypdf.generic"
+        try:
+            raise ParserError("Invalid object: b'(Jane Doe) Tj'")
+        except ParserError:
+            uv.exception("Exception in ASGI application")
+        assert plain.getvalue() == ""  # nothing on the plaintext path
+        record = json.loads(captured.getvalue().strip().splitlines()[-1])
+        assert record["logger"] == "uvicorn.error"
+        assert record["exc"]["type"] == "ParserError"
+        assert "Jane" not in captured.getvalue()
+    finally:
+        uv.handlers, uv.propagate = saved[0], saved[1]
+        root.handlers, root.level = saved[2], saved[3]
