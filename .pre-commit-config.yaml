@@ -59,7 +59,10 @@ repos:
         pass_filenames: false
       - id: terraform-fmt
         name: terraform fmt -check
-        entry: terraform fmt -check -recursive
+        # Check only the staged .tf files. `-recursive` without filenames also
+        # swept in the gitignored terraform.tfvars, so a formatting nit in a
+        # file that is never committed (and that agents are forbidden to touch)
+        # blocked every infrastructure commit.
+        entry: terraform fmt -check
         language: system
         files: \.tf$
-        pass_filenames: false
