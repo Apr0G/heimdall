@@ -243,9 +243,12 @@ resource "aws_cloudtrail" "main" {
   # S3 object-level (data) events on the PHI documents bucket, so presigned-URL
   # GET/PUT — which happen OUTSIDE the app — are logged. If a presigned URL leaks
   # inside its 15-min window, its use is now recorded. Adds S3 data-event charges
-  # (~$0.10 per 100k events); scoped to the one bucket to keep cost/volume down.
+  # (~$0.10 per 100k events); scoped to two buckets to keep cost/volume down.
+  # The Terraform state bucket is the second: its objects hold every generated
+  # secret, so a read of the state from anything other than a plan/apply is
+  # exactly the access that should leave a trail (backend-state.tf).
   advanced_event_selector {
-    name = "S3 data events (documents bucket)"
+    name = "S3 data events (documents + tfstate buckets)"
     field_selector {
       field  = "eventCategory"
       equals = ["Data"]
@@ -256,7 +259,7 @@ resource "aws_cloudtrail" "main" {
     }
     field_selector {
       field       = "resources.ARN"
-      starts_with = ["${aws_s3_bucket.documents.arn}/"]
+      starts_with = ["${aws_s3_bucket.documents.arn}/", "${aws_s3_bucket.tfstate.arn}/"]
     }
   }
 }

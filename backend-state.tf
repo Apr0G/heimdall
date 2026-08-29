@@ -35,6 +35,42 @@ resource "aws_s3_bucket_public_access_block" "tfstate" {
   restrict_public_buckets = true
 }
 
+# Same posture as the documents bucket (security.tf). The state file carries
+# every secret Terraform has ever generated — the RDS master password, the
+# heimdall_app password, the PHI hash pepper, the Redis AUTH token — and with
+# versioning on, each ROTATED value would otherwise sit in an old version
+# forever, so a rotation never actually retired the credential.
+resource "aws_s3_bucket_policy" "tfstate_tls_only" {
+  bucket = aws_s3_bucket.tfstate.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "DenyInsecureTransport"
+      Effect    = "Deny"
+      Principal = "*"
+      Action    = "s3:*"
+      Resource = [
+        aws_s3_bucket.tfstate.arn,
+        "${aws_s3_bucket.tfstate.arn}/*",
+      ]
+      Condition = { Bool = { "aws:SecureTransport" = "false" } }
+    }]
+  })
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "tfstate" {
+  bucket = aws_s3_bucket.tfstate.id
+
+  rule {
+    id     = "expire-noncurrent-state"
+    status = "Enabled"
+    filter {}
+    # 90 days is enough history to unwind a bad apply, and bounds how long a
+    # rotated credential survives. The current version is never touched.
+    noncurrent_version_expiration { noncurrent_days = 90 }
+  }
+}
+
 # State now lives in the encrypted S3 bucket above. To activate/migrate, run:
 #   terraform init -migrate-state
 terraform {
