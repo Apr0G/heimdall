@@ -11,11 +11,12 @@ import uuid
 from dataclasses import dataclass
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from app.models import Practice, User
-from app.services.cognito import admin_invite
+from app.services.cognito import admin_find_sub, admin_invite
 
 ROLES = ("doctor", "office_manager", "admin")
 
@@ -59,44 +60,70 @@ async def invite_user(
     if bool(practice_id) == bool(practice_name):
         raise ProvisioningError("Choose an existing practice or name a new one — not both")
 
-    # Look up the existing row BEFORE any Cognito side effect. Inviting first
-    # meant a request we then refuse (email bound to a different identity) had
-    # already created an orphan Cognito account or resent an invite — a side
-    # effect that survives the DB rollback. Only the different-sub-refusal needs
-    # `sub`, so do the read-only DB check up front and refuse cheaply.
+    # Refuse BEFORE any Cognito side effect. Inviting first meant a request we
+    # then refuse (email bound to a different identity) had already created an
+    # orphan Cognito account and emailed a temporary password — side effects
+    # that survive the DB rollback. So the identity comparison is done against
+    # a read-only lookup; the invite call only happens once it is known to be
+    # safe. A reset-pending row is the one case where a rebind is the point.
     existing = await session.scalar(select(User).where(User.email == email))
+    if existing is not None and not existing.cognito_sub.startswith(RESET_PENDING_PREFIX):
+        current_sub = await run_in_threadpool(admin_find_sub, email)
+        if current_sub != existing.cognito_sub:
+            raise _rebind_refused()
 
     sub, created_cognito = await run_in_threadpool(admin_invite, email)
 
     if existing is not None:
         if existing.cognito_sub != sub:
             if not existing.cognito_sub.startswith(RESET_PENDING_PREFIX):
-                raise ProvisioningError(
-                    "This email is already bound to a different sign-in identity; "
-                    "refusing to rebind"
-                )
+                # Identity replaced between the lookup and the invite — refuse
+                # rather than rebind, same rule as above.
+                raise _rebind_refused()
             existing.cognito_sub = sub  # recovery from an interrupted authenticator reset
         practice = await session.get(Practice, existing.practice_id)
         return InviteResult(existing, practice, False, False, created_cognito)
 
-    created_practice = False
     if practice_id:
         practice = await session.get(Practice, practice_id)
         if practice is None:
             raise ProvisioningError("That practice doesn't exist")
-    else:
-        practice = Practice(name=practice_name)
-        session.add(practice)
-        await session.flush()
-        created_practice = True
 
-    user = User(
-        practice_id=practice.id,
-        email=email,
-        cognito_sub=sub,
-        role=role,
-        full_name=full_name,
-    )
-    session.add(user)
-    await session.flush()
+    # A savepoint around everything this invite inserts: a concurrent invite
+    # for the same email can land first, and the unique violation on
+    # users.email would otherwise poison the whole transaction (an unhandled
+    # 500, with a half-created practice in it). On conflict the savepoint is
+    # rolled back and the row the other caller created becomes ours — the
+    # same idempotent re-send outcome a sequential second invite gets.
+    try:
+        async with session.begin_nested():
+            created_practice = False
+            if not practice_id:
+                practice = Practice(name=practice_name)
+                session.add(practice)
+                await session.flush()
+                created_practice = True
+            user = User(
+                practice_id=practice.id,
+                email=email,
+                cognito_sub=sub,
+                role=role,
+                full_name=full_name,
+            )
+            session.add(user)
+            await session.flush()
+    except IntegrityError:
+        existing = await session.scalar(select(User).where(User.email == email))
+        if existing is None:
+            raise
+        if existing.cognito_sub != sub:
+            raise _rebind_refused() from None
+        practice = await session.get(Practice, existing.practice_id)
+        return InviteResult(existing, practice, False, False, created_cognito)
     return InviteResult(user, practice, True, created_practice, created_cognito)
+
+
+def _rebind_refused() -> ProvisioningError:
+    return ProvisioningError(
+        "This email is already bound to a different sign-in identity; refusing to rebind"
+    )

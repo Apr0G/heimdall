@@ -324,6 +324,24 @@ def admin_invite(email: str) -> tuple[str, bool]:
     return attrs["sub"], created
 
 
+def admin_find_sub(email: str) -> str | None:
+    """The `sub` of the Cognito user with this email, or None when no such user
+    exists. Read-only — the provisioning flow uses it to refuse a rebind BEFORE
+    admin_invite would create an identity or send an email."""
+    try:
+        resp = _get_client().admin_get_user(
+            UserPoolId=settings.cognito_user_pool_id, Username=email
+        )
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "UserNotFoundException":
+            return None
+        raise _client_error(exc) from exc
+    except BotoCoreError as exc:
+        raise _client_error(exc) from exc
+    attrs = {a["Name"]: a["Value"] for a in resp.get("UserAttributes", [])}
+    return attrs.get("sub")
+
+
 def admin_get_status(email: str) -> str:
     """Cognito UserStatus, e.g. FORCE_CHANGE_PASSWORD (invite unused) or CONFIRMED."""
     try:
