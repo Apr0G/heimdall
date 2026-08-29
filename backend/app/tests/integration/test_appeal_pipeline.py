@@ -10,6 +10,7 @@ onto the phase session, this test hangs.
 All data synthetic (hard rule 1).
 """
 
+import asyncio
 import json
 import uuid
 
@@ -138,9 +139,11 @@ async def test_full_pipeline_end_to_end_with_scanned_second_doc(sessions, tenant
     _patch_aws(monkeypatch, sessions)
 
     # If the heartbeat regressed onto the phase session, this call hangs on the
-    # scanned "claim" doc's mid-phase _touch_if_owner. The suite's default
-    # timeout turns that into a failure rather than a silent stall.
-    await pipeline.run_full_pipeline(case.id, run_id)
+    # scanned "claim" doc's mid-phase _touch_if_owner. There is no suite-wide
+    # timeout (pytest-timeout is not installed), so the guard is explicit: a
+    # regression fails here in a minute instead of sitting until the CI job
+    # limit.
+    await asyncio.wait_for(pipeline.run_full_pipeline(case.id, run_id), timeout=60)
 
     async with sessions() as s:
         fresh = await s.get(Case, case.id)

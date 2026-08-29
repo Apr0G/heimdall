@@ -8,6 +8,7 @@ Bedrock returns canned JSON — the pipeline code path is exercised end to end.
 All data synthetic (hard rule 1): Jane Doe-class initials, fabricated codes.
 """
 
+import asyncio
 import json
 import uuid
 from datetime import date
@@ -183,7 +184,7 @@ async def test_precheck_pipeline_end_to_end(sessions, tenant, monkeypatch):
     case = await _seed_case(sessions, tenant, run_id)
     _patch_aws(monkeypatch, sessions, [_EXTRACTION_JSON, _REVIEW_JSON])
 
-    await pipeline.run_precheck_pipeline(case.id, run_id)
+    await asyncio.wait_for(pipeline.run_precheck_pipeline(case.id, run_id), timeout=60)
 
     async with sessions() as s:
         fresh = await s.get(Case, case.id)
@@ -237,7 +238,7 @@ async def test_precheck_pipeline_no_billable_lines_errors(sessions, tenant, monk
     empty = {**_EXTRACTION_JSON, "claim_lines": []}
     _patch_aws(monkeypatch, sessions, [empty])
 
-    await pipeline.run_precheck_pipeline(case.id, run_id)
+    await asyncio.wait_for(pipeline.run_precheck_pipeline(case.id, run_id), timeout=60)
 
     async with sessions() as s:
         fresh = await s.get(Case, case.id)
@@ -302,7 +303,7 @@ async def test_precheck_pipeline_reads_a_fillable_claim_through_its_fields(
 
     monkeypatch.setattr(claude_client, "_invoke", fake_invoke)
 
-    await pipeline.run_precheck_pipeline(case.id, run_id)
+    await asyncio.wait_for(pipeline.run_precheck_pipeline(case.id, run_id), timeout=60)
 
     async with sessions() as s:
         fresh = await s.get(Case, case.id)
