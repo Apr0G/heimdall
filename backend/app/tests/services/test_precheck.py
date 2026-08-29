@@ -4,6 +4,7 @@ codes are synthetic (hard rule 1)."""
 
 from types import SimpleNamespace
 
+from app.schemas.precheck import normalize_edit_value
 from app.services.ncci import MueFinding, NcciResult, PtpFinding
 from app.services.precheck import (
     claim_lines_from_extraction,
@@ -116,6 +117,46 @@ class TestDeterministicEdits:
 
     def test_no_data_no_edits(self):
         assert deterministic_edits(NcciResult()) == []
+
+    def test_mue_of_zero_is_a_line_removal(self):
+        # There is no unit count to reduce to; the only claim edit is to drop
+        # the line — and the applier's value shape (1–999) has no room for 0.
+        result = NcciResult(
+            mue=(MueFinding("55555", 1, 0, 2, None),), version_tag="v", data_available=True
+        )
+        (edit,) = deterministic_edits(result)
+        assert (edit["kind"], edit["target"], edit["value"]) == ("remove_line", "55555", None)
+        assert "never payable" in edit["instruction"]
+        assert "cap" not in edit
+
+    def test_four_digit_mue_leaves_the_count_to_the_biller(self):
+        # A limit the patcher cannot write (Box 24G is 1–999) still names the
+        # ceiling; the value is None so the UI asks for the number.
+        result = NcciResult(
+            mue=(
+                MueFinding("A4253", 1200, 1000, 3, None),
+                MueFinding("A4259", 1200, 999, 3, None),
+            ),
+            version_tag="v",
+            data_available=True,
+        )
+        big, edge = deterministic_edits(result)
+        assert (big["kind"], big["value"], big["cap"]) == ("change_units", None, "day")
+        assert "≤1000 units/day" in big["instruction"]
+        assert "enter the corrected units" in big["instruction"]
+        assert (edge["value"], edge["cap"]) == ("999", "day")
+
+    def test_every_valued_unit_edit_is_writable(self):
+        # The engine's value must pass the same whitelist resolve_selections
+        # re-checks, or the UI offers an edit the API then 422s.
+        result = NcciResult(
+            mue=tuple(MueFinding("55555", 5000, v, 1, None) for v in (1, 2, 999, 1000, 4000)),
+            version_tag="v",
+            data_available=True,
+        )
+        for edit in deterministic_edits(result):
+            if edit["value"] is not None:
+                assert normalize_edit_value("change_units", edit["value"]) == edit["value"]
 
 
 class TestClaimLineBridge:

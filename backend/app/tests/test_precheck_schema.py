@@ -137,6 +137,24 @@ class TestRiskReviewFilter:
         assert len(result.findings[0].title) == 120
 
 
+class TestClip:
+    def test_list_valued_prose_is_joined_not_reprd(self):
+        # A model that splits an explanation into sentences must not show the
+        # doctor "['First point.', 'Second point.']".
+        result = RiskReviewResult.model_validate(
+            {"findings": [_finding(explanation=["First point.", 3, "  Second point. "])]}
+        )
+        assert result.findings[0].explanation == "First point. Second point."
+
+    def test_list_without_text_items_is_none(self):
+        result = RiskReviewResult.model_validate({"findings": [_finding(explanation=[1, 2])]})
+        assert result.findings[0].explanation is None
+
+    def test_other_scalars_are_still_stringified(self):
+        result = RiskReviewResult.model_validate({"findings": [_finding(explanation=42)]})
+        assert result.findings[0].explanation == "42"
+
+
 def _edit(kind: str = "change_code", **overrides) -> dict:
     base = {"kind": kind, "target": "99214", "instruction": "Change 99214 to 99213"}
     base.update(overrides)

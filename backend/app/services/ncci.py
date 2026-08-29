@@ -278,12 +278,18 @@ async def ptp_indicator_for_pair(
     session: AsyncSession, code_a: str, code_b: str, date_of_service: date | None
 ) -> PtpFinding | None:
     """Appeal-side CO-97 helper: the active edit (either direction) between two
-    codes, or None when no edit exists / no data is loaded — in which case the
-    caller keeps today's manual-verification wording."""
+    codes, or None when no edit exists / no data is loaded / the date of
+    service is unknown — in which case the caller keeps today's
+    manual-verification wording.
+
+    No `today` fallback here, unlike ptp_conflicts: an appeal concerns a claim
+    already adjudicated on its real DOS, and PTP edits are added, withdrawn and
+    have their indicator changed quarterly. Evaluating against today's table
+    would state an indicator as fact for a date it may not have applied to."""
     a, b = normalize_code(code_a), normalize_code(code_b)
-    if not a or not b or a == b:
+    if not a or not b or a == b or date_of_service is None:
         return None
-    dos = date_of_service or date.today()
+    dos = date_of_service
     row = await session.scalar(
         select(NcciPtpEdit)
         .where(

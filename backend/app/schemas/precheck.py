@@ -171,7 +171,12 @@ def _clip(value: object, limit: int) -> str | None:
     the one retry on verbosity would be a worse outcome than a clipped line."""
     if value is None:
         return None
-    text = str(value).strip()
+    if isinstance(value, list):
+        # A model that splits prose into a list of sentences: join the text
+        # items rather than show the doctor a Python repr of the list.
+        text = " ".join(v.strip() for v in value if isinstance(v, str)).strip()
+    else:
+        text = str(value).strip()
     if not text:
         return None
     return text[: limit - 1] + "…" if len(text) > limit else text

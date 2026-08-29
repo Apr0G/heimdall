@@ -244,23 +244,44 @@ def deterministic_edits(result: ncci.NcciResult) -> list[dict]:
                 }
             )
     for violation in result.mue:
+        if violation.mue_value == 0:
+            # An MUE of 0 means CMS pays no units of this code on a
+            # practitioner claim — there is no count to reduce to, so the only
+            # claim edit is dropping the line.
+            edits.append(
+                {
+                    "kind": "remove_line",
+                    "target": violation.hcpcs,
+                    "instruction": (
+                        f"Remove {violation.hcpcs} — its Medicare MUE is 0 "
+                        "(never payable on a practitioner claim)"
+                    ),
+                    "value": None,
+                    "source": "ncci",
+                }
+            )
+            continue
         # The limit is a ceiling, never a count to write: MAI 1 judges each
         # line alone, MAI 2/3 the day's total across lines (ncci.evaluate_mue).
         # The patcher needs to know which — a per-day limit that no single
         # line exceeds cannot be met by rewriting every line to the limit.
         per_line = violation.mai == 1
+        scope = "units per line" if per_line else "units/day"
+        # The applier writes `value` into Box 24G, whose shape is 1–999
+        # (schemas/precheck normalize_edit_value). A four-digit limit is still
+        # a real ceiling, but not a number the patcher may write — the biller
+        # enters the corrected units; the instruction still carries the limit.
+        writable = violation.mue_value < 1000
         edits.append(
             {
                 "kind": "change_units",
                 "target": violation.hcpcs,
                 "instruction": (
                     f"Reduce {violation.hcpcs} from {violation.units_billed} to "
-                    f"≤{violation.mue_value} units per line"
-                    if per_line
-                    else f"Reduce {violation.hcpcs} from {violation.units_billed} to "
-                    f"≤{violation.mue_value} units/day"
+                    f"≤{violation.mue_value} {scope}"
+                    + ("" if writable else " — enter the corrected units")
                 ),
-                "value": str(violation.mue_value),
+                "value": str(violation.mue_value) if writable else None,
                 "cap": "line" if per_line else "day",
                 "source": "ncci",
             }

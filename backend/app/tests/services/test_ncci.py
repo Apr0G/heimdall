@@ -7,6 +7,7 @@ arithmetic.
 """
 
 from datetime import date
+from types import SimpleNamespace
 
 from app.services.analysis import co97_note, has_co97
 from app.services.ncci import (
@@ -17,6 +18,7 @@ from app.services.ncci import (
     evaluate_ptp_pair,
     is_active,
     normalize_code,
+    ptp_indicator_for_pair,
 )
 
 
@@ -126,3 +128,43 @@ class TestCo97Annotation:
     def test_no_findings_keeps_manual_wording(self):
         # None → caller leaves the prompt's manual-verification text untouched.
         assert co97_note([]) is None
+
+
+class TestPtpIndicatorForPair:
+    """The appeal-side lookup. Unlike the pre-check, an appeal concerns a claim
+    already adjudicated on its real DOS — evaluating against today's table
+    when that date is unknown would assert an indicator for the wrong quarter."""
+
+    async def test_unknown_dos_returns_none_without_querying(self):
+        class _NoQuery:
+            async def scalar(self, stmt):
+                raise AssertionError("must not consult the table without a date of service")
+
+        assert await ptp_indicator_for_pair(_NoQuery(), "11111", "22222", None) is None
+
+    async def test_known_dos_queries_and_maps_the_row(self):
+        row = SimpleNamespace(
+            column1="11111", column2="22222", modifier_indicator=1, rationale=None
+        )
+
+        class _OneRow:
+            async def scalar(self, stmt):
+                return row
+
+        hit = await ptp_indicator_for_pair(_OneRow(), "11111", "22222", date(2026, 1, 15))
+        assert (hit.column1, hit.column2, hit.modifier_indicator, hit.bypassed) == (
+            "11111",
+            "22222",
+            1,
+            False,
+        )
+
+    async def test_no_findings_when_dos_unknown_keeps_manual_wording(self):
+        # End to end: no DOS -> no finding -> co97_note is None -> the prompt's
+        # "check the indicator manually" text stands.
+        class _NoQuery:
+            async def scalar(self, stmt):
+                raise AssertionError("must not query")
+
+        hit = await ptp_indicator_for_pair(_NoQuery(), "11111", "22222", None)
+        assert co97_note([h for h in [hit] if h is not None]) is None
