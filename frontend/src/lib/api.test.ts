@@ -48,6 +48,19 @@ describe("api 401 interceptor", () => {
     ).toHaveBeenCalledWith("/login");
   });
 
+  it("leaves a public page alone — a stale flag there must not bounce a visitor", async () => {
+    for (const pathname of ["/", "/login"]) {
+      document.cookie = "hd_authed=1; path=/";
+      vi.stubGlobal("location", { pathname, assign: vi.fn() });
+      await expect(fail401("/api/auth/me")).rejects.toBeTruthy();
+      expect(document.cookie).toContain("hd_authed=1");
+      expect(
+        (window.location as unknown as { assign: ReturnType<typeof vi.fn> })
+          .assign,
+      ).not.toHaveBeenCalled();
+    }
+  });
+
   it("isCredentialCheck matches by path", () => {
     expect(
       isCredentialCheck("https://api.example.com/api/auth/password/set"),
