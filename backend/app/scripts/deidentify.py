@@ -209,8 +209,7 @@ def _ner_redact(text: str) -> str:
 
     analyzer, anonymizer = engines
     results = analyzer.analyze(text=text, language="en", entities=_NER_ENTITIES)
-    # Keep billing/diagnosis codes NER mis-tagged as a PERSON/LOCATION.
-    results = [r for r in results if not _CODE.fullmatch(text[r.start : r.end].strip(" \t().,;:"))]
+    results = _without_codes(results, text)
     if not results:
         return text
     operators = {
@@ -218,6 +217,31 @@ def _ner_redact(text: str) -> str:
     }
     operators["DEFAULT"] = OperatorConfig("replace", {"new_value": "[REDACTED]"})
     return anonymizer.anonymize(text=text, analyzer_results=results, operators=operators).text
+
+
+_CODE_TOKEN = re.compile(rf"\b(?:{_CODE.pattern})\b")
+
+
+def _without_codes(results: list, text: str) -> list:
+    """Cut billing/diagnosis codes OUT of NER spans instead of dropping or keeping
+    a span whole. spaCy tags "Dx I48.91" as one PERSON; a whole-span test kept
+    the code only when the span WAS the code, so the first CI run of the NER
+    path found the ICD-10 code replaced by [NAME]. Dropping such spans would
+    be wrong the other way — "Mary Chen I48.91" must still lose the name — so
+    each span becomes the sub-spans between its code tokens."""
+    from presidio_analyzer import RecognizerResult
+
+    kept: list = []
+    for r in results:
+        cursor = r.start
+        for m in _CODE_TOKEN.finditer(text, r.start, r.end):
+            if m.start() > cursor:
+                kept.append(RecognizerResult(r.entity_type, cursor, m.start(), r.score))
+            cursor = m.end()
+        if cursor < r.end:
+            kept.append(RecognizerResult(r.entity_type, cursor, r.end, r.score))
+    # A remnant that is only punctuation/space ("Dx " keeps its letters; " (" does not).
+    return [k for k in kept if any(ch.isalnum() for ch in text[k.start : k.end])]
 
 
 def redact_text(text: str | None, known: list, use_ner: bool = False) -> str | None:

@@ -243,3 +243,13 @@ def test_split_residual_keeps_the_precise_detectors_fatal():
     assert review == {"zip_like": 5, "alnum_id_like": 3}
     assert names == ["Zorp"]
     assert split_residual({}) == ({}, {}, [])
+
+
+def test_ner_span_that_swallows_a_code_keeps_the_code_and_loses_the_name():
+    # spaCy tags "Dx I48.91" (and a name butted up against a code) as one
+    # PERSON span. The code must survive AND the name must go — a whole-span
+    # keep-or-drop can only get one of those right.
+    _require_presidio()
+    out = redact_text("Dx I48.91 and M23.205 for Mary Chen I48.91 today.", [], use_ner=True)
+    assert out.count("I48.91") == 2 and "M23.205" in out
+    assert "Mary" not in out and "Chen" not in out
