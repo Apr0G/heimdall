@@ -770,3 +770,21 @@ def test_scaling_applies_per_line_and_removal_and_scaling_share_one_total():
     ]
     assert result.total_updated is True
     assert "17.60" in [w["text"] for w in words(result.pdf)]
+
+
+def test_a_second_unit_change_on_the_same_line_scales_from_the_current_state():
+    # NCCI says "4", the review says "1": both ticked. 3 units at $150.00 is
+    # $50.00/unit — the end state must be 1 unit at $50.00, with the second
+    # step scaling from the already-updated 4 units / $200.00, not from the
+    # original.
+    pdf = build_claim(LINES)
+    result = patch_claim(
+        pdf, [ClaimEdit("change_units", "20610", "4"), ClaimEdit("change_units", "20610", "1")]
+    )
+    assert [(r.charge_before_cents, r.charge_after_cents) for r in result.results] == [
+        (15000, 20000),
+        (20000, 5000),
+    ]
+    line = service_lines(result.pdf)[1]
+    assert (line.units.text, line.charge.cents) == ("1", 5000)
+    assert result.total_updated is True

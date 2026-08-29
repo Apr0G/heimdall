@@ -315,11 +315,17 @@ class _Backend:
     def __init__(self) -> None:
         self.lines: list[_ServiceLine] = []
         self.removed_lines: list[_ServiceLine] = []
-        # Current charge per line (id(line) -> cents) after scaling, for Box 28.
+        # Current charge / units per line (id(line) -> value) after earlier
+        # edits in the same pass, so a second unit change on the same line
+        # scales from where the first left it, not from the original.
         self.charges: dict[int, int] = {}
+        self.units: dict[int, float] = {}
 
     def current_cents(self, line: _ServiceLine) -> int:
         return self.charges.get(id(line), line.charge.cents)
+
+    def current_units(self, line: _ServiceLine) -> float:
+        return self.units.get(id(line), _units_value(line))
 
     # -- operations (return a skip reason, or None when done) --
     def replace(self, word: _Word, text: str, *, row: list[_Word], line: _ServiceLine | None):
@@ -463,13 +469,20 @@ class _GlyphBackend(_Backend):
         if left and x < max(w.x1 for w in left) + 1:
             return "no_room"
         for word in charge.words:
-            self.remove_word(word)
+            self.remove_word(word)  # also drops an amount drawn here earlier this pass
         # Split money ("13" "45") is one printed string with a space glyph
         # between the halves; the extractor splits words on whitespace in
         # stream order, so the replacement carries a space too — dollars
         # right-aligned where they were, cents left-aligned where they were.
         self._draw(
-            dollars.page, x, dollars.origin_y, dollars.size, texts[0], like=dollars, line=line
+            dollars.page,
+            x,
+            dollars.origin_y,
+            dollars.size,
+            texts[0],
+            like=dollars,
+            line=line,
+            replacing=dollars,
         )
         if charge.split:
             cents = charge.words[1]
@@ -481,6 +494,7 @@ class _GlyphBackend(_Backend):
                 " ",
                 like=dollars,
                 line=line,
+                replacing=dollars,
             )
             self._draw(
                 cents.page,
@@ -490,6 +504,7 @@ class _GlyphBackend(_Backend):
                 texts[1],
                 like=cents,
                 line=line,
+                replacing=cents,
             )
         return None
 
@@ -741,10 +756,10 @@ def _apply_to_lines(edit: ClaimEdit, lines: list[_ServiceLine], ctx: _Backend) -
         return EditResult(edit, False, "bad_value")
 
     if edit.kind == "change_units":
-        current = [line for line in lines if _units_value(line) != float(value)]
+        current = [line for line in lines if ctx.current_units(line) != float(value)]
         if not current:
             return EditResult(edit, False, "already_present")
-        over = [line for line in current if _units_value(line) > int(value)]
+        over = [line for line in current if ctx.current_units(line) > int(value)]
         candidates = over or current
     elif edit.kind == "add_modifier":
         candidates = [line for line in lines if all(m.text != value for m in line.modifiers)]
@@ -763,14 +778,16 @@ def _apply_to_lines(edit: ClaimEdit, lines: list[_ServiceLine], ctx: _Backend) -
             reasons.append(reason)
             continue
         applied += 1
-        if edit.kind == "change_units" and edit.charge == "scale":
-            scaled = _scale_charge(line, value, ctx)
-            if scaled is None:
-                note = "charge_not_scaled"
-            else:
-                before_cents += ctx.current_cents(line)
-                after_cents += scaled
-                ctx.charges[id(line)] = scaled
+        if edit.kind == "change_units":
+            if edit.charge == "scale":
+                scaled = _scale_charge(line, value, ctx)
+                if scaled is None:
+                    note = "charge_not_scaled"
+                else:
+                    before_cents += ctx.current_cents(line)
+                    after_cents += scaled
+                    ctx.charges[id(line)] = scaled
+            ctx.units[id(line)] = float(value)
     if applied == 0:
         return EditResult(edit, False, reasons[0] if reasons else "line_not_found")
     if edit.kind == "change_units" and edit.charge == "scale" and note is None:
@@ -788,7 +805,7 @@ def _scale_charge(line: _ServiceLine, new_units: str, ctx: _Backend) -> int | No
     """Rewrite 24F as (charge ÷ old units) × new units. Only when the per-unit
     price is a whole number of cents — otherwise the charge was not built from
     these units and scaling would invent an amount. Returns the new cents."""
-    old_units = _units_value(line)
+    old_units = ctx.current_units(line)
     cents = ctx.current_cents(line)
     if old_units <= 0 or old_units != int(old_units) or cents * int(new_units) % int(old_units):
         return None
@@ -812,7 +829,9 @@ def _apply_to_line(edit: ClaimEdit, value: str, line: _ServiceLine, ctx: _Backen
         return ctx.set_blank_units(line, value)
     old = line.units if edit.kind == "change_units" else line.cpt
     assert old is not None
-    if old.text == value:
+    if edit.kind == "change_units" and ctx.current_units(line) == float(value):
+        return "already_present"
+    if edit.kind != "change_units" and old.text == value:
         return "already_present"
     return ctx.replace(old, value, row=line.row_words, line=line)
 
