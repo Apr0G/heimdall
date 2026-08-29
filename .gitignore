@@ -10,6 +10,8 @@ legal/
 
 # ===== Terraform (infra is managed out-of-band; never commit state or vars) =====
 *.tfvars
+*.tfvars.json
+*.auto.tfvars.json
 *.tfstate
 *.tfstate.*
 .terraform/
