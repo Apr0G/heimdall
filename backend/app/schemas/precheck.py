@@ -87,6 +87,15 @@ class ClaimLine(BaseModel):
                 value = [] if key in _LIST_FIELDS else None
             if key in _LIST_FIELDS and value is None:
                 value = []
+            # Two-digit codes come back as JSON numbers often enough ("pos":
+            # 11, "modifiers": [25, 59]); the NCCI bridge str()s them anyway,
+            # so coerce here rather than fail the whole extraction on one line.
+            if key == "pos" and isinstance(value, int) and not isinstance(value, bool):
+                value = str(value)
+            if key in ("modifiers", "icd10") and isinstance(value, list):
+                value = [
+                    str(v) if isinstance(v, int) and not isinstance(v, bool) else v for v in value
+                ]
             cleaned[key] = value
         # A missing/None/0 units means "not stated" — bill-once is the safe read
         # (a blank units cell is as likely read as 0 as null). Falsy → 1 rather

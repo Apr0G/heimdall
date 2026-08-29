@@ -48,6 +48,17 @@ class TestClaimLine:
         assert ClaimLine.model_validate({"cpt": "99213", "units": 0}).units == 1
         assert ClaimLine.model_validate({"cpt": "99213"}).units == 1
 
+    def test_numeric_codes_are_stringified(self):
+        # "pos": 11 and "modifiers": [25, 59] are how a model often writes
+        # two-digit codes; they used to fail the whole extraction.
+        line = ClaimLine.model_validate(
+            {"cpt": "99213", "pos": 11, "modifiers": [25, "59"], "icd10": ["N18.5"]}
+        )
+        assert (line.pos, line.modifiers, line.icd10) == ("11", ["25", "59"], ["N18.5"])
+        # Booleans are not codes.
+        with pytest.raises(ValidationError):
+            ClaimLine.model_validate({"cpt": "99213", "modifiers": [True]})
+
     def test_units_upper_bound(self):
         with pytest.raises(ValidationError):
             ClaimLine.model_validate({"cpt": "99213", "units": 1000})
