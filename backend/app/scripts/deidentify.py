@@ -277,6 +277,27 @@ _RESIDUAL_ALNUM_ID = re.compile(
 )
 
 
+# Residual kinds that are a REVIEW signal, not proof of a leak. The ZIP and
+# alphanumeric-id detectors over-match by design — every CPT code is a 5-digit
+# run, "CMS-1500" and "ICD-10-CM" are letter+digit tokens, and the letter
+# prompt tells the model to cite both — so a gate that treats them as bugs
+# aborts every real corpus, and the only way past it was an override that
+# also switched off the candidate-name gate. Everything else scan_residual
+# reports (email, SSN, phone, IP, MBI, member ID, auth number, long number,
+# date, PO box) is precise enough to fail the export on.
+REVIEW_ONLY_KINDS = frozenset({"zip_like", "alnum_id_like"})
+
+
+def split_residual(flags: dict) -> tuple[dict, dict, list]:
+    """scan_residual output as (precise leak counts, review-only counts,
+    candidate names)."""
+    precise = {
+        k: v for k, v in flags.items() if k not in REVIEW_ONLY_KINDS and k != "candidate_names"
+    }
+    review = {k: v for k, v in flags.items() if k in REVIEW_ONLY_KINDS}
+    return precise, review, list(flags.get("candidate_names", []))
+
+
 def scan_residual(text: str | None) -> dict:
     """Flag anything that still looks like PHI after redaction — for the validation
     report and the export's fail-closed gate. Formatted leaks are bugs to fix;

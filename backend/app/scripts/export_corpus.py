@@ -41,6 +41,7 @@ from app.scripts.deidentify import (
     hash_ref,
     redact_text,
     scan_residual,
+    split_residual,
 )
 from app.services import s3
 
@@ -292,6 +293,7 @@ async def main() -> None:
     # looks like PHI. Formatted leaks must be zero; candidate_names is a human
     # review list (mostly payer/medical terms — a missed patient name shows here).
     leaks: Counter = Counter()
+    review: Counter = Counter()
     names: set = set()
     for rec in records:
         texts = [rec["input"].get("clinical_summary"), rec["output"]["appeal_letter"]]
@@ -302,18 +304,18 @@ async def main() -> None:
             ]
         texts += [d.get("text") for d in rec["input"]["documents"]]
         for value in texts:
-            for kind, count in scan_residual(value).items():
-                if kind == "candidate_names":
-                    names.update(count)
-                else:
-                    leaks[kind] += count
+            precise, broad, found = split_residual(scan_residual(value))
+            leaks.update(precise)
+            review.update(broad)
+            names.update(found)
 
     # FAIL CLOSED on a formatted leak. These patterns are precise — an email, SSN,
     # phone, MBI or member-ID shape surviving redaction is a bug in the redactor,
     # not a false positive. The corpus lands in `exports/`, the one S3 prefix with
     # NO lifecycle expiry, so a leaked identifier there is retained indefinitely.
     # Writing it and mentioning the problem in a report nobody reads is not an
-    # option (hard rule 9).
+    # option (hard rule 9). The broad detectors (5-digit runs, letter+digit
+    # tokens) fire on billing vocabulary and are reported, not gated on.
     if leaks and os.environ.get("ALLOW_RESIDUAL_LEAKS") != "1":
         raise SystemExit(
             "ABORTED: redaction left formatted identifiers in the corpus — "
@@ -323,13 +325,15 @@ async def main() -> None:
         )
     # Name-shaped survivors gate the write too: with NER on, anything left is
     # either a benign term or a missed name, and the threshold forces a look.
+    # Its only override is the threshold itself — ALLOW_RESIDUAL_LEAKS is about
+    # formatted identifiers and must not switch this gate off as a side effect.
     max_names = int(os.environ.get("MAX_CANDIDATE_NAMES", "25"))
-    if len(names) > max_names and os.environ.get("ALLOW_RESIDUAL_LEAKS") != "1":
+    if len(names) > max_names:
         raise SystemExit(
             f"ABORTED: {len(names)} name-shaped strings survived redaction (limit "
             f"{max_names}). Review them via a local dry run (DRY_RUN=1 prints them "
-            "to the terminal, never to S3); raise MAX_CANDIDATE_NAMES or set "
-            "ALLOW_RESIDUAL_LEAKS=1 only after that review."
+            "to the terminal, never to S3); raise MAX_CANDIDATE_NAMES only "
+            "after that review."
         )
 
     labeled = sum(1 for r in records if r["label"] is not None)
@@ -347,6 +351,7 @@ async def main() -> None:
         # The plaintext review list is printed by DRY_RUN=1 and never stored.
         "residual": {
             "formatted_leaks": dict(leaks),  # expected empty — anything here is a bug
+            "review_flags": dict(review),  # broad detectors: billing vocabulary mostly
             "candidate_name_count": len(names),
             "candidate_name_refs": sorted(hash_ref(n) for n in names)[:500],
         },
@@ -373,6 +378,8 @@ async def main() -> None:
     await asyncio.to_thread(s3.put_text, report_key, json.dumps(report, indent=2))
 
     warn = f"  ⚠️ formatted leaks: {dict(leaks)}" if leaks else ""
+    if review:
+        warn += f"\n  review flags (broad detectors, counts only): {dict(review)}"
     print(
         f"Exported {len(records)} de-identified cases ({labeled} with outcome labels)\n"
         f"  corpus: s3://{settings.s3_bucket_name}/{key}\n"

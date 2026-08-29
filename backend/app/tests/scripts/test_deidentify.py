@@ -3,7 +3,13 @@ from datetime import date
 import pytest
 
 from app.core import hashing
-from app.scripts.deidentify import deid_year, hash_ref, redact_text, scan_residual
+from app.scripts.deidentify import (
+    deid_year,
+    hash_ref,
+    redact_text,
+    scan_residual,
+    split_residual,
+)
 
 
 @pytest.fixture
@@ -196,3 +202,29 @@ def test_residual_scanner_is_broader_than_redactor():
     # independent residual detector must still raise it for review.
     out = redact_text("ZIP: 90210", known=[])
     assert scan_residual(out).get("zip_like")
+
+
+def test_billing_vocabulary_is_a_review_flag_not_a_leak():
+    """The letter prompt tells the model to cite CPT codes and "the original
+    claim (CMS-1500)"; the broad ZIP / letter+digit detectors fire on both.
+    They are review counts — a gate that aborted on them refused every real
+    corpus, and the only way past it also disabled the candidate-name gate."""
+    out = redact_text(
+        "We appeal the denial of CPT 73721 billed on the original claim (CMS-1500) "
+        "for ICD-10-CM M17.11; E/M 99214 with modifier 25 was distinct.",
+        [],
+    )
+    precise, review, names = split_residual(scan_residual(out))
+    assert precise == {}
+    assert review.get("zip_like") and review.get("alnum_id_like")
+    assert "Jane" not in " ".join(names)
+
+
+def test_split_residual_keeps_the_precise_detectors_fatal():
+    precise, review, names = split_residual(
+        {"email": 1, "mbi": 2, "zip_like": 5, "alnum_id_like": 3, "candidate_names": ["Zorp"]}
+    )
+    assert precise == {"email": 1, "mbi": 2}
+    assert review == {"zip_like": 5, "alnum_id_like": 3}
+    assert names == ["Zorp"]
+    assert split_residual({}) == ({}, {}, [])
