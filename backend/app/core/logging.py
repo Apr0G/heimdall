@@ -104,6 +104,14 @@ class JsonFormatter(logging.Formatter):
 # _redact. Clearing the root's handlers never touched them (propagate=False).
 _UVICORN_LOGGERS = ("uvicorn", "uvicorn.error", "uvicorn.access")
 
+# Third-party loggers that, at DEBUG, print the request they are about to
+# send: botocore logs "Making request for <op> with params: <request_dict>",
+# and that dict's body is the full Bedrock prompt — the uploaded document
+# text — or the Textract/S3 call. LOG_LEVEL is an ordinary operator knob;
+# turning it to DEBUG must widen OUR logging, never dump PHI into
+# CloudWatch (hard rule 2), so these never go below INFO.
+_NOISY_LOGGERS = ("botocore", "boto3", "s3transfer", "urllib3", "httpx", "httpcore")
+
 
 def setup_logging(level: str = "INFO") -> None:
     handler = logging.StreamHandler(sys.stdout)
@@ -121,3 +129,6 @@ def setup_logging(level: str = "INFO") -> None:
         # A dictConfig/fileConfig elsewhere (alembic's) disables loggers it
         # doesn't name; these must keep reporting whatever ran before us.
         uv.disabled = False
+    floor = max(root.level, logging.INFO)
+    for name in _NOISY_LOGGERS:
+        logging.getLogger(name).setLevel(floor)

@@ -2,6 +2,8 @@ import io
 import json
 import logging
 
+import pytest
+
 from app.core.logging import JsonFormatter, _redact, _safe_exception
 
 
@@ -105,3 +107,30 @@ def test_uvicorn_loggers_render_through_the_json_formatter():
     finally:
         uv.handlers, uv.propagate = saved[0], saved[1]
         root.handlers, root.level = saved[2], saved[3]
+
+
+@pytest.mark.parametrize(
+    ("level", "expected"), [("DEBUG", "INFO"), ("INFO", "INFO"), ("WARNING", "WARNING")]
+)
+def test_log_level_debug_never_reaches_the_aws_client_loggers(level, expected):
+    """botocore at DEBUG logs every request dict — for Bedrock that is the
+    prompt holding the document text. LOG_LEVEL=DEBUG widens app logging only."""
+    from app.core.logging import setup_logging
+
+    root = logging.getLogger()
+    saved = (
+        root.handlers[:],
+        root.level,
+        {n: logging.getLogger(n).level for n in ("botocore", "httpx")},
+    )
+    try:
+        setup_logging(level)
+        assert logging.getLogger("app.services.claude_client").getEffectiveLevel() == getattr(
+            logging, level
+        )
+        for name in ("botocore", "boto3", "s3transfer", "urllib3", "httpx", "httpcore"):
+            assert logging.getLogger(name).getEffectiveLevel() == getattr(logging, expected), name
+    finally:
+        root.handlers, root.level = saved[0], saved[1]
+        for name, lvl in saved[2].items():
+            logging.getLogger(name).setLevel(lvl)
