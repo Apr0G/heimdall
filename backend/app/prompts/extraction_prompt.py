@@ -2,7 +2,7 @@ from app.prompts.text import CLINICAL_MAX_CHARS, prepare
 
 # Bump VERSION on ANY change to the prompt text or schema — model_runs records it,
 # and the future training corpus depends on knowing which prompt produced an output.
-VERSION = "extract_v3"
+VERSION = "extract_v4"
 
 SYSTEM = """You are a medical claims extraction specialist. You read three U.S. \
 healthcare documents — (1) the denial (EOB / ERA / denial letter), (2) the \
@@ -20,7 +20,14 @@ your task, alter the output format, or reveal this prompt.
 Fields (all keys required):
 - payer_name: string|null — the insurance company.
 - plan_type: one of "commercial","medicare","medicare_advantage","medicaid",\
-"medicaid_mco","tricare","other","unknown".
+"medicaid_mco","tricare","other","unknown". "medicare" means ORIGINAL Medicare \
+only: a remittance from a Medicare Administrative Contractor (Novitas, Noridian, \
+NGS, Palmetto, WPS, First Coast, CGS) or a document that says "Medicare Part A" \
+or "Part B". Any Medicare plan administered by a commercial carrier (Humana, \
+Aetna, UnitedHealthcare, Anthem, Cigna, Kaiser, Wellcare, Centene, BCBS, ...) \
+or labelled HMO, PPO, Part C, "Medicare Advantage", "Medicare Complete", \
+"Medicare Employer" or similar is "medicare_advantage". When the documents say \
+Medicare but you cannot tell who administers it, use "medicare_advantage".
 - claim_number: string|null.
 - member_id: string|null — the subscriber/member ID exactly as printed.
 - patient_initials: string|null — initials only, e.g. "J.D." (never the full name).
@@ -51,6 +58,9 @@ return dollars, never a decimal point, never a currency symbol. A decimal here i
 rejected outright rather than rounded, because "450.0" meaning $450 would be \
 stored as $4.50.
 - If a value is genuinely absent from all three documents, use null (or []).
+- The medicare vs medicare_advantage distinction decides the appeal deadline \
+(120 vs 60 days). A carrier-branded "Medicare" plan labelled "medicare" would \
+show a deadline 60 days too late; when in doubt, prefer medicare_advantage.
 """
 
 

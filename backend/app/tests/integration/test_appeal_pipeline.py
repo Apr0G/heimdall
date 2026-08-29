@@ -162,4 +162,4 @@ async def test_full_pipeline_end_to_end_with_scanned_second_doc(sessions, tenant
             )
         ).all()
         assert [r.purpose for r in runs] == ["extraction", "analysis", "letter_draft"]
-        assert [r.prompt_version for r in runs] == ["extract_v3", "analyze_v6", "letter_v6"]
+        assert [r.prompt_version for r in runs] == ["extract_v4", "analyze_v6", "letter_v6"]
