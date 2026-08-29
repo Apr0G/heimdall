@@ -24,8 +24,11 @@ Design notes (grounded in the actual 2026 Q3 files):
   adds its quarter (idempotently replacing the same quarter on re-run).
 * Refuses loads that shrink >10% vs the previous recorded load — a truncated
   download must not silently replace a full table.
-* Idempotent per version: a (kind, quarter, version_tag) already in ncci_loads
-  is skipped unless FORCE=1.
+* Idempotent: a PTP (kind, quarter, version_tag) already in ncci_loads is
+  skipped unless FORCE=1. The MUE file carries no version tag and CMS
+  republishes it mid-quarter under the same name, so its zip is always fetched
+  and its sha256 compared with the last load of the same quarter; a changed
+  file reloads that quarter's snapshot.
 
 No PHI anywhere in this path; logs print counts and version tags only.
 """
@@ -238,19 +241,24 @@ async def main() -> None:
         ptp_tag, ptp_urls = discover_ptp_urls(_fetch(client, PTP_PAGE).decode("utf-8", "replace"))
         mue_quarter, mue_url = discover_mue_url(_fetch(client, MUE_PAGE).decode("utf-8", "replace"))
         mue_version = mue_quarter
+        # The MUE zip is small and its name never changes within a quarter, so
+        # the quarter alone cannot say whether CMS republished it: fetch it up
+        # front and let the content hash decide (see module docstring).
+        mue_zip = _fetch(client, mue_url)
 
         async with sessions() as session:
             load_ptp = force or not await _already_loaded(session, "ptp", ptp_tag)
-            load_mue = force or not await _already_loaded(session, "mue", mue_version)
+            load_mue = mue_needs_load(
+                await _latest_sha(session, "mue", mue_quarter), mue_zip, force=force
+            )
 
         if not load_ptp and not load_mue:
-            print(f"ncci load: {ptp_tag} and {mue_version} already loaded, nothing to do")
+            print(f"ncci load: {ptp_tag} already loaded and {mue_version} unchanged, nothing to do")
             await engine.dispose()
             return
 
-        # Only download what will actually be loaded (the PTP set is ~80 MB).
+        # Only download the PTP set (~80 MB) when its version tag is new.
         ptp_zips = [_fetch(client, url) for url in ptp_urls] if load_ptp else []
-        mue_zip = _fetch(client, mue_url) if load_mue else b""
 
     ptp_rows: list[PtpRow] = []
     ptp_sha = hashlib.sha256()
@@ -342,6 +350,21 @@ async def main() -> None:
     ptp_note = f"ptp={len(ptp_rows)} rows ({ptp_tag})" if load_ptp else "ptp=skipped (current)"
     mue_note = f"mue={len(mue_rows)} rows ({mue_version})" if load_mue else "mue=skipped (current)"
     print(f"ncci load complete: {ptp_note}, {mue_note}")
+
+
+def mue_needs_load(previous_sha: str | None, blob: bytes, *, force: bool = False) -> bool:
+    """A quarter loads when nothing is recorded for it or when the file's bytes
+    differ from the last load of that quarter (a mid-quarter republish)."""
+    return force or previous_sha != hashlib.sha256(blob).hexdigest()
+
+
+async def _latest_sha(session, kind: str, quarter: str) -> str | None:
+    return await session.scalar(
+        select(NcciLoad.sha256)
+        .where(NcciLoad.kind == kind, NcciLoad.quarter == quarter)
+        .order_by(NcciLoad.loaded_at.desc())
+        .limit(1)
+    )
 
 
 async def _already_loaded(session, kind: str, version_tag: str) -> bool:

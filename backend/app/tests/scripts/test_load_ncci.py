@@ -5,6 +5,9 @@ of the real CMS files (the CPT codes inside them are AMA-licensed, and the repo
 takes no PHI/licensed data either way).
 """
 
+import hashlib
+import io
+import zipfile
 from datetime import date
 
 import pytest
@@ -12,10 +15,12 @@ import pytest
 from app.scripts.load_ncci import (
     MueRow,
     PtpRow,
+    _zip_members,
     check_shrinkage,
     dedupe_ptp,
     discover_mue_url,
     discover_ptp_urls,
+    mue_needs_load,
     parse_mue_csv,
     parse_ptp_txt,
 )
@@ -152,6 +157,35 @@ class TestDiscovery:
     def test_mue_none_found_raises(self):
         with pytest.raises(RuntimeError):
             discover_mue_url("<html>nothing here</html>")
+
+
+def _mue_zip(payload: bytes) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("synthetic_mue.csv", payload)
+    return buf.getvalue()
+
+
+class TestMueRepublish:
+    """Audit 2026-08-28 LOW-21: a mid-quarter CMS republish keeps the file name
+    and the quarter; only the bytes change. The quarter key alone skipped it."""
+
+    def test_first_load_of_a_quarter(self):
+        assert mue_needs_load(None, _mue_zip(_MUE_SAMPLE))
+
+    def test_unchanged_file_is_skipped(self):
+        blob = _mue_zip(_MUE_SAMPLE)
+        assert not mue_needs_load(hashlib.sha256(blob).hexdigest(), blob)
+
+    def test_republished_file_reloads_the_quarter(self):
+        old = _mue_zip(_MUE_SAMPLE)
+        new = _mue_zip(_MUE_SAMPLE + b'"10005","1","1 Line Edit","added mid-quarter"\n')
+        assert mue_needs_load(hashlib.sha256(old).hexdigest(), new)
+        assert len(parse_mue_csv(_zip_members(new, ".csv")[0])) == 4
+
+    def test_force_reloads_an_unchanged_file(self):
+        blob = _mue_zip(_MUE_SAMPLE)
+        assert mue_needs_load(hashlib.sha256(blob).hexdigest(), blob, force=True)
 
 
 class TestGuards:
