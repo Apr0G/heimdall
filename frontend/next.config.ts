@@ -20,6 +20,9 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // No `x-powered-by: Next.js` — a free framework fingerprint for anyone
+  // probing the site (prod check PLOW-04).
+  poweredByHeader: false,
   // Monorepo has another lockfile at the repo root; pin the Turbopack workspace
   // root to this app so it doesn't infer the wrong one.
   turbopack: {
