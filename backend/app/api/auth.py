@@ -124,6 +124,30 @@ async def _finalize_login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Your account is not provisioned. Contact your administrator.",
         )
+    if not user.is_active:
+        # Same rule get_current_user applies to an existing session: a
+        # deactivated account is not a session, so no cookie and no
+        # `login_success`. The wrong-password wording keeps the response from
+        # confirming that the account exists but is disabled. The
+        # last_login_at stamp link_user_on_login flushed is discarded first —
+        # this login did not happen, and /admin/users must not show it did.
+        user_id, practice_id = user.id, user.practice_id
+        await session.rollback()
+        await log_audit(
+            session,
+            action="login_denied",
+            resource_type="user",
+            resource_id=user_id,
+            user_id=user_id,
+            practice_id=practice_id,
+            ip=ip,
+            user_agent=user_agent,
+            metadata={"reason": "deactivated"},
+        )
+        await session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password"
+        )
     # Start the idle clock NOW. Without this the brand-new session inherits
     # whatever `last_seen_at` the PREVIOUS session left behind — so if the user
     # was last active more than IDLE_TIMEOUT_MINUTES ago (i.e. essentially always,
