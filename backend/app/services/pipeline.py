@@ -1,8 +1,10 @@
 import hashlib
+import io
 import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
+from pypdf import PdfReader
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
@@ -151,6 +153,23 @@ class DocumentTamperedError(RuntimeError):
     """A document's bytes no longer match the content_hash recorded at first read."""
 
 
+def _assert_pdf_limits(data: bytes) -> None:
+    """The upload guards, once, before ANY parser touches the bytes. The
+    fillable-form read runs first in _extract_one and walks every page's
+    annotations with no cap of its own, so up to 25 MB of arbitrary bytes (or
+    a highly compressed PDF with tens of thousands of pages) used to reach it
+    before digital_text_from_bytes ever applied these checks. Same guards,
+    same order, same PHI-free error (pypdf's own messages quote content)."""
+    document_extractor._assert_pdf(data)
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        document_extractor.assert_page_count(reader)
+    except document_extractor.TooManyPagesError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — any parser failure; detail intentionally dropped
+        raise document_extractor.DocumentParseError(type(exc).__name__) from None
+
+
 async def _extract_one(session: AsyncSession, doc: Document, *, case_id, run_id) -> None:
     # Read the PDF once: hash it for an integrity anchor (§164.312(c)(1)) and reuse
     # the same bytes for digital-text extraction (no second S3 read).
@@ -166,6 +185,7 @@ async def _extract_one(session: AsyncSession, doc: Document, *, case_id, run_id)
         raise DocumentTamperedError(
             f"document {doc.id} no longer matches its recorded content hash"
         )
+    await run_in_threadpool(_assert_pdf_limits, data)
     # A filled fillable form carries its data in field values, not page text:
     # read those (labelled, positioned — better than OCR of a rendered form).
     form_text = await run_in_threadpool(document_extractor.form_fields_text, data)

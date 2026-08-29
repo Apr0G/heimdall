@@ -148,9 +148,11 @@ def _patch_aws(monkeypatch, sessions, responses: list[dict]) -> list[str]:
     monkeypatch.setattr(pipeline, "AsyncSessionLocal", sessions)
     monkeypatch.setattr(claude_client, "AsyncSessionLocal", sessions)
 
-    from app.services import document_extractor, s3
+    from app.services import document_extractor, pdf_gen, s3
 
-    monkeypatch.setattr(s3, "get_bytes", lambda key: b"synthetic document text")
+    # A real (if tiny) PDF: the pipeline checks the magic bytes and page cap
+    # before the patched extractor ever sees the bytes.
+    monkeypatch.setattr(s3, "get_bytes", lambda key: pdf_gen.render_letter_pdf("synthetic"))
     monkeypatch.setattr(s3, "put_text", lambda key, text: None)
     monkeypatch.setattr(s3, "head_object", lambda key: {"ContentLength": 10})
     monkeypatch.setattr(
