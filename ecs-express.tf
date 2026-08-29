@@ -10,8 +10,12 @@
 # CloudFormation (AWS's native path for it) wrapped in an aws_cloudformation_stack.
 #
 # LEAN: reaches RDS over its existing (TLS) endpoint — no DB-network change here.
-# Two-phase apply (see DEPLOY.md): first apply builds ECR + roles; push the image
-# via the deploy-backend workflow; then set deploy_backend_service=true and apply.
+# Bootstrap order (see DEPLOY.md): ECR + roles first, push the image via the
+# deploy-backend workflow, then the Express service. The service is LIVE, so
+# deploy_backend_service defaults to true — an apply that omits the variable
+# must never drive count to 0 and destroy the serving API (same reasoning as
+# rds_private / app_db_role_active). false is for a throwaway environment
+# whose ECR is still empty.
 # =============================================================================
 
 variable "bedrock_model_id" {
@@ -46,9 +50,9 @@ variable "destructive_environment" {
 }
 
 variable "deploy_backend_service" {
-  description = "Phase gate: false = create ECR + roles only; true = also create the Express service (do this after the first image is pushed to ECR)."
+  description = "true (default) = create the Express service — it is live, so an apply that omits the variable must never destroy the serving API. false = ECR + roles only, for a throwaway environment where no image has been pushed to ECR yet."
   type        = bool
-  default     = false
+  default     = true
 }
 
 # --- Full DB connection string, stored as a secret, injected masked -----------

@@ -4,8 +4,11 @@
 # bypassing SES entirely (production access denied 2026-08-24; Cognito's only
 # native senders are its generic default and SES).
 #
-# GATED: nothing attaches to the user pool until cognito_custom_email_sender =
-# true. Rollout order matters —
+# GATED on cognito_custom_email_sender. The trigger is LIVE, so true is the
+# default — an apply that omits the variable must never detach the sender and
+# hand invites / reset codes back to the generic Cognito sender (same reasoning
+# as rds_private / app_db_role_active). A throwaway environment starts at
+# false and follows this rollout order —
 #   1. terraform apply                      (creates the KMS key + the Lambda
 #                                            from a failing stub bundle)
 #   2. run the deploy-email-sender workflow (builds + uploads the real bundle;
@@ -15,7 +18,7 @@
 #   4. set cognito_custom_email_sender = true, terraform apply
 #   5. invite a test user / run a password reset; watch the Lambda's log group
 #
-# ROLLBACK: flip the var back and apply. KNOWN PROVIDER BUG (hashicorp/aws
+# ROLLBACK: set the var to false in the tfvars and apply. KNOWN PROVIDER BUG (hashicorp/aws
 # #29048): removing custom_email_sender from lambda_config may not detach it on
 # the live pool — if invites still route through the Lambda after the apply,
 # detach manually:
@@ -27,9 +30,9 @@
 # =============================================================================
 
 variable "cognito_custom_email_sender" {
-  description = "Attach the SMTP2GO email-sender Lambda to the user pool. Flip only after the deploy-email-sender workflow has uploaded the real bundle AND the SMTP2GO domain + API-key secret are in place (see rollout order in cognito-email-sender.tf)."
+  description = "true (default) = the SMTP2GO email-sender Lambda is attached to the user pool — the cutover is live, so it must never be detached by omission. false = untouched pool, for a throwaway environment; flip to true only after the deploy-email-sender workflow has uploaded the real bundle AND the SMTP2GO domain + API-key secret are in place (see rollout order in cognito-email-sender.tf)."
   type        = bool
-  default     = false
+  default     = true
 }
 
 # Symmetric CMK Cognito uses to encrypt the temp password / code before
@@ -131,10 +134,13 @@ resource "aws_cloudwatch_log_group" "cognito_email_sender" {
   kms_key_id        = aws_kms_key.heimdall.arn
 }
 
+# Runtime: nodejs20.x was on Lambda's deprecation track (upstream Node 20 EOL
+# Apr 2026). The handler needs only globals present since Node 18 (fetch,
+# Buffer) and the runtime-provided SDK v3; @aws-crypto/* v4 supports Node >= 16.
 resource "aws_lambda_function" "cognito_email_sender" {
   function_name    = "heimdall-cognito-email-sender"
   role             = aws_iam_role.cognito_email_sender.arn
-  runtime          = "nodejs20.x"
+  runtime          = "nodejs22.x"
   handler          = "index.handler"
   timeout          = 30
   memory_size      = 256

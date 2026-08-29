@@ -86,20 +86,23 @@ resource "aws_ses_identity_notification_topic" "complaint" {
 # which breaks authenticator-recovery codes for real users.
 #
 # Scope: mailer.py ONLY (auth codes to practice staff — never PHI, which is
-# what makes a non-BAA provider acceptable). Cognito's invite/reset mail is
-# unaffected; it keeps using COGNITO_DEFAULT until the SES sandbox exit.
+# what makes a non-BAA provider acceptable). Cognito's own invite/reset mail
+# takes the separate Lambda path in cognito-email-sender.tf.
 #
-# Rollout: (1) verify heimdallclaims.com in SMTP2GO (three CNAMEs at Wix — no
-# MX record, which is why SMTP2GO fits where Resend didn't), (2) terraform
-# apply, (3) put the API key into heimdall/smtp2go-api-key in Secrets Manager,
-# (4) set mail_provider = "smtp2go" in the tfvars file and apply again.
-# Flipping back to SES later is the same var change in reverse.
+# SMTP2GO is LIVE, so "smtp2go" is the default — an apply that omits the
+# variable must never drop recovery codes back onto sandboxed SES, which
+# silently refuses them (same reasoning as rds_private / app_db_role_active).
+# A throwaway environment starts at "ses" and rolls out: (1) verify
+# heimdallclaims.com in SMTP2GO (three CNAMEs at Wix — no MX record, which is
+# why SMTP2GO fits where Resend didn't), (2) terraform apply, (3) put the API
+# key into heimdall/smtp2go-api-key in Secrets Manager, (4) set mail_provider =
+# "smtp2go" in the tfvars file and apply again. Back to SES is the reverse.
 # =============================================================================
 
 variable "mail_provider" {
-  description = "Transactional-email provider for mailer.py: \"ses\" (default) or \"smtp2go\". Flip to smtp2go only after the domain is verified in SMTP2GO and the API key secret has a value — the task fails to start if the referenced secret is empty."
+  description = "Transactional-email provider for mailer.py: \"smtp2go\" (default — live, so it must never fall back to sandboxed SES by omission) or \"ses\" (throwaway environment only, or after an SES sandbox exit). smtp2go needs the domain verified in SMTP2GO and a value in the API-key secret — the task fails to start if the referenced secret is empty."
   type        = string
-  default     = "ses"
+  default     = "smtp2go"
   validation {
     condition     = contains(["ses", "smtp2go"], var.mail_provider)
     error_message = "mail_provider must be \"ses\" or \"smtp2go\"."
