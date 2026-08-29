@@ -13,8 +13,8 @@ jobs:
     name: Backend deps + SAST (pip-audit, bandit)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           # Same interpreter as the image (backend/Dockerfile) so the audited
           # dependency closure is the one that actually ships.
@@ -33,6 +33,15 @@ jobs:
         # Cognito issues RS256 (RSA) JWTs so the ECDSA verify path isn't used, and
         # the attack needs local timing measurement. Re-check when a fix ships.
         run: pip-audit --skip-editable --ignore-vuln PYSEC-2026-1325
+      - name: pip-audit (corpus-export de-id closure, backend/deid.lock)
+        # deid.lock is a SEPARATE hash-pinned closure (Presidio + spaCy) that the
+        # export-corpus task installs on top of the image, so the audit above —
+        # which only sees what is installed here — never covered it. Audited from
+        # the file, not an install: --no-deps --disable-pip reads exactly the pins
+        # listed (the lock is a complete closure, so nothing is missing), and
+        # --require-hashes refuses any line that lost its hash. en_core_web_lg is
+        # a URL requirement with no advisory feed; pip-audit reports it as skipped.
+        run: pip-audit -r backend/deid.lock --require-hashes --no-deps --disable-pip
       - name: bandit (Python SAST, medium+ severity)
         run: bandit -r backend/app -ll -ii
 
@@ -40,8 +49,8 @@ jobs:
     name: Frontend deps + lint (npm audit, eslint)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
       - name: Install
@@ -61,7 +70,7 @@ jobs:
     name: Secret scanning (gitleaks)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: gitleaks
@@ -85,8 +94,8 @@ jobs:
     name: Semgrep (multi-language SAST)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       - name: Install + run semgrep
