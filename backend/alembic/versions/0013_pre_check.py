@@ -18,7 +18,13 @@ The pre-check feature's application schema:
   privileges stop at SELECT + INSERT — without this, a practice disposal fails
   AFTER the S3 purge has already destroyed the objects, stalling a BAA
   destruction attestation mid-way.
+
+Downgrade DESTROYS tenant data (every risk report, and the case_type column
+that tells pre-checks from appeals) and is gated by the same env var as 0001:
+snapshot first.
 """
+
+import os
 
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
@@ -98,6 +104,14 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Same gate as 0001: the destructive direction must not be the one with no
+    # confirmation. Not reachable from any workflow; guards a hand-run.
+    if os.environ.get("ALEMBIC_ALLOW_INITIAL_DOWNGRADE") != "DESTROY-ALL-DATA":
+        raise RuntimeError(
+            "Refusing to downgrade 0013: this DROPs risk_reports and cases.case_type "
+            "(tenant PHI). Set ALEMBIC_ALLOW_INITIAL_DOWNGRADE=DESTROY-ALL-DATA to "
+            "proceed, and take a snapshot first."
+        )
     op.drop_index("ix_risk_reports_model_run_id", table_name="risk_reports")
     op.drop_index("ix_risk_reports_case_created", table_name="risk_reports")
     op.drop_table("risk_reports")

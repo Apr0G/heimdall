@@ -9,7 +9,12 @@ deactivate. A user can REQUEST deactivation from Settings; an admin approves
 (which runs the normal deactivation) or denies. One row per request, kept as a
 record. The app role needs UPDATE to resolve a request (default privileges on
 new tables are SELECT + INSERT only, by design — see 0007).
+
+Downgrade DESTROYS tenant data (every deactivation request on record) and is
+gated by the same env var as 0001: snapshot first.
 """
+
+import os
 
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
@@ -94,5 +99,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Same gate as 0001: the destructive direction must not be the one with no
+    # confirmation. Not reachable from any workflow; guards a hand-run.
+    if os.environ.get("ALEMBIC_ALLOW_INITIAL_DOWNGRADE") != "DESTROY-ALL-DATA":
+        raise RuntimeError(
+            "Refusing to downgrade 0010: this DROPs deactivation_requests (tenant "
+            "data). Set ALEMBIC_ALLOW_INITIAL_DOWNGRADE=DESTROY-ALL-DATA to proceed, "
+            "and take a snapshot first."
+        )
     op.drop_table("deactivation_requests")
     op.execute("DROP TYPE IF EXISTS deactivation_request_status")
