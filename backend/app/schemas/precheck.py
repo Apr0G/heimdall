@@ -238,6 +238,20 @@ class ProposedEdit(BaseModel):
     def _clip_target(cls, value: object) -> str | None:
         return _clip(value, 16)
 
+    @field_validator("value", mode="before")
+    @classmethod
+    def _stringify_value(cls, value: object) -> object:
+        # A unit count comes back as a JSON number often enough ("value": 2).
+        # Every sibling text field str()s before validation; without this one
+        # a single numeric value rejected the whole review and burned the
+        # retry. normalize_edit_value re-checks the shape afterwards, so a
+        # float ("2.0") still drops to None rather than reaching the claim.
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            return str(value)
+        return value
+
     @model_validator(mode="after")
     def _normalize_value(self) -> "ProposedEdit":
         object.__setattr__(self, "value", normalize_edit_value(self.kind, self.value))

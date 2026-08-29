@@ -166,6 +166,23 @@ class TestProposedEditsFilter:
             None,
         ]
 
+    def test_numeric_value_is_stringified_not_rejected(self):
+        # "value": 2 (a JSON number for a unit count) used to fail the whole
+        # RiskReviewResult with string_type — one retry burned, then the
+        # pre-check errored after extraction and NCCI had already succeeded.
+        result = RiskReviewResult.model_validate(
+            {
+                "findings": [],
+                "proposed_edits": [
+                    _edit("change_units", value=2),
+                    _edit("change_units", value=2.0),  # not a unit count shape
+                    _edit("change_units", value=True),
+                    _edit("change_code", value=99213),
+                ],
+            }
+        )
+        assert [e.value for e in result.proposed_edits] == ["2", None, None, "99213"]
+
     def test_icd10_shapes_beyond_three_digits_keep_their_value(self):
         # Every injury/poisoning code carries X placeholders and a 7th
         # character, gout/neoplasm categories a letter in position 3, and the
