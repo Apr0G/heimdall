@@ -52,6 +52,9 @@ import {
   choiceIsComplete,
   defaultChoice,
   type EditChoice,
+  FIX_TARGET_LABEL,
+  FIX_TARGET_TITLE,
+  fixTarget,
   isClaimEdit,
   isProcedureCode,
   modifierOptions,
@@ -522,6 +525,7 @@ function Finding({
   const hasDetail = Boolean(f.explanation || f.suggested_fix || edit);
   const muted = f.severity === "info";
   const checked = Boolean(choice);
+  const target = fixTarget(f, edit);
   return (
     <div className="flex items-start gap-2.5">
       {selectable && (
@@ -553,6 +557,17 @@ function Finding({
           <div className="min-w-0 flex-1">
             <div className="text-sm leading-snug font-semibold">{f.title}</div>
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+              <span
+                className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                  target === "claim"
+                    ? "bg-primary/10 text-foreground"
+                    : target === "note"
+                      ? "bg-muted text-foreground"
+                      : "bg-muted"
+                }`}
+              >
+                {FIX_TARGET_LABEL[target]}
+              </span>
               <span>
                 {f.source === "ncci"
                   ? "CMS NCCI edit tables"
@@ -630,7 +645,7 @@ function Finding({
                 className="mb-1.5 text-[11px] font-semibold tracking-wide uppercase"
                 style={{ color: `var(${token})` }}
               >
-                How to fix it
+                {FIX_TARGET_TITLE[target]}
               </h4>
               {edit && <EditChip edit={edit} />}
               {f.suggested_fix ? (
@@ -645,6 +660,14 @@ function Finding({
                     Nothing to change — this is for your awareness.
                   </p>
                 )
+              )}
+              {target === "note" && (
+                <p className="mt-2.5 text-xs leading-relaxed text-muted-foreground">
+                  Clinician action — Heimdall doesn&rsquo;t edit clinical notes.
+                  Document only what actually happened (a late entry must be
+                  dated and marked as such), or change the claim to match the
+                  note.
+                </p>
               )}
               {selectable && edit && checked && choice && onChoose && (
                 <ChoiceControls

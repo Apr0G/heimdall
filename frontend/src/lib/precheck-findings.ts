@@ -155,3 +155,31 @@ export const NOTE_TEXT: Record<string, string> = {
 export function noteText(note: string | null | undefined): string | null {
   return (note && NOTE_TEXT[note]) || null;
 }
+
+// Where a finding's fix lands. "claim": a change to the CMS-1500 the patcher
+// can make (tickable). "note": something only the clinician can do — the
+// record has to say what happened, or the claim has to change to match it.
+// "info": nothing to change.
+export type FixTarget = "claim" | "note" | "info";
+
+export function fixTarget(
+  finding: RiskFinding,
+  edit: ProposedEdit | undefined,
+): FixTarget {
+  if (edit && isClaimEdit(edit)) return "claim";
+  if (edit?.kind === "documentation") return "note";
+  if (!finding.suggested_fix) return "info";
+  return finding.source === "ncci" ? "claim" : "note";
+}
+
+export const FIX_TARGET_LABEL: Record<FixTarget, string> = {
+  claim: "Claim change",
+  note: "Note task",
+  info: "Info",
+};
+
+export const FIX_TARGET_TITLE: Record<FixTarget, string> = {
+  claim: "Change on the claim (CMS-1500)",
+  note: "Add to the clinical note",
+  info: "Nothing to change",
+};

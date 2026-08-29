@@ -144,9 +144,16 @@ describe("pre-check report page", () => {
     cases.fetchCase.mockResolvedValue(detail());
     renderPage();
     await screen.findByText(/20610 will be denied/);
-    // Every finding carries its own problem/fix panels (native <details>).
+    // Every finding carries its own problem/fix panels (native <details>),
+    // labelled by where the fix lands: two claim changes, one note task.
     expect(screen.getAllByText("What’s wrong")).toHaveLength(3);
-    expect(screen.getAllByText("How to fix it")).toHaveLength(3);
+    expect(screen.getAllByText("Change on the claim (CMS-1500)")).toHaveLength(
+      2,
+    );
+    expect(screen.getAllByText("Add to the clinical note")).toHaveLength(1);
+    expect(screen.getAllByText("Claim change")).toHaveLength(2);
+    expect(screen.getAllByText("Note task")).toHaveLength(1);
+    expect(screen.getByText(/doesn’t edit clinical notes/)).toBeInTheDocument();
     expect(screen.getByText(/otherwise remove the line/)).toBeInTheDocument();
     // The old separate card is gone.
     expect(screen.queryByText("Proposed changes")).not.toBeInTheDocument();

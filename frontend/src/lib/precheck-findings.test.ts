@@ -7,6 +7,7 @@ import {
   type EditChoice,
   choiceIsComplete,
   defaultChoice,
+  fixTarget,
   isClaimEdit,
   modifierOptions,
   skipReasonText,
@@ -229,5 +230,39 @@ describe("corrected-claim selection helpers", () => {
     );
     expect(skipReasonText("something_new")).toBe("Couldn't apply this change");
     expect(skipReasonText(null)).toBe("Couldn't apply this change");
+  });
+});
+
+describe("fixTarget", () => {
+  const base = finding({ title: "x", suggested_fix: "do something" });
+  it("is the claim when the edit is a claim edit or an NCCI finding has a fix", () => {
+    expect(
+      fixTarget(
+        base,
+        edit({ kind: "change_units", target: "20610", value: "1" }),
+      ),
+    ).toBe("claim");
+    expect(
+      fixTarget(
+        finding({ title: "x", suggested_fix: "fix", source: "ncci" }),
+        undefined,
+      ),
+    ).toBe("claim");
+  });
+  it("is the note for documentation edits and AI-review findings", () => {
+    expect(fixTarget(base, edit({ kind: "documentation", target: null }))).toBe(
+      "note",
+    );
+    expect(
+      fixTarget(
+        finding({ title: "x", suggested_fix: "fix", source: "model" }),
+        undefined,
+      ),
+    ).toBe("note");
+  });
+  it("is info when there is nothing to do", () => {
+    expect(
+      fixTarget(finding({ title: "x", suggested_fix: null }), undefined),
+    ).toBe("info");
   });
 });
