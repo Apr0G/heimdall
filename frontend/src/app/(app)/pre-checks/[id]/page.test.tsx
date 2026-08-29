@@ -109,6 +109,7 @@ function detail(over: Partial<CaseDetail> = {}): CaseDetail {
           target: "J3301",
           instruction: "Reduce J3301 from 2 to ≤1 units/day",
           value: "1",
+          cap: "day",
           source: "ncci",
         },
         {
@@ -271,6 +272,11 @@ describe("pre-check report page", () => {
       screen.getByText(/Fill in the new value for 1 selected change/),
     ).toBeInTheDocument();
     expect(screen.getByText(/Needs a value/)).toBeInTheDocument();
+    // An NCCI unit limit is a ceiling, not a count to write.
+    expect(screen.getByText("Unit limit")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Will reduce units to at most 1 for the day/),
+    ).toBeInTheDocument();
 
     // The row opened itself; typing a valid code unblocks the button.
     const input = screen

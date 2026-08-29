@@ -788,3 +788,88 @@ def test_a_second_unit_change_on_the_same_line_scales_from_the_current_state():
     line = service_lines(result.pdf)[1]
     assert (line.units.text, line.charge.cents) == ("1", 5000)
     assert result.total_updated is True
+
+
+# --- an NCCI unit limit is a ceiling, not a count ------------------------------
+
+DAY_SPLIT = [
+    {"cpt": "97110", "mods": ["GP"], "cents": 6000, "units": 3},
+    {"cpt": "97110", "mods": ["GP"], "cents": 6000, "units": 3},
+]
+
+
+def test_a_per_day_limit_never_raises_a_line_to_meet_it():
+    # Two lines of 3 units, MUE 4/day (MAI 2/3): the day bills 6. Rewriting
+    # each line to 4 would bill 8 — further over the limit — and scale both
+    # charges UP. Which date loses units is the practice's call, so the edit
+    # refuses and the claim is untouched.
+    pdf = build_claim(DAY_SPLIT, money="single")
+    result = patch_claim(pdf, [ClaimEdit("change_units", "97110", "4", cap="day")])
+    r = result.results[0]
+    assert (r.applied, r.reason, r.charge_after_cents) == (False, "units_span_lines", None)
+    assert result.pdf == pdf
+    assert [(ln.units.text, ln.charge.cents) for ln in service_lines(result.pdf)] == [
+        ("3", 6000),
+        ("3", 6000),
+    ]
+
+
+def test_a_per_day_limit_trims_a_line_only_when_that_fixes_the_day():
+    # 5 + 1 with a limit of 4: trimming the 5 leaves 4 + 1 = 5, still over —
+    # refuse rather than report a "fix" that isn't one.
+    pdf = build_claim([dict(DAY_SPLIT[0], units=5), dict(DAY_SPLIT[1], units=1)], money="single")
+    result = patch_claim(pdf, [ClaimEdit("change_units", "97110", "4", cap="day")])
+    assert (result.results[0].applied, result.results[0].reason) == (False, "units_span_lines")
+    assert result.pdf == pdf
+    # 6 on one line with a limit of 4: trimming fixes the day — apply, scaling.
+    pdf = build_claim([dict(DAY_SPLIT[0], units=6, cents=12000)], money="single")
+    result = patch_claim(pdf, [ClaimEdit("change_units", "97110", "4", cap="day")])
+    r = result.results[0]
+    assert (r.applied, r.applied_lines, r.charge_before_cents, r.charge_after_cents) == (
+        True,
+        1,
+        12000,
+        8000,
+    )
+    assert [(ln.units.text, ln.charge.cents) for ln in service_lines(result.pdf)] == [("4", 8000)]
+
+
+def test_a_per_line_limit_lowers_only_the_lines_over_it():
+    pdf = build_claim(
+        [dict(DAY_SPLIT[0], units=5, cents=10000), dict(DAY_SPLIT[1], units=1, cents=2000)],
+        money="single",
+    )
+    result = patch_claim(pdf, [ClaimEdit("change_units", "97110", "4", cap="line")])
+    r = result.results[0]
+    assert (r.applied, r.applied_lines, r.charge_before_cents, r.charge_after_cents) == (
+        True,
+        1,
+        10000,
+        8000,
+    )
+    assert [(ln.units.text, ln.charge.cents) for ln in service_lines(result.pdf)] == [
+        ("4", 8000),
+        ("1", 2000),
+    ]
+
+
+@pytest.mark.parametrize(("cap", "value"), [("line", "4"), ("day", "6")])
+def test_a_limit_no_line_exceeds_is_reported_not_applied(cap, value):
+    # Unlike a review edit ("set units to 4"), a limit that nothing breaches
+    # is a no-op with its own reason — it must never raise 3 to 4.
+    pdf = build_claim(DAY_SPLIT, money="single")
+    result = patch_claim(pdf, [ClaimEdit("change_units", "97110", value, cap=cap)])
+    assert (result.results[0].applied, result.results[0].reason) == (False, "within_limit")
+    assert result.pdf == pdf
+
+
+def test_an_explicit_count_still_sets_every_line_that_differs():
+    # The review says the note supports 4 units on each date: a plain
+    # change_units (no cap) writes the count, raising included.
+    pdf = build_claim(DAY_SPLIT, money="single")
+    result = patch_claim(pdf, [ClaimEdit("change_units", "97110", "4")])
+    assert (result.results[0].applied, result.results[0].applied_lines) == (True, 2)
+    assert [(ln.units.text, ln.charge.cents) for ln in service_lines(result.pdf)] == [
+        ("4", 8000),
+        ("4", 8000),
+    ]

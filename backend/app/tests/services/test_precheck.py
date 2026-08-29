@@ -90,6 +90,29 @@ class TestDeterministicEdits:
         # The applier writes `value` onto the PDF: default modifier, no value
         # for a removal, the MUE limit for a unit cut.
         assert [e["value"] for e in edits] == ["59", None, "2"]
+        # MAI 3 is a date-of-service edit: the limit caps the day's total.
+        assert edits[2]["cap"] == "day"
+
+    def test_mue_limit_is_a_ceiling_per_line_or_per_day_by_mai(self):
+        # The patcher must never raise a line to the limit: MAI 1 judges each
+        # line alone, MAI 2/3 the sum across lines (ncci.evaluate_mue).
+        result = NcciResult(
+            mue=(
+                MueFinding("55555", 6, 4, 1, None),
+                MueFinding("66666", 6, 4, 2, None),
+                MueFinding("77777", 6, 4, 3, None),
+            ),
+            version_tag="v",
+            data_available=True,
+        )
+        edits = deterministic_edits(result)
+        assert [(e["target"], e["cap"]) for e in edits] == [
+            ("55555", "line"),
+            ("66666", "day"),
+            ("77777", "day"),
+        ]
+        assert "≤4 units per line" in edits[0]["instruction"]
+        assert "≤4 units/day" in edits[1]["instruction"]
 
     def test_no_data_no_edits(self):
         assert deterministic_edits(NcciResult()) == []

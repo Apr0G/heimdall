@@ -228,6 +228,10 @@ describe("corrected-claim selection helpers", () => {
     expect(skipReasonText("no_room")).toBe(
       "No space in the box for this value",
     );
+    expect(skipReasonText("within_limit")).toBe(
+      "No line is over this limit — nothing to reduce",
+    );
+    expect(skipReasonText("units_span_lines")).toMatch(/change it by hand/);
     expect(skipReasonText("something_new")).toBe("Couldn't apply this change");
     expect(skipReasonText(null)).toBe("Couldn't apply this change");
   });

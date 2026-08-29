@@ -119,8 +119,17 @@ def resolve_selections(
             if value is None:
                 raise InvalidSelection("bad_value", sel.index)
         charge = sel.charge if sel.charge in claim_patch.CHARGE_CHOICES else "scale"
+        # An NCCI unit limit is a ceiling, not a count — the report says which
+        # kind (never the client), and it holds even when the doctor types a
+        # different number for that finding.
+        cap = edit.get("cap") if kind == "change_units" else None
+        if cap not in claim_patch.CAP_KINDS:
+            cap = None
         resolved.append(
-            (sel.index, ClaimEdit(kind=kind, target=target, value=value, charge=charge))
+            (
+                sel.index,
+                ClaimEdit(kind=kind, target=target, value=value, charge=charge, cap=cap),
+            )
         )
     return resolved
 

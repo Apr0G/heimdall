@@ -244,15 +244,24 @@ def deterministic_edits(result: ncci.NcciResult) -> list[dict]:
                 }
             )
     for violation in result.mue:
+        # The limit is a ceiling, never a count to write: MAI 1 judges each
+        # line alone, MAI 2/3 the day's total across lines (ncci.evaluate_mue).
+        # The patcher needs to know which — a per-day limit that no single
+        # line exceeds cannot be met by rewriting every line to the limit.
+        per_line = violation.mai == 1
         edits.append(
             {
                 "kind": "change_units",
                 "target": violation.hcpcs,
                 "instruction": (
                     f"Reduce {violation.hcpcs} from {violation.units_billed} to "
+                    f"≤{violation.mue_value} units per line"
+                    if per_line
+                    else f"Reduce {violation.hcpcs} from {violation.units_billed} to "
                     f"≤{violation.mue_value} units/day"
                 ),
                 "value": str(violation.mue_value),
+                "cap": "line" if per_line else "day",
                 "source": "ncci",
             }
         )

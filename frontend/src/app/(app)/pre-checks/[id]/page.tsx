@@ -718,9 +718,17 @@ function choiceSummary(edit: ProposedEdit, choice: EditChoice): string {
     return `Will add modifier ${choice.value || "…"}`;
   }
   if (edit.kind === "change_units") {
-    return `Will set units to ${choice.value || "…"}${
-      choice.charge === "keep" ? ", keep the charge" : ", scale the charge"
-    }`;
+    const charge =
+      choice.charge === "keep" ? ", keep the charge" : ", scale the charge";
+    // An NCCI limit only lowers lines that exceed it; a review edit writes
+    // the count.
+    if (edit.cap === "line") {
+      return `Will reduce any line over ${choice.value || "…"} units to that${charge}`;
+    }
+    if (edit.cap === "day") {
+      return `Will reduce units to at most ${choice.value || "…"} for the day${charge}`;
+    }
+    return `Will set units to ${choice.value || "…"}${charge}`;
   }
   return `Will change ${edit.target} to ${choice.value || "…"}`;
 }
@@ -741,7 +749,9 @@ function ChoiceControls({
     edit.kind === "add_modifier"
       ? "Modifier to add"
       : edit.kind === "change_units"
-        ? "New unit count"
+        ? edit.cap
+          ? "Unit limit"
+          : "New unit count"
         : "New code";
   return (
     <div className="mt-3 space-y-2 border-t border-border/60 pt-3">

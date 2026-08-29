@@ -138,6 +138,9 @@ export const SKIP_REASON_TEXT: Record<string, string> = {
   unsupported_kind: "Not a claim change",
   not_a_service_line:
     "That's a diagnosis code — modifiers and units apply to service lines",
+  within_limit: "No line is over this limit — nothing to reduce",
+  units_span_lines:
+    "The day's total is over the limit but no single line is — decide which line loses units and change it by hand",
 };
 
 export function skipReasonText(reason: string | null): string {

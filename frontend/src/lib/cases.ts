@@ -146,6 +146,10 @@ export type ProposedEdit = {
   instruction: string;
   // New modifier / units / code the edit writes; null when the biller chooses.
   value: string | null;
+  // change_units from the NCCI engine: the value is a ceiling per line
+  // ("line") or per day across the code's lines ("day"), never a count to
+  // raise a line to. Absent/null for a review edit.
+  cap?: "line" | "day" | null;
   source: string; // "ncci" | "model"
 };
 

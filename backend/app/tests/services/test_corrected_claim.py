@@ -73,3 +73,26 @@ def test_claim_document_editable_requires_a_text_layer_on_the_claim():
     assert not claim_document_editable([doc(doc_type="claim", ocr_status="completed")])
     assert not claim_document_editable([doc(doc_type="clinical", ocr_status="not_needed")])
     assert not claim_document_editable([])
+
+
+def test_an_ncci_unit_limit_stays_a_ceiling_whatever_the_client_sends():
+    edits = [
+        {"kind": "change_units", "target": "97110", "value": "4", "cap": "day", "source": "ncci"},
+        {"kind": "change_units", "target": "97140", "value": "2", "cap": "line", "source": "ncci"},
+        {"kind": "change_units", "target": "20553", "value": "3", "cap": "bogus", "source": "ncci"},
+        {"kind": "change_units", "target": "99214", "value": "1", "source": "model"},
+    ]
+    resolved = resolve_selections(
+        edits, [Selection(0, "3"), Selection(1), Selection(2), Selection(3)]
+    )
+    # The report decides the kind of limit; a doctor's own number for that
+    # finding is still applied as a limit, never as a count to raise lines to.
+    assert [(e.value, e.cap) for _, e in resolved] == [
+        ("3", "day"),
+        ("2", "line"),
+        ("3", None),
+        ("1", None),
+    ]
+    # "Remove the line instead" has nothing to cap.
+    ((_, edit),) = resolve_selections(edits, [Selection(0, remove=True)])
+    assert (edit.kind, edit.cap) == ("remove_line", None)

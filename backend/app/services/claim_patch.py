@@ -109,6 +109,7 @@ class ClaimPatchError(RuntimeError):
 
 
 CHARGE_CHOICES = ("scale", "keep")
+CAP_KINDS = ("line", "day")  # see ClaimEdit.cap
 
 
 @dataclass(frozen=True)
@@ -120,6 +121,12 @@ class ClaimEdit:
     # (how billing systems build the charge); "keep" leaves the charge when the
     # units were a data-entry slip. Only the practice knows which — see the UI.
     charge: str = "scale"
+    # change_units only. None: `value` is the count to write (a review edit —
+    # raising units is legitimate when the note supports them). "line": `value`
+    # is a ceiling per service line (an MUE with MAI 1). "day": `value` is a
+    # ceiling for the code's units summed over its lines (MAI 2/3). A ceiling
+    # only ever lowers a line; it never raises one to meet the number.
+    cap: str | None = None
 
 
 @dataclass(frozen=True)
@@ -129,7 +136,10 @@ class EditResult:
     # Reason codes for a skipped edit: unsupported_kind, line_not_found,
     # ambiguous_line, modifier_slots_full, already_present, no_room, bad_value,
     # not_a_service_line (a modifier/units edit aimed at a diagnosis code),
-    # no_units_cell (blank 24G and no sibling line shows where the column is).
+    # no_units_cell (blank 24G and no sibling line shows where the column is),
+    # within_limit (a unit ceiling no line exceeds), units_span_lines (a
+    # per-day ceiling breached only by the sum of several lines — which date
+    # loses units is the practice's call, so nothing is drawn).
     reason: str | None = None
     # A code can sit on several service lines (one per date); the edit applies
     # to each line it fits, and this says how many it reached.
@@ -756,11 +766,33 @@ def _apply_to_lines(edit: ClaimEdit, lines: list[_ServiceLine], ctx: _Backend) -
         return EditResult(edit, False, "bad_value")
 
     if edit.kind == "change_units":
-        current = [line for line in lines if ctx.current_units(line) != float(value)]
-        if not current:
-            return EditResult(edit, False, "already_present")
-        over = [line for line in current if ctx.current_units(line) > int(value)]
-        candidates = over or current
+        target = int(value)
+        over = [line for line in lines if ctx.current_units(line) > target]
+        if edit.cap == "line":
+            # A per-line ceiling: only lines above it move, and only downward.
+            if not over:
+                return EditResult(edit, False, "within_limit")
+            candidates = over
+        elif edit.cap == "day":
+            # A per-day ceiling (MUE MAI 2/3): the violation is the SUM over the
+            # code's lines. Trimming each line to the ceiling is only a fix when
+            # the trimmed lines add up to at most the ceiling; when several
+            # lines each sit under it but together exceed it, which date loses
+            # units is a clinical/billing decision, not a patch.
+            total = sum(ctx.current_units(line) for line in lines)
+            if total <= target:
+                return EditResult(edit, False, "within_limit")
+            trimmed = sum(min(ctx.current_units(line), target) for line in lines)
+            if trimmed > target:
+                return EditResult(edit, False, "units_span_lines")
+            candidates = over
+        else:
+            # An explicit count: lines above it are cut to it; when none is,
+            # every line that differs is set to it (the note supports it).
+            current = [line for line in lines if ctx.current_units(line) != float(value)]
+            if not current:
+                return EditResult(edit, False, "already_present")
+            candidates = over or current
     elif edit.kind == "add_modifier":
         candidates = [line for line in lines if all(m.text != value for m in line.modifiers)]
         if not candidates:

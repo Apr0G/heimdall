@@ -157,6 +157,10 @@ class ProposedEditDetail(BaseModel):
     instruction: str
     # New modifier / units / code the edit writes; None when the biller chooses.
     value: str | None = None
+    # change_units from the NCCI engine: `value` is a ceiling per line ("line",
+    # MUE MAI 1) or per day across the code's lines ("day", MAI 2/3), never a
+    # count to raise a line to. None for a review edit.
+    cap: str | None = None
     source: str  # "ncci" | "model"
 
 
