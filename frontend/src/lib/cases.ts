@@ -191,7 +191,16 @@ export type CorrectedClaimSelection = {
   charge?: "scale" | "keep";
 };
 
+export type CorrectedClaimRequest = {
+  selections: CorrectedClaimSelection[];
+  // The report the selection indexes point into. The API answers 409
+  // "report_changed" if a newer one exists; optional so a page loaded before
+  // the report carried an id still submits.
+  risk_report_id?: string;
+};
+
 export type RiskReportDetail = {
+  id: string;
   overall_risk_band: string | null;
   findings: RiskFinding[];
   proposed_edits?: ProposedEdit[];
@@ -267,11 +276,11 @@ export async function retryCase(
 
 export async function createCorrectedClaim(
   id: string,
-  selections: CorrectedClaimSelection[],
+  payload: CorrectedClaimRequest,
 ): Promise<CorrectedClaimDetail> {
   const res = await api.post<CorrectedClaimDetail>(
     `/api/cases/${id}/corrected-claim`,
-    { selections },
+    payload,
   );
   return res.data;
 }

@@ -29,6 +29,15 @@ const _PIPELINE_ERROR_COPY: { match: string; text: string }[] = [
   },
 ];
 
+// Machine-readable HTTPException details — the API sends these where the
+// client has to react, not just display. Any other string detail is already
+// user copy.
+const _DETAIL_COPY = new Map<string, string>([
+  // 409 from POST …/corrected-claim: the report the picks index into is no
+  // longer the latest one.
+  ["report_changed", "This report changed — reload and pick your edits again"],
+]);
+
 const _GENERIC_PIPELINE_ERROR =
   "Something went wrong while processing your documents. Your files are safe — nothing was lost. Try again, and if it keeps happening, email us.";
 
@@ -55,7 +64,8 @@ export function toastError(
       message = "Your session expired. Please sign in again.";
     } else if (typeof err.response?.data?.detail === "string") {
       // FastAPI HTTPException detail is already user-facing and PHI-free.
-      message = err.response.data.detail;
+      const detail: string = err.response.data.detail;
+      message = _DETAIL_COPY.get(detail) ?? detail;
     }
   }
   toast.error(message);

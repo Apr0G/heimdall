@@ -52,6 +52,7 @@ import {
   centsToInputString,
   formatCents,
   formatDate,
+  formatTimestampDate,
   humanize,
 } from "@/lib/format";
 import { type AdditionalDocType, reanalyzeWithUploads } from "@/lib/upload";
@@ -581,7 +582,7 @@ function LetterHistory({ letters }: { letters: LetterDetail[] }) {
               <span>
                 v{l.version} · {humanize(l.appeal_type)}
                 <span className="ml-2 text-xs text-muted-foreground">
-                  {formatDate(l.created_at.slice(0, 10))}
+                  {formatTimestampDate(l.created_at)}
                 </span>
               </span>
               <span className="text-xs text-muted-foreground">

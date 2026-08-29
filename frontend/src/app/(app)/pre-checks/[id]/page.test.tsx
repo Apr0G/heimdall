@@ -59,6 +59,7 @@ function detail(over: Partial<CaseDetail> = {}): CaseDetail {
     claim_editable: true,
     corrected_claim: null,
     risk_report: {
+      id: "rr-1",
       overall_risk_band: "high",
       deterministic_count: 2,
       model_count: 1,
@@ -194,9 +195,10 @@ describe("pre-check report page", () => {
 
     await user.click(create);
     await waitFor(() =>
-      expect(cases.createCorrectedClaim).toHaveBeenCalledWith("case-1", [
-        { index: 0, value: "59" },
-      ]),
+      expect(cases.createCorrectedClaim).toHaveBeenCalledWith("case-1", {
+        selections: [{ index: 0, value: "59" }],
+        risk_report_id: "rr-1",
+      }),
     );
   });
 
@@ -226,9 +228,10 @@ describe("pre-check report page", () => {
       screen.getByRole("button", { name: /Create corrected PDF/ }),
     );
     await waitFor(() =>
-      expect(cases.createCorrectedClaim).toHaveBeenCalledWith("case-1", [
-        { index: 0, remove: true },
-      ]),
+      expect(cases.createCorrectedClaim).toHaveBeenCalledWith("case-1", {
+        selections: [{ index: 0, remove: true }],
+        risk_report_id: "rr-1",
+      }),
     );
   });
 
@@ -291,12 +294,59 @@ describe("pre-check report page", () => {
     expect(input).toHaveFocus();
     await user.click(create);
     await waitFor(() =>
-      expect(cases.createCorrectedClaim).toHaveBeenCalledWith("case-1", [
-        { index: 0, value: "59" },
-        { index: 1, value: "1", charge: "scale" },
-        { index: 3, value: "99213" },
-      ]),
+      expect(cases.createCorrectedClaim).toHaveBeenCalledWith("case-1", {
+        selections: [
+          { index: 0, value: "59" },
+          { index: 1, value: "1", charge: "scale" },
+          { index: 3, value: "99213" },
+        ],
+        risk_report_id: "rr-1",
+      }),
     );
+  });
+
+  it("caps the picks at the server's limit of 20", async () => {
+    const d = detail();
+    // 21 bundling hits, each with its own removal edit.
+    const codes = Array.from({ length: 21 }, (_, i) => String(10000 + i));
+    d.risk_report!.findings = codes.map((code) => ({
+      check_id: "ncci_ptp",
+      severity: "high",
+      title: `${code} will be denied as bundled into 99213`,
+      predicted_carc: "CO-97",
+      explanation: null,
+      suggested_fix: "Remove the line.",
+      source: "ncci",
+    }));
+    d.risk_report!.proposed_edits = codes.map((code) => ({
+      kind: "remove_line",
+      target: code,
+      instruction: `Remove ${code}`,
+      value: null,
+      source: "ncci",
+    }));
+    cases.fetchCase.mockResolvedValue(d);
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText(/10000 will be denied/);
+    const boxes = screen.getAllByRole("checkbox", {
+      name: /Include this change/,
+    });
+    expect(boxes).toHaveLength(21);
+
+    await user.click(screen.getByRole("button", { name: "Select first 20" }));
+    expect(screen.getByText("20 of 21 changes selected")).toBeInTheDocument();
+    const create = screen.getByRole("button", { name: /Create corrected PDF/ });
+    expect(create).toBeEnabled();
+    expect(boxes[20]).not.toBeChecked();
+
+    // The 21st by hand: the button explains itself instead of a 422 toast.
+    await user.click(boxes[20]);
+    expect(screen.getByText("21 of 21 changes selected")).toBeInTheDocument();
+    expect(
+      screen.getByText(/at most 20 changes — untick 1 to continue/),
+    ).toBeInTheDocument();
+    expect(create).toBeDisabled();
   });
 
   it("shows the corrected claim with its outcome and a download", async () => {

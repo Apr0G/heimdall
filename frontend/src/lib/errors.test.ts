@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { pipelineErrorMessage } from "./errors";
+import { httpError } from "@/test/axios-error";
+
+const { toast } = vi.hoisted(() => ({ toast: { error: vi.fn() } }));
+vi.mock("sonner", () => ({ toast }));
+
+import { pipelineErrorMessage, toastError } from "./errors";
 
 describe("pipelineErrorMessage", () => {
   it("maps known exception-type signals to friendly copy", () => {
@@ -22,5 +27,18 @@ describe("pipelineErrorMessage", () => {
 
   it("returns the generic message for null", () => {
     expect(pipelineErrorMessage(null)).toMatch(/something went wrong/i);
+  });
+});
+
+describe("toastError", () => {
+  it("translates a machine-readable detail and passes user copy through", () => {
+    toastError(httpError(409, "report_changed"));
+    expect(toast.error).toHaveBeenLastCalledWith(
+      "This report changed — reload and pick your edits again",
+    );
+    toastError(httpError(400, "Selections must be distinct."));
+    expect(toast.error).toHaveBeenLastCalledWith(
+      "Selections must be distinct.",
+    );
   });
 });

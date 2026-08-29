@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { centsToInputString, formatCents } from "./format";
+import {
+  centsToInputString,
+  formatCents,
+  formatDate,
+  formatTimestampDate,
+} from "./format";
 
 describe("money formatting (rule 11: integer cents, no doubles)", () => {
   it("formats with exact cents", () => {
@@ -23,5 +28,31 @@ describe("money formatting (rule 11: integer cents, no doubles)", () => {
     expect(centsToInputString(1000)).toBe("10.00");
     expect(centsToInputString(7)).toBe("0.07");
     expect(centsToInputString(null)).toBe("");
+  });
+});
+
+describe("date formatting", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("renders a plain date as the day it names, whatever the zone", () => {
+    vi.stubEnv("TZ", "America/New_York");
+    expect(formatDate("2026-08-28")).toBe("Aug 28, 2026");
+    expect(formatDate(null)).toBe("—");
+  });
+
+  it("renders a timestamp on the viewer's calendar date, not the UTC one", () => {
+    vi.stubEnv("TZ", "America/New_York");
+    // 03:30 UTC on the 28th is 23:30 on the 27th in New York — the old
+    // `slice(0, 10)` showed the 28th.
+    const ts = "2026-08-28T03:30:00Z";
+    expect(formatTimestampDate(ts)).toBe("Aug 27, 2026");
+    expect(formatTimestampDate(ts)).toBe(
+      new Date(ts).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      }),
+    );
+    expect(formatTimestampDate(null)).toBe("—");
   });
 });

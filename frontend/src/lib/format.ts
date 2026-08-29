@@ -33,15 +33,27 @@ export function centsToInputString(cents: number | null | undefined): string {
   return cents < 0 ? `-${s}` : s;
 }
 
+const DATE_STYLE: Intl.DateTimeFormatOptions = {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+};
+
+/** A plain date string ("2026-08-28") as written — a date of service or a
+ *  deadline is a calendar day, not an instant. */
 export function formatDate(iso: string | null | undefined): string {
   if (!iso) return "—";
   // Parse as local midnight so a plain date string doesn't shift across zones.
   const d = new Date(`${iso}T00:00:00`);
-  return d.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  return d.toLocaleDateString("en-US", DATE_STYLE);
+}
+
+/** A full ISO timestamp ("2026-08-28T03:30:00Z") as the calendar date in the
+ *  viewer's zone. Slicing the first ten characters off shows the UTC date
+ *  instead — a day ahead for a US evening. */
+export function formatTimestampDate(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("en-US", DATE_STYLE);
 }
 
 export function humanize(value: string | null | undefined): string {

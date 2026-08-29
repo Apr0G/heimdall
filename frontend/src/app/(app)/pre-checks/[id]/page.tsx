@@ -44,7 +44,12 @@ import {
   type RiskFinding,
 } from "@/lib/cases";
 import { pipelineErrorMessage, toastError } from "@/lib/errors";
-import { formatCents, formatDate, humanize } from "@/lib/format";
+import {
+  formatCents,
+  formatDate,
+  formatTimestampDate,
+  humanize,
+} from "@/lib/format";
 import {
   attachEditsToFindings,
   buildSelections,
@@ -63,6 +68,10 @@ import {
 } from "@/lib/precheck-findings";
 
 const SEVERITY_ORDER = ["high", "medium", "low", "info"] as const;
+
+// Mirrors the `selections` max_length in backend schemas/case.py; one more is
+// a 422 the toast can't explain.
+const MAX_SELECTIONS = 20;
 
 const SEVERITY_META: Record<string, { label: string; token: string }> = {
   high: { label: "High risk", token: "--danger" },
@@ -287,7 +296,11 @@ function FindingsCard({
 
   const apply = useMutation({
     mutationFn: (edits: ProposedEdit[]) =>
-      createCorrectedClaim(c.id, buildSelections(edits, chosen)),
+      createCorrectedClaim(c.id, {
+        selections: buildSelections(edits, chosen),
+        // Pins the picks to the report they were made against.
+        risk_report_id: c.risk_report?.id,
+      }),
     onSuccess: () => {
       setChosen(new Map());
       onCorrected();
@@ -310,7 +323,10 @@ function FindingsCard({
     ),
   );
   const editable = Boolean(c.claim_editable) && selectable.size > 0;
-  const allChosen = selectable.size > 0 && chosen.size === selectable.size;
+  const overCap = chosen.size > MAX_SELECTIONS;
+  const allChosen =
+    selectable.size > 0 &&
+    chosen.size === Math.min(selectable.size, MAX_SELECTIONS);
   // Ticked changes still missing a value (e.g. an AI "change the code" edit
   // with no concrete new code). They block the button until filled in, so the
   // rows open themselves and the footer says what's blocking.
@@ -352,6 +368,7 @@ function FindingsCard({
       const next = new Map<number, EditChoice>();
       if (on) {
         for (const i of selectable) {
+          if (next.size === MAX_SELECTIONS) break;
           next.set(i, prev.get(i) ?? defaultChoice(edits[i]));
         }
       }
@@ -455,6 +472,12 @@ function FindingsCard({
                   {incomplete.size === 1 ? "" : "s"} above to continue.
                 </span>
               )}
+              {overCap && (
+                <span className="block" style={{ color: "var(--warn)" }}>
+                  A corrected claim takes at most {MAX_SELECTIONS} changes —
+                  untick {chosen.size - MAX_SELECTIONS} to continue.
+                </span>
+              )}
             </span>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -463,12 +486,18 @@ function FindingsCard({
                 size="sm"
                 onClick={() => selectAll(!allChosen)}
               >
-                {allChosen ? "Clear" : "Select all"}
+                {allChosen
+                  ? "Clear"
+                  : selectable.size > MAX_SELECTIONS
+                    ? `Select first ${MAX_SELECTIONS}`
+                    : "Select all"}
               </Button>
               <Button
                 type="button"
                 size="sm"
-                disabled={chosen.size === 0 || !complete || apply.isPending}
+                disabled={
+                  chosen.size === 0 || !complete || overCap || apply.isPending
+                }
                 onClick={() => apply.mutate(edits)}
               >
                 {apply.isPending
@@ -845,8 +874,7 @@ function CorrectedClaimCard({
         <CardTitle className="flex flex-wrap items-center gap-2">
           Corrected claim
           <span className="text-xs font-normal text-muted-foreground">
-            v{corrected.version} ·{" "}
-            {formatDate(corrected.created_at.slice(0, 10))}
+            v{corrected.version} · {formatTimestampDate(corrected.created_at)}
           </span>
         </CardTitle>
         {corrected.downloadable && (
@@ -970,7 +998,7 @@ function ReportFooter({ c }: { c: CaseDetail }) {
       {report?.ncci_version_tag && (
         <span className="mt-1 block">
           CMS edit data: {report.ncci_version_tag} · checked{" "}
-          {formatDate(report.created_at.slice(0, 10))}
+          {formatTimestampDate(report.created_at)}
         </span>
       )}
     </p>
