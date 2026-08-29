@@ -102,23 +102,54 @@ resource "aws_cloudwatch_event_target" "guardduty_to_sns" {
   arn       = aws_sns_topic.alerts.arn
 }
 
-# Let EventBridge publish to the (KMS-encrypted) alerts topic. The KMS key's
-# AllowSnsPublishers statement (main.tf) also lists events.amazonaws.com so the
-# encrypted publish succeeds.
+# Access policy for the (KMS-encrypted) alerts topic. An aws_sns_topic_policy
+# REPLACES the topic's default policy wholesale — it does not add to it — so
+# every service that publishes here must be listed explicitly. The 2026-08-25
+# version carried only the EventBridge statement, which silently cut off every
+# CloudWatch alarm (root usage, unauthorized calls, IAM changes, RDS, Lambda
+# errors) and every SES bounce/complaint: the alarm history read "Failed to
+# execute action" for three days and nobody was emailed. The KMS key's
+# AllowSnsPublishers statement (main.tf) lists the same three services.
 resource "aws_sns_topic_policy" "alerts_events" {
   arn = aws_sns_topic.alerts.arn
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Sid       = "AllowEventBridgePublish"
-      Effect    = "Allow"
-      Principal = { Service = "events.amazonaws.com" }
-      Action    = "sns:Publish"
-      Resource  = aws_sns_topic.alerts.arn
-      Condition = {
-        ArnEquals = { "aws:SourceArn" = aws_cloudwatch_event_rule.guardduty_findings.arn }
-      }
-    }]
+    Statement = [
+      {
+        Sid       = "AllowEventBridgePublish"
+        Effect    = "Allow"
+        Principal = { Service = "events.amazonaws.com" }
+        Action    = "sns:Publish"
+        Resource  = aws_sns_topic.alerts.arn
+        Condition = {
+          ArnEquals = { "aws:SourceArn" = aws_cloudwatch_event_rule.guardduty_findings.arn }
+        }
+      },
+      {
+        # CloudWatch alarm actions (monitoring.tf, cognito-email-sender.tf).
+        # Confused-deputy guard: the service principal is shared across all of
+        # AWS, so pin it to alarms owned by THIS account.
+        Sid       = "AllowCloudWatchAlarmsPublish"
+        Effect    = "Allow"
+        Principal = { Service = "cloudwatch.amazonaws.com" }
+        Action    = "sns:Publish"
+        Resource  = aws_sns_topic.alerts.arn
+        Condition = {
+          StringEquals = { "aws:SourceAccount" = data.aws_caller_identity.current.account_id }
+        }
+      },
+      {
+        # SES bounce / complaint notifications for the sending domain (ses.tf).
+        Sid       = "AllowSesNotificationsPublish"
+        Effect    = "Allow"
+        Principal = { Service = "ses.amazonaws.com" }
+        Action    = "sns:Publish"
+        Resource  = aws_sns_topic.alerts.arn
+        Condition = {
+          StringEquals = { "aws:SourceAccount" = data.aws_caller_identity.current.account_id }
+        }
+      },
+    ]
   })
 }
 
