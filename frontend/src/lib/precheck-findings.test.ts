@@ -339,6 +339,23 @@ describe("fixTarget", () => {
       ),
     ).toBe("note");
   });
+  it("reads a review finding's own fix when no edit joined", () => {
+    const model = (fix: string) =>
+      fixTarget(
+        finding({ title: "x", suggested_fix: fix, source: "model" }),
+        undefined,
+      );
+    expect(model("Change 99214 to 99213.")).toBe("claim");
+    expect(model("Add modifier 25 to the E/M line")).toBe("claim");
+    expect(model("Reduce the units to what the note supports")).toBe("claim");
+    expect(model("Remove the second J3301 line")).toBe("claim");
+    expect(model("Bill M54.50 rather than unspecified back pain")).toBe(
+      "claim",
+    );
+    expect(model("Document prior conservative treatment and B12 levels")).toBe(
+      "note",
+    );
+  });
   it("is info when there is nothing to do", () => {
     expect(
       fixTarget(finding({ title: "x", suggested_fix: null }), undefined),

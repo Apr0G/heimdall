@@ -197,7 +197,26 @@ export function fixTarget(
   if (edit && isClaimEdit(edit)) return "claim";
   if (edit?.kind === "documentation") return "note";
   if (!finding.suggested_fix) return "info";
-  return finding.source === "ncci" ? "claim" : "note";
+  if (finding.source === "ncci") return "claim";
+  return describesClaimChange(finding.suggested_fix) ? "claim" : "note";
+}
+
+// A review finding with no edit joined (the model's edit targeted a code its
+// title never named, or it sent none) is labelled from its own fix text: a
+// fix that names a code on the claim, or talks about modifiers, units,
+// removing or coding, is claim work — not "add to the clinical note" above a
+// code change. Only dotted dx codes count as codes here; bare dx-shaped
+// tokens ("B12") are everyday clinical prose.
+function describesClaimChange(fix: string): boolean {
+  if (/\b(modifier|unit|remove|code)s?\b/i.test(fix)) return true;
+  return fix
+    .split(/[^A-Za-z0-9.]+/)
+    .map((token) => token.replace(/\.$/, ""))
+    .some(
+      (token) =>
+        isProcedureCode(token) ||
+        /^[A-Z]\d[A-Z0-9]\.[A-Z0-9]{1,4}$/i.test(token),
+    );
 }
 
 export const FIX_TARGET_LABEL: Record<FixTarget, string> = {
