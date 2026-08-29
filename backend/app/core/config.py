@@ -40,6 +40,15 @@ class Settings(BaseSettings):
     # RDS is private + force_ssl, so traffic is still encrypted). Set to
     # /app/rds-ca.pem — which the image ships — once a deploy is verified to connect.
     db_ssl_ca_bundle: str = ""
+    # Server-side caps on the API engine's connections (asyncpg server_settings,
+    # milliseconds). A statement that runs past statement_timeout, or waits on a
+    # lock past lock_timeout, is cancelled with an error instead of pinning one
+    # of the 10+10 pooled connections indefinitely behind an external lock
+    # holder. Migrations and the one-off scripts are NOT covered: alembic lifts
+    # both inside its transaction (index builds on large tables), and the
+    # scripts open their own engines without these settings.
+    db_statement_timeout_ms: int = 60_000
+    db_lock_timeout_ms: int = 10_000
 
     # Auth (Cognito)
     cognito_user_pool_id: str = ""
@@ -108,23 +117,45 @@ class Settings(BaseSettings):
     # 0 disables the server-side check.
     idle_timeout_minutes: int = 15
 
-    def require_redis_in_production(self) -> None:
-        """Raise if production has no Redis DSN. The rate limiters fall back to
-        `memory://` when redis_dsn() is empty (see core/rate_limit.py) — which
-        silently makes the fail-closed AI spend cap and the login brute-force
-        throttle per-container counters that reset on every deploy. A dropped
-        REDIS_URL must be a loud failure for the SERVING API, not a quiet
-        downgrade.
+    def require_production_settings(self) -> None:
+        """Raise if production is missing a setting whose absence degrades a
+        control silently instead of failing:
+
+        * Redis — the rate limiters fall back to `memory://` (core/rate_limit.py),
+          which makes the fail-closed AI spend cap and the login brute-force
+          throttle per-container counters that reset on every deploy.
+        * A `us.` Bedrock inference profile — the hard rule; a bare model id
+          routes to a single region with no cross-region failover.
+        * PHI_HASH_PEPPER — without it member_id_hash is omitted with a WARNING
+          (hard rule 5 says stored hashed, not stored null).
+        * DB_SSL_CA_BUNDLE — without it the DB TLS context is CERT_NONE, so an
+          RDS endpoint is encrypted to but never verified.
 
         Called from the API app startup (main.py) — NOT a Settings validator,
         because the one-off admin tasks (alembic migrate, export-corpus,
         dispose, provision) also run with APP_ENV=production but legitimately
         have no Redis, and must not be blocked from booting."""
-        if self.app_env == "production" and not self.redis_dsn():
+        if self.app_env != "production":
+            return
+        if not self.redis_dsn():
             raise RuntimeError(
                 "REDIS_URL (and REDIS_AUTH_TOKEN) must be set in production — the "
                 "in-memory rate-limit fallback is single-process only and defeats "
                 "the AI spend cap and login throttle."
+            )
+        if not self.bedrock_model_id.startswith("us."):
+            raise RuntimeError(
+                "BEDROCK_MODEL_ID must be a cross-region inference profile (us.…) " "in production."
+            )
+        if not self.phi_hash_pepper.strip():
+            raise RuntimeError(
+                "PHI_HASH_PEPPER must be set in production — member ids would be "
+                "stored unhashed-as-null instead of keyed-hashed."
+            )
+        if not self.db_ssl_ca_bundle.strip():
+            raise RuntimeError(
+                "DB_SSL_CA_BUNDLE must be set in production — without it the "
+                "database TLS connection is not certificate-verified."
             )
 
     def redis_dsn(self) -> str:

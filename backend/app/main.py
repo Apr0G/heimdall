@@ -22,11 +22,12 @@ from app.core.security_headers import BodySizeLimitMiddleware, SecurityHeadersMi
 setup_logging(settings.log_level)
 logger = logging.getLogger(__name__)
 
-# Fail the SERVING API loudly if production has no Redis (the in-memory
-# rate-limit fallback silently defeats the AI spend cap + login throttle). Lives
-# here, not in Settings, so one-off admin tasks (alembic migrate, export,
-# dispose, provision) — which run APP_ENV=production without Redis — still boot.
-settings.require_redis_in_production()
+# Fail the SERVING API loudly if production is missing a setting whose absence
+# would silently weaken a control (Redis for the rate limits, a `us.` inference
+# profile, the PHI hash pepper, the DB CA bundle). Lives here, not in Settings,
+# so one-off admin tasks (alembic migrate, export, dispose, provision) — which
+# run APP_ENV=production without Redis — still boot.
+settings.require_production_settings()
 
 # Swagger UI, ReDoc, and the OpenAPI schema expose the full API surface (every
 # route, param, and shape) — useful in dev, but free reconnaissance for an

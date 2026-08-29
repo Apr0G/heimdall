@@ -12,6 +12,8 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.core.config import settings
+
 # JSON payloads are tiny; document bytes go straight to S3, not through here.
 DEFAULT_MAX_BODY_BYTES = 1_000_000  # 1 MB
 
@@ -85,10 +87,22 @@ class BodySizeLimitMiddleware:
         await send({"type": "http.response.body", "body": b'{"detail":"Request body too large"}'})
 
 
+# The interactive API docs are HTML pages that load their own scripts and
+# styles, which `default-src 'none'` blanks out. main.py only serves them
+# outside production, so only there is the CSP dropped for exactly these paths;
+# every other header still applies, and in production they 404 with full
+# headers like any other unknown path.
+_DOCS_PATHS = frozenset(["/docs", "/redoc", "/openapi.json"])
+_CSP = "Content-Security-Policy"
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         response = await call_next(request)
+        skip_csp = settings.app_env != "production" and request.url.path in _DOCS_PATHS
         for name, value in _HEADERS.items():
+            if skip_csp and name == _CSP:
+                continue
             response.headers.setdefault(name, value)
         # Best-effort: don't advertise the server implementation. (uvicorn's own
         # Server header is added at the protocol layer; disable via

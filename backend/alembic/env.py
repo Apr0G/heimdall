@@ -1,11 +1,11 @@
 import asyncio
 from logging.config import fileConfig
 
+from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
 import app.models  # noqa: F401  -- imported for the side effect of populating Base.metadata
 from alembic import context
-from app.core.config import settings
 from app.db.base import Base
 from app.db.session import engine
 
@@ -29,6 +29,14 @@ def do_run_migrations(connection: Connection) -> None:
         compare_server_default=True,
     )
     with context.begin_transaction():
+        # The app engine caps every connection with statement_timeout /
+        # lock_timeout (db/session.py) — right for request traffic, wrong for an
+        # index build or a table rewrite on a large table. SET LOCAL lifts both
+        # for exactly this transaction. It must run INSIDE begin_transaction():
+        # a statement before context.configure() would autobegin a transaction
+        # alembic then treats as external and never commits.
+        connection.execute(text("SET LOCAL statement_timeout = 0"))
+        connection.execute(text("SET LOCAL lock_timeout = 0"))
         context.run_migrations()
 
 
@@ -47,16 +55,6 @@ def run_migrations_offline() -> None:
         "Offline (--sql) migrations are disabled: 0007 binds the app DB password and "
         "literal_binds would print it. Run `alembic upgrade head` online instead."
     )
-    context.configure(
-        url=settings.database_url,
-        target_metadata=target_metadata,
-        literal_binds=True,
-        dialect_opts={"paramstyle": "named"},
-        compare_type=True,
-        compare_server_default=True,
-    )
-    with context.begin_transaction():
-        context.run_migrations()
 
 
 def run_migrations_online() -> None:

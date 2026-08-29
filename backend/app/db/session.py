@@ -23,6 +23,20 @@ else:
 # engine only connects on first real use. Real deployments always set the URL.
 _database_url = settings.database_url or "postgresql+asyncpg://placeholder/placeholder"
 
+# Applied by the server on every pooled connection (asyncpg passes them as
+# startup parameters; values must be strings, bare integers read as ms). Without
+# a cap, one statement stuck behind an external lock holder pins its connection
+# for good, and the pool (10 + 10 overflow) drains behind it. Migrations reset
+# both inside their transaction (alembic/env.py); the one-off scripts open their
+# own engines and never see these.
+connect_args = {
+    "ssl": _ssl_context,
+    "server_settings": {
+        "statement_timeout": str(settings.db_statement_timeout_ms),
+        "lock_timeout": str(settings.db_lock_timeout_ms),
+    },
+}
+
 engine = create_async_engine(
     _database_url,
     echo=False,
@@ -40,7 +54,7 @@ engine = create_async_engine(
     max_overflow=10,  # up to 20 connections per task; RDS t4g.micro allows ~112
     pool_timeout=30,
     pool_recycle=1800,  # recycle every 30 min to avoid stale server-side closes
-    connect_args={"ssl": _ssl_context},
+    connect_args=connect_args,
 )
 
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
