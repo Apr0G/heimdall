@@ -873,3 +873,29 @@ def test_an_explicit_count_still_sets_every_line_that_differs():
         ("4", 8000),
         ("4", 8000),
     ]
+
+
+def test_a_second_unit_change_on_a_blank_units_cell_rewrites_the_first():
+    # Blank 24G: the first edit draws "2" in the empty column; the second must
+    # replace it, not print "3" on top ("23"). Charges scale step by step.
+    pdf = build_claim([dict(ln, units=None) for ln in LINES])
+    result = patch_claim(
+        pdf, [ClaimEdit("change_units", "20610", "2"), ClaimEdit("change_units", "20610", "3")]
+    )
+    assert [(r.applied, r.charge_before_cents, r.charge_after_cents) for r in result.results] == [
+        (True, 15000, 30000),
+        (True, 30000, 45000),
+    ]
+    line = service_lines(result.pdf)[1]
+    assert (line.units.text, line.charge.cents) == ("3", 45000)
+    # Exactly one count in the cell: every word on the row is accounted for.
+    row = [w["text"] for w in words(result.pdf) if abs(w["top"] - line.cpt.top) < 2]
+    assert row.count("3") == 1 and "2" not in row and "23" not in row
+    # Setting it back to what it already is on a later step is a no-op.
+    result = patch_claim(
+        pdf, [ClaimEdit("change_units", "20610", "2"), ClaimEdit("change_units", "20610", "2")]
+    )
+    assert [(r.applied, r.reason) for r in result.results] == [
+        (True, None),
+        (False, "already_present"),
+    ]

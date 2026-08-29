@@ -387,3 +387,20 @@ def test_regenerated_appearance_renders_the_new_value():
     y_top, y_bottom = PAGE_H - (ROW_Y[2] + ROW_H), PAGE_H - ROW_Y[2]
     region = image.crop((x0, y_top, x1, y_bottom)).convert("L")
     assert min(region.getdata()) < 128
+
+
+def test_a_second_unit_change_on_a_blank_units_field_rewrites_it():
+    # The field the first edit filled is no longer empty — the second edit
+    # must rewrite it, not report "no_units_cell" and leave the first value.
+    lines = [dict(ln, units=None) for ln in LINES]
+    pdf = build_form_claim(lines)
+    result = patch_claim(
+        pdf, [ClaimEdit("change_units", "J2501", "2"), ClaimEdit("change_units", "J2501", "3")]
+    )
+    assert [(r.applied, r.reason, r.applied_lines) for r in result.results] == [
+        (True, None, 2),
+        (True, None, 2),
+    ]
+    v = values(result.pdf)
+    assert (v["G1"], v["G2"]) == ("3", "3")
+    assert [r.charge_after_cents for r in result.results] == [8800, 13200]

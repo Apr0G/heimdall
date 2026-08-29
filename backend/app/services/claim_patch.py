@@ -330,6 +330,10 @@ class _Backend:
         # scales from where the first left it, not from the original.
         self.charges: dict[int, int] = {}
         self.units: dict[int, float] = {}
+        # The units slot an earlier edit CREATED on a line whose 24G was blank
+        # (id(line) -> the overlay / form field), so a later unit change on
+        # that line rewrites it instead of drawing a second value on top.
+        self.units_slot: dict[int, object] = {}
 
     def current_cents(self, line: _ServiceLine) -> int:
         return self.charges.get(id(line), line.charge.cents)
@@ -403,20 +407,20 @@ class _GlyphBackend(_Backend):
         like: _Word,
         line=None,
         replacing: _Word | None = None,
-    ):
-        self._page(page).overlays.append(
-            _Overlay(
-                page,
-                x,
-                y,
-                size,
-                text,
-                line=line,
-                word=replacing,
-                color=like.color,
-                italic=like.italic,
-            )
+    ) -> _Overlay:
+        overlay = _Overlay(
+            page,
+            x,
+            y,
+            size,
+            text,
+            line=line,
+            word=replacing,
+            color=like.color,
+            italic=like.italic,
         )
+        self._page(page).overlays.append(overlay)
+        return overlay
 
     def replace(self, word: _Word, text: str, *, row: list[_Word], line=None) -> str | None:
         width = _text_width(text, word.size)
@@ -454,6 +458,12 @@ class _GlyphBackend(_Backend):
         return None
 
     def set_blank_units(self, line: _ServiceLine, value: str) -> str | None:
+        # A count this pass already drew in the blank cell goes first — the
+        # new one takes its place rather than printing over it.
+        previous = self.units_slot.pop(id(line), None)
+        if previous is not None:
+            pe = self._page(line.page)
+            pe.overlays = [o for o in pe.overlays if o is not previous]
         # Where 24G starts: from a sibling line that prints a count, else at
         # the fixed distance the form keeps between the charge box and the
         # units box (a blank 24G on every line is the common case).
@@ -468,7 +478,9 @@ class _GlyphBackend(_Backend):
         limit = after[0].x0 - 1 if after else column_x + _text_width(value, anchor.size)
         if column_x + _text_width(value, anchor.size) > limit:
             return "no_room"
-        self._draw(line.page, column_x, anchor.origin_y, anchor.size, value, like=anchor, line=line)
+        self.units_slot[id(line)] = self._draw(
+            line.page, column_x, anchor.origin_y, anchor.size, value, like=anchor, line=line
+        )
         return None
 
     def set_money(self, charge: _Charge, texts: list[str], *, row: list[_Word], line=None):
@@ -677,6 +689,12 @@ class _FormBackend(_Backend):
         return "no_room"
 
     def set_blank_units(self, line: _ServiceLine, value: str) -> str | None:
+        # The field this pass already filled on the line is no longer empty;
+        # a later unit change rewrites it rather than finding no slot.
+        previous = self.units_slot.get(id(line))
+        if previous is not None:
+            assert isinstance(previous, claim_form.FormField)
+            return self._set(previous, value)
         after_x = line.charge.words[-1].x1 - 0.1
         nxt = _next_word_right(line.row_words, line.charge.words[-1])
         slots = [
@@ -686,7 +704,10 @@ class _FormBackend(_Backend):
         ]
         if not slots:
             return "no_units_cell"
-        return self._set(slots[0], value)
+        reason = self._set(slots[0], value)
+        if reason is None:
+            self.units_slot[id(line)] = slots[0]
+        return reason
 
     def set_money(self, charge: _Charge, texts: list[str], *, row: list[_Word], line=None):
         if charge.split and charge.words[0].field is charge.words[1].field:
@@ -856,16 +877,17 @@ def _apply_to_line(edit: ClaimEdit, value: str, line: _ServiceLine, ctx: _Backen
         if len(line.modifiers) >= MAX_MODIFIERS:
             return "modifier_slots_full"
         return ctx.add_modifier(line, value)
-    if edit.kind == "change_units" and line.units is None:
-        # Blank 24G (one unit implied): write the new count in the units column.
-        return ctx.set_blank_units(line, value)
-    old = line.units if edit.kind == "change_units" else line.cpt
-    assert old is not None
-    if edit.kind == "change_units" and ctx.current_units(line) == float(value):
+    if edit.kind == "change_units":
+        if ctx.current_units(line) == float(value):
+            return "already_present"
+        if line.units is None:
+            # Blank 24G (one unit implied): write the count in the units
+            # column — or rewrite the one an earlier edit put there.
+            return ctx.set_blank_units(line, value)
+        return ctx.replace(line.units, value, row=line.row_words, line=line)
+    if line.cpt.text == value:
         return "already_present"
-    if edit.kind != "change_units" and old.text == value:
-        return "already_present"
-    return ctx.replace(old, value, row=line.row_words, line=line)
+    return ctx.replace(line.cpt, value, row=line.row_words, line=line)
 
 
 def _find_dx(
