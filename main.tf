@@ -179,6 +179,11 @@ resource "aws_cognito_user_pool" "heimdall" {
   name                     = "heimdall-users"
   mfa_configuration        = var.cognito_mfa
   auto_verified_attributes = ["email"]
+  # Every users row is keyed on cognito_sub, and every authenticator is enrolled
+  # against this pool — a replacement orphans all of them. Two independent
+  # guards: Cognito refuses DeleteUserPool while ACTIVE, and Terraform refuses
+  # any plan that would destroy the resource (lifecycle block at the bottom).
+  deletion_protection = "ACTIVE"
 
   password_policy {
     minimum_length    = 12
@@ -260,6 +265,10 @@ resource "aws_cognito_user_pool" "heimdall" {
       EOT
       sms_message   = "Your Heimdall username is {username} and temporary password is {####}"
     }
+  }
+
+  lifecycle {
+    prevent_destroy = true
   }
 }
 
