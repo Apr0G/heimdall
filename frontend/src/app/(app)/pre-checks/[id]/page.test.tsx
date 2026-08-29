@@ -285,6 +285,10 @@ describe("pre-check report page", () => {
     await user.type(input, "99213");
     expect(screen.queryByText(/Needs a value/)).not.toBeInTheDocument();
     expect(create).toBeEnabled();
+    // The row stays open once the value is complete — it must not snap shut
+    // (and drop the focus) on the keystroke that made the choice valid.
+    expect(input.closest("details")).toHaveAttribute("open");
+    expect(input).toHaveFocus();
     await user.click(create);
     await waitFor(() =>
       expect(cases.createCorrectedClaim).toHaveBeenCalledWith("case-1", [

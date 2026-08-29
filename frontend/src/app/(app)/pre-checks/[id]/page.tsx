@@ -9,7 +9,7 @@ import {
   DownloadIcon,
   ScanLineIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { RiskBadge, StatusBadge } from "@/components/case-badges";
 import {
@@ -526,6 +526,14 @@ function Finding({
   const muted = f.severity === "info";
   const checked = Boolean(choice);
   const target = fixTarget(f, edit);
+  // A ticked change that still needs a value opens itself once, so the input
+  // is in view — then the row is the user's to close. Driving `open` from
+  // `needsValue` on every render shut the row on the keystroke that completed
+  // the value ("1" of an intended "12" units), taking the focus with it.
+  const row = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    if (needsValue && row.current) row.current.open = true;
+  }, [needsValue]);
   return (
     <div className="flex items-start gap-2.5">
       {selectable && (
@@ -543,9 +551,8 @@ function Finding({
           muted ? "opacity-80 open:opacity-100" : ""
         } ${checked ? "border-primary/40" : "border-border"}`}
         style={{ borderLeft: `3px solid var(${token})` }}
-        // A ticked change that still needs a value opens itself so the input
-        // is in view; the user can close it again by hand.
-        open={hasDetail && (defaultOpen || needsValue)}
+        ref={row}
+        open={hasDetail && defaultOpen}
       >
         <summary
           className={`flex items-start gap-3 px-3.5 py-3 marker:content-none [&::-webkit-details-marker]:hidden ${
