@@ -8,12 +8,19 @@
 #   2. run migrate-db                      -> migration 0007 creates the role
 #   3. verify heimdall_app works (one-off) -> gate before cutover
 #   4. apply (app_db_role_active = true)   -> app repoints to heimdall_app
+#
+# The cutover is DONE (0007 applied, heimdall_app verified in production), so
+# true is the default — same reasoning as rds_private / rds_production: an
+# apply that omits the variable must never hand the serving API the table
+# OWNER's connection string, under which the audit_logs REVOKE and the
+# append-only trigger are just things it could undo. false stays available
+# for a throwaway environment where 0007 has not run yet.
 # =============================================================================
 
 variable "app_db_role_active" {
-  description = "When true, the app service connects as heimdall_app (requires migration 0007 applied first). Staged cutover flag; keep false until the role is created and verified."
+  description = "true (default) = the app service connects as the least-privilege heimdall_app role — the cutover is verified, so the owner URL must never reach the API by omission. false = owner connection, for a throwaway environment where migration 0007 has not run yet."
   type        = bool
-  default     = false
+  default     = true
 }
 
 # Alphanumeric so it is a safe SQL literal in migration 0007 (special = false).
