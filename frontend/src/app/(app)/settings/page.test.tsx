@@ -21,9 +21,10 @@ const { api, auth, toast } = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/api", () => ({ api }));
 vi.mock("sonner", () => ({ toast }));
-vi.mock("@/lib/auth-context", () => ({
+// Keep the real homePath so the back-link assertion pins the real route.
+vi.mock("@/lib/auth-context", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/auth-context")>()),
   useAuth: () => auth,
-  homePath: (role: string) => (role === "admin" ? "/admin" : "/dashboard"),
 }));
 
 import SettingsPage from "./page";
@@ -59,7 +60,7 @@ describe("settings page", () => {
     expect(screen.getByText("Office manager")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Pre-checks/ })).toHaveAttribute(
       "href",
-      "/dashboard",
+      "/pre-checks",
     );
   });
 
@@ -202,6 +203,23 @@ describe("settings page", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(/Request sent/);
     expect(
       screen.getByRole("button", { name: "Cancel request" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows an error with a retry when the deactivation status can't load", async () => {
+    api.get.mockRejectedValueOnce(httpError(500));
+    const user = userEvent.setup();
+    render(<SettingsPage />);
+    expect(
+      await screen.findByText(/load your request status/),
+    ).toBeInTheDocument();
+    // Never offer a fresh request over an unknown state.
+    expect(
+      screen.queryByRole("button", { name: "Request deactivation" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(
+      await screen.findByRole("button", { name: "Request deactivation" }),
     ).toBeInTheDocument();
   });
 

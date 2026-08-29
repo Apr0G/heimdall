@@ -62,6 +62,25 @@ export function DeactivationRequestCard() {
 
   if (mine.isLoading) return null;
 
+  // A failed status fetch must not read as "nothing pending" — the user would
+  // file a duplicate (a 409) or miss a request that is already open.
+  if (mine.isError) {
+    return (
+      <div className="space-y-3">
+        <p className="text-sm text-destructive">
+          Couldn&rsquo;t load your request status.
+        </p>
+        <Button
+          variant="outline"
+          disabled={mine.isFetching}
+          onClick={() => mine.refetch()}
+        >
+          {mine.isFetching ? "Retrying…" : "Retry"}
+        </Button>
+      </div>
+    );
+  }
+
   if (mine.data) {
     return (
       <div className="space-y-3">
