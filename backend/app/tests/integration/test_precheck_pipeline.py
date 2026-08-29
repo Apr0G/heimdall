@@ -245,3 +245,86 @@ async def test_precheck_pipeline_no_billable_lines_errors(sessions, tenant, monk
         # PHI-free typed name only — the frontend translates it.
         assert fresh.error_message == "Processing failed (NoBillableLinesError)."
         assert await s.scalar(select(RiskReport).where(RiskReport.case_id == case.id)) is None
+
+
+async def test_precheck_pipeline_reads_a_fillable_claim_through_its_fields(
+    sessions, tenant, monkeypatch
+):
+    """A claim typed into a fillable CMS-1500: no OCR, the field values reach
+    the extraction prompt as "label: value" lines, and the document is marked
+    form_fields so the report offers in-place edits."""
+    from app.services import claude_client as cc
+    from app.services import document_extractor, pdf_gen, s3
+    from app.tests.services.test_claim_form import LINES, build_form_claim
+
+    await _seed_ncci(sessions)
+    run_id = uuid.uuid4()
+    case = await _seed_case(sessions, tenant, run_id)
+    form_pdf = build_form_claim(LINES)
+    notes_pdf = pdf_gen.render_letter_pdf("Synthetic clinical note for testing.")
+
+    monkeypatch.setattr(pipeline, "AsyncSessionLocal", sessions)
+    monkeypatch.setattr(cc, "AsyncSessionLocal", sessions)
+    stored: dict[str, str] = {}
+
+    def get_bytes(key: str) -> bytes:
+        if key.endswith(".extracted.txt"):
+            return stored[key.removesuffix(".extracted.txt")].encode()
+        return form_pdf if "/claim/" in key else notes_pdf
+
+    monkeypatch.setattr(s3, "get_bytes", get_bytes)
+    monkeypatch.setattr(s3, "put_text", lambda key, text: None)
+    monkeypatch.setattr(s3, "head_object", lambda key: {"ContentLength": 10})
+    monkeypatch.setattr(
+        document_extractor, "store_extracted_text", lambda key, text: stored.__setitem__(key, text)
+    )
+
+    def textract_must_not_run(*a, **k):
+        raise AssertionError("a fillable form must not go to Textract")
+
+    monkeypatch.setattr(document_extractor, "run_textract", textract_must_not_run)
+
+    prompts: list[str] = []
+    queue = [_EXTRACTION_JSON, _REVIEW_JSON]
+
+    def fake_invoke(system, messages, max_tokens, temperature):
+        prompts.append(str(messages[0].get("content", "")))
+        payload = queue.pop(0)
+        return _RawCall(
+            text=json.dumps(payload),
+            input_tokens=100,
+            output_tokens=50,
+            latency_ms=5,
+            stop_reason="end_turn",
+            request_body="{}",
+            response_body=json.dumps(payload),
+        )
+
+    monkeypatch.setattr(claude_client, "_invoke", fake_invoke)
+
+    await pipeline.run_precheck_pipeline(case.id, run_id)
+
+    async with sessions() as s:
+        fresh = await s.get(Case, case.id)
+        assert fresh.status == "ready", fresh.error_message
+        docs = {
+            d.doc_type: d
+            for d in (await s.scalars(select(Document).where(Document.case_id == case.id))).all()
+        }
+        assert (docs["claim"].text_source, docs["claim"].ocr_status) == (
+            "form_fields",
+            "not_needed",
+        )
+        assert (docs["clinical"].text_source, docs["clinical"].ocr_status) == (
+            "pdf_text",
+            "not_needed",
+        )
+
+    # The extraction prompt saw the form as labelled values, not OCR text.
+    extraction_prompt = prompts[0]
+    assert "[fillable form: 1 page(s)" in extraction_prompt
+    assert "CPT/HCPCS 1: J2501" in extraction_prompt
+    assert "Patient's Name: DOE, JANE" in extraction_prompt
+    # And the stored extracted text (what de-id/corpus export read) is the same.
+    claim_text = next(text for key, text in stored.items() if "/claim/" in key)
+    assert "CPT/HCPCS 3: 99213" in claim_text
