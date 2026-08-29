@@ -64,8 +64,14 @@ class ExtractionResult(BaseModel):
         """Reject ANY float, not just a non-integral one. Pydantic lax mode
         truncates 450.0 -> 450 silently, so a model that answered in DOLLARS
         records a $450 claim as $4.50 — a 100x error that flows into the letter
-        prompt's "denied amount" and into total_recovered_cents. 450.5 already
+        prompt's "denied amount" and the case/dashboard figures. 450.5 already
         failed loudly; the whole-dollar case was the silent, dangerous half.
+
+        The same applies to a string carrying a currency sign: "$450" is a
+        dollar figure by definition, and stripping the sign turned the one
+        string shape that positively identifies a dollar answer into a trusted
+        cents value (450 cents = $4.50). Thousands separators are stripped —
+        "45,000" is an unambiguous 45000 cents.
 
         A float here always means the model misunderstood the unit, because cents
         are integral by definition. Failing consumes the one permitted retry and
@@ -82,7 +88,9 @@ class ExtractionResult(BaseModel):
                 "(a decimal here usually means dollars were returned instead)"
             )
         if isinstance(value, str):
-            stripped = value.strip().replace(",", "").removeprefix("$")
+            stripped = value.strip().replace(",", "")
+            if "$" in stripped:
+                raise ValueError("amount must be an integer number of cents, not dollars")
             if "." in stripped:
                 raise ValueError("amount must be an integer number of cents, not a decimal")
             return stripped or None

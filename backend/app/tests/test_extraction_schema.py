@@ -108,16 +108,21 @@ def test_medicare_advantage_note_states_the_60_day_window():
 
 
 @pytest.mark.parametrize("field", ["billed_amount_cents", "denied_amount_cents"])
-@pytest.mark.parametrize("value", [450.0, 450.5, "450.00", -450])
+@pytest.mark.parametrize(
+    "value", [450.0, 450.5, "450.00", -450, "$450", "$1,200", "$ 450", "$4.50"]
+)
 def test_dollar_valued_and_negative_amounts_are_rejected(field, value):
-    """450.0 used to coerce silently to 450 cents, recording a $450 claim as $4.50."""
+    """450.0 used to coerce silently to 450 cents, recording a $450 claim as
+    $4.50 — and so did "$450", the one string shape that positively says
+    dollars, because the sign was stripped before the digits were trusted."""
     with pytest.raises(ValidationError):
         ExtractionResult.model_validate({field: value})
 
 
 @pytest.mark.parametrize("field", ["billed_amount_cents", "denied_amount_cents"])
-def test_integer_cents_accepted(field):
-    assert ExtractionResult.model_validate({field: 45000}).model_dump()[field] == 45000
+@pytest.mark.parametrize("value", [45000, "45000", "45,000"])
+def test_integer_cents_accepted(field, value):
+    assert ExtractionResult.model_validate({field: value}).model_dump()[field] == 45000
 
 
 def test_denied_cannot_exceed_billed():

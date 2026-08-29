@@ -50,7 +50,11 @@ def _reject_money_float(value: object, *, field: str) -> object:
     if isinstance(value, float):
         raise ValueError(f"{field} must be an integer number of cents, not a float")
     if isinstance(value, str):
-        stripped = value.strip().replace(",", "").removeprefix("$")
+        stripped = value.strip().replace(",", "")
+        if "$" in stripped:
+            # A currency sign is a dollar figure by definition: "$450" must
+            # not become 450 cents.
+            raise ValueError(f"{field} must be an integer number of cents, not dollars")
         if "." in stripped:
             raise ValueError(f"{field} must be an integer number of cents, not a decimal")
         return stripped or None

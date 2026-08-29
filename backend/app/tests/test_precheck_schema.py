@@ -32,11 +32,15 @@ class TestClaimLine:
         line = ClaimLine.model_validate({"cpt": "99213", "modifiers": None, "units": None})
         assert line.units == 1 and line.modifiers == []
 
-    def test_money_floats_rejected(self):
+    @pytest.mark.parametrize("value", [450.0, "45.00", "$450", "$1,200"])
+    def test_money_floats_and_dollar_strings_rejected(self, value):
         with pytest.raises(ValidationError):
-            ClaimLine.model_validate({"cpt": "99213", "charge_cents": 450.0})
-        with pytest.raises(ValidationError):
-            ClaimLine.model_validate({"cpt": "99213", "charge_cents": "45.00"})
+            ClaimLine.model_validate({"cpt": "99213", "charge_cents": value})
+
+    def test_cents_strings_accepted(self):
+        assert (
+            ClaimLine.model_validate({"cpt": "99213", "charge_cents": "4,500"}).charge_cents == 4500
+        )
 
     def test_units_zero_or_missing_normalizes_to_one(self):
         # A blank/0 units cell means "not stated" — bill-once, don't fail the
@@ -58,9 +62,10 @@ class TestPrecheckExtraction:
         assert result.claim_lines == [] and result.icd10_codes == []
         assert result.plan_type == "unknown"
 
-    def test_total_money_rejects_float(self):
+    @pytest.mark.parametrize("value", [450.0, "$450"])
+    def test_total_money_rejects_float_and_dollar_strings(self, value):
         with pytest.raises(ValidationError):
-            PrecheckExtractionResult.model_validate({"billed_amount_cents": 450.0})
+            PrecheckExtractionResult.model_validate({"billed_amount_cents": value})
 
 
 class TestRiskReviewFilter:
