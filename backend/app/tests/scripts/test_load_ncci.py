@@ -114,6 +114,18 @@ class TestDiscovery:
             f"https://www.cms.gov{_ptp_zip('2026q3', 'v322r0', 2)}",
         ]
 
+    def test_ptp_revision_ten_beats_nine(self):
+        # Audit 2026-08-25 L13: max() on the tag string ranked "r9" above
+        # "r10". r0 vs r1 cannot tell the two orderings apart; this can.
+        page = _PTP_PAGE_SAMPLE + (
+            f'<a href="{_ptp_zip("2026q3", "v322r9", 1)}">nine</a>\n'
+            f'<a href="{_ptp_zip("2026q3", "v322r10", 1)}">ten</a>\n'
+            f'<a href="{_ptp_zip("2026q3", "v322r10", 2)}">ten f2</a>\n'
+        )
+        tag, urls = discover_ptp_urls(page)
+        assert tag == "2026Q3-v322r10"
+        assert len(urls) == 2
+
     def test_ptp_revision_bump_wins(self):
         page = _PTP_PAGE_SAMPLE + (
             '<a href="/files/zip/medicare-ncci-2026q3-practitioner-ptp-edits-'

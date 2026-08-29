@@ -45,6 +45,12 @@ def test_success_probability_out_of_range_is_rejected(value):
         ["CO45"],
         ["CO_45"],
         ["PR1"],
+        # Alphanumeric reason codes (PR-B1 and friends): a `\\d{1,3}` regex let
+        # them fall past the guard and drafted an appeal against a patient
+        # balance (audit 2026-08-25 L7).
+        ["PR-B1"],
+        ["PR B1"],
+        ["pr-b1"],
     ],
 )
 def test_never_appealable_codes_detected(codes):
@@ -60,6 +66,11 @@ def test_never_appealable_codes_are_canonical():
 def test_bare_reason_code_uses_group_codes():
     # Extraction may split "CO-45" into carc_codes=["45"], group_codes=["CO"].
     assert never_appealable_codes(["45"], ["CO"]) == ["CO-45"]
+    assert never_appealable_codes(["B1"], ["PR"]) == ["PR-B1"]
+
+
+def test_alphanumeric_never_appeal_code_is_canonical():
+    assert never_appealable_codes(["pr b1"]) == ["PR-B1"]
     assert never_appealable_codes(["1"], ["PR", "CO"]) == ["PR-1"]
     assert never_appealable_codes(["45"]) == []  # no group: can't decide, don't guess
     assert never_appealable_codes(["N/A", "", "CO-450"]) == []

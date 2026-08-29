@@ -53,6 +53,15 @@ def test_untrusted_exception_message_is_withheld():
     assert out["message"].startswith("[message withheld")
 
 
+def test_builtin_exception_message_is_withheld():
+    # Audit 2026-08-25 M12: "builtins" on the allowlist let int("<value>")
+    # echo model-derived text ("invalid literal for int() with base 10: 'Jane'").
+    out = _safe_exception(_exc_info(ValueError("invalid literal for int() with base 10: 'Jane'")))
+    assert out["type"] == "ValueError"
+    assert "Jane" not in json.dumps(out)
+    assert out["message"].startswith("[message withheld")
+
+
 def test_app_exception_message_is_kept():
     from app.services.document_extractor import DocumentParseError
 

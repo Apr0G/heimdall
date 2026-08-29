@@ -61,7 +61,7 @@ async def _run(monkeypatch, carc, group, appealable=True):
 
 
 async def test_pr_code_overrides_model_even_when_split_or_misspelled(monkeypatch):
-    for carc, group in ((["PR-1"], []), (["PR 1"], []), (["1"], ["PR"])):
+    for carc, group in ((["PR-1"], []), (["PR 1"], []), (["1"], ["PR"]), (["PR-B1"], [])):
         analysis = await _run(monkeypatch, carc, group, appealable=True)
         assert analysis.is_appealable is False, (carc, group)
         assert "overridden" in analysis.appealability_reason
