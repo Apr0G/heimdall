@@ -574,10 +574,6 @@ class _FormBackend(_Backend):
         self.clear_buttons: set[str] = set()
         self.touched_pages: set[int] = set()
         self.pages_words = self._words()
-        for page_index in range(form.page_count):
-            for f in form.fields:
-                if f.page == page_index and f.kind == "text":
-                    break
 
     # -- reading --
     def _words(self) -> list[list[_Word]]:

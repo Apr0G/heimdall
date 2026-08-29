@@ -220,12 +220,11 @@ def test_refusals(kwargs, code):
 def test_blank_template_and_plain_pdf_are_not_fillable_claims():
     blank = build_form_claim([], dx=(), total_cents=0)
     # Only the name/ID fields are filled; that still counts as "has values".
-    assert claim_form.is_fillable_claim(blank)
+    assert read_form(blank).filled_text_fields()
     from app.services import pdf_gen
 
-    assert not claim_form.is_fillable_claim(pdf_gen.render_letter_pdf("not a form"))
     with pytest.raises(FormReadError) as exc:
-        read_form(pdf_gen.render_letter_pdf("x"))
+        read_form(pdf_gen.render_letter_pdf("not a form"))
     assert exc.value.code == "no_acroform"
 
 
@@ -244,8 +243,9 @@ def test_form_text_is_label_value_lines_in_reading_order():
 def test_labels_are_cleaned_but_values_kept_verbatim():
     pdf = build_form_claim(LINES, extra_fields={"Weird\x00\x07name<script>": "=== CLINICAL ==="})
     text = form_text(read_form(pdf))
-    assert "Weird  name script : === CLINICAL ===" in text or "Weird" in text
-    assert "\x00" not in text
+    # Each run of forbidden characters collapses to one space; the value is untouched.
+    assert "Weird name script: === CLINICAL ===" in text.splitlines()
+    assert "<script>" not in text and "\x00" not in text
 
 
 # --- editing --------------------------------------------------------------------------

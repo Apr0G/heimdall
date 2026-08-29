@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import io
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import ArrayObject, NameObject, TextStringObject
@@ -83,7 +83,6 @@ class FormField:
 class FormDocument:
     fields: list[FormField]
     page_count: int
-    page_sizes: list[tuple[float, float]] = field(default_factory=list)
 
     @property
     def values(self) -> dict[str, str]:
@@ -160,11 +159,8 @@ def read_form(pdf_bytes: bytes) -> FormDocument:
         raise FormReadError("xfa")
     fields: list[FormField] = []
     try:
-        page_sizes: list[tuple[float, float]] = []
         for page_index, page in enumerate(reader.pages):
-            width = float(page.mediabox.width)
             height = float(page.mediabox.height)
-            page_sizes.append((width, height))
             for ref in page.get("/Annots") or []:
                 annot = ref.get_object()
                 if annot.get("/Subtype") != "/Widget":
@@ -216,18 +212,10 @@ def read_form(pdf_bytes: bytes) -> FormDocument:
         raise
     except Exception:  # noqa: BLE001
         raise FormReadError("unreadable") from None
-    doc = FormDocument(fields=fields, page_count=len(reader.pages), page_sizes=page_sizes)
+    doc = FormDocument(fields=fields, page_count=len(reader.pages))
     if not doc.filled_text_fields():
         raise FormReadError("no_values")
     return doc
-
-
-def is_fillable_claim(pdf_bytes: bytes) -> bool:
-    try:
-        read_form(pdf_bytes)
-        return True
-    except FormReadError:
-        return False
 
 
 # --- extraction text ---------------------------------------------------------
