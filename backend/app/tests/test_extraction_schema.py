@@ -39,6 +39,24 @@ def test_empty_strings_become_none_or_empty_list():
     assert result.billed_amount_cents is None
 
 
+def test_numeric_identifiers_are_coerced_to_strings():
+    # An NPI or all-digit claim/auth number as a JSON number is unambiguous;
+    # rejecting it burned the one retry.
+    result = ExtractionResult.model_validate(
+        {"claim_number": 1234567, "provider_npi": 1234567893, "prior_auth_number": 42}
+    )
+    assert (result.claim_number, result.provider_npi, result.prior_auth_number) == (
+        "1234567",
+        "1234567893",
+        "42",
+    )
+
+
+def test_boolean_identifiers_are_still_rejected():
+    with pytest.raises(ValidationError):
+        ExtractionResult.model_validate({"provider_npi": True})
+
+
 def test_unknown_plan_type_normalized():
     assert ExtractionResult.model_validate({"plan_type": "ppo-gold"}).plan_type == "unknown"
     assert ExtractionResult.model_validate({"plan_type": "medicare"}).plan_type == "medicare"
@@ -65,7 +83,8 @@ def test_well_formed_extraction_parses():
     assert result.denied_amount_cents == 45000
     assert result.carc_codes == ["CO-50"]
     # The raw member_id is on the schema (the model returns it) but the persist
-    # path excludes it — proven by the run_ai_extraction test below, not by a
+    # path excludes it — proven end-to-end by integration/test_appeal_pipeline.py
+    # (extracted_json carries no member_id, member_id_hash is set), not by a
     # self-referential exclude() here (which would pass for any schema).
     assert result.member_id == "MBR123"
 

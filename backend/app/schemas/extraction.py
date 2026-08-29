@@ -129,3 +129,13 @@ class ExtractionResult(BaseModel):
         # `in` on a set raises TypeError for an unhashable value (a list or
         # dict from the model), which Pydantic does not wrap — guard the type.
         return value if isinstance(value, str) and value in PLAN_TYPES else "unknown"
+
+    @field_validator("claim_number", "provider_npi", "prior_auth_number", mode="before")
+    @classmethod
+    def _stringify_identifier(cls, value: object) -> object:
+        # An all-digit identifier (an NPI, a numeric claim or auth number) comes
+        # back as a JSON number often enough; rejecting it burned the one retry
+        # on a value that is unambiguous as a string. Bools stay rejected.
+        if isinstance(value, int) and not isinstance(value, bool):
+            return str(value)
+        return value
