@@ -3,8 +3,9 @@
 The bucket is versioned. A keyed delete with no VersionId writes a delete marker
 and leaves every prior version fully retrievable — and `security.tf` has no
 lifecycle rule over `practices/`, so those versions never expire. The scripts then
-TRUNCATE the tables holding the only index of those keys, making the surviving
-objects permanently unenumerable while the script prints a destruction count.
+DELETE (in FK order, as the app role) the rows holding the only index of those
+keys, making the surviving objects permanently unenumerable while the script
+prints a destruction count.
 """
 
 import pytest
@@ -99,8 +100,8 @@ def test_assert_prefix_empty_passes_when_purged():
 
 
 def test_assert_prefix_empty_aborts_when_versions_survive():
-    """Verification runs BEFORE the TRUNCATE, because the rows are the only index
-    of these keys — after that an incomplete purge is unrecoverable."""
+    """Verification runs BEFORE the row DELETE, because the rows are the only
+    index of these keys — after that an incomplete purge is unrecoverable."""
     s3 = _bucket()
     with pytest.raises(SystemExit) as exc:
         s3_purge.assert_prefix_empty(s3, "b", _PREFIX)

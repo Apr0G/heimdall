@@ -36,9 +36,10 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from app.core.config import settings
 from app.scripts import s3_purge
 
-# Every case-family table. TRUNCATE ... CASCADE resolves the ON DELETE RESTRICT
-# FKs; audit_logs is intentionally absent (it references users/practices, not
-# cases, so CASCADE never reaches it).
+# Every case-family table, DELETEd in this order (children before the parents
+# they reference, cases last) so the ON DELETE RESTRICT FKs are satisfied.
+# audit_logs is intentionally absent: it references users/practices, not cases,
+# and is append-only by grant anyway.
 CASE_TABLES = [
     "extractions",
     "analyses",
@@ -118,7 +119,7 @@ async def main() -> None:
     # Belt and braces for any referenced key outside those prefixes.
     deleted += s3_purge.delete_all_versions_of_keys(s3, bucket, set(key_list))
 
-    # Verify BEFORE truncating. The rows are the only index of these keys, so an
+    # Verify BEFORE deleting the rows. They are the only index of these keys, so an
     # incomplete purge becomes unrecoverable the instant the tables are empty —
     # and the script would still print a destruction count that never happened.
     s3_purge.assert_prefix_empty(s3, bucket, "practices/")
