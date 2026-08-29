@@ -111,7 +111,13 @@ async def seed() -> None:
                 # Cognito identity from a seed script — that's a tenancy rebind.
                 user_actions.append((u["email"], "skipped: belongs to another practice"))
             elif existing.cognito_sub.startswith("seed-pending"):
-                user_actions.append((u["email"], "exists"))
+                if u["cognito_sub"].startswith("seed-pending"):
+                    user_actions.append((u["email"], "exists (cognito_sub still pending)"))
+                else:
+                    # The env now names the real Cognito user: bind it, or login
+                    # can never resolve this row (it matches on cognito_sub).
+                    existing.cognito_sub = u["cognito_sub"]
+                    user_actions.append((u["email"], "updated (cognito_sub set)"))
             else:
                 user_actions.append((u["email"], "exists (real cognito_sub kept)"))
 
