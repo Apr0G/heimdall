@@ -163,8 +163,19 @@ async def test_wrong_issuer_is_rejected(signing_key):
 
 
 async def test_none_algorithm_is_rejected(signing_key):
-    """The classic JWT downgrade: an unsigned token claiming alg=none."""
-    unsigned = jwt.encode(_claims(), key="", algorithm="HS256")
+    """The classic JWT downgrade: an unsigned token claiming alg=none, naming the
+    REAL kid so the key lookup succeeds and only `algorithms=["RS256"]` stands
+    between it and a session. Hand-built — python-jose refuses to mint one."""
+    import base64
+    import json
+
+    _, public_jwk = signing_key
+
+    def _b64(obj: dict) -> str:
+        return base64.urlsafe_b64encode(json.dumps(obj).encode()).rstrip(b"=").decode()
+
+    header = _b64({"alg": "none", "typ": "JWT", "kid": public_jwk["kid"]})
+    unsigned = f"{header}.{_b64(_claims())}."
     with pytest.raises(HTTPException) as exc:
         await auth_module.verify_access_token(unsigned)
     assert exc.value.status_code == 401
