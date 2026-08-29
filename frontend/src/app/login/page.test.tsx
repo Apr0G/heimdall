@@ -64,6 +64,25 @@ describe("password step", () => {
     expect(screen.queryByText(/unavailable/)).not.toBeInTheDocument();
   });
 
+  it("surfaces throttling instead of a generic failure", async () => {
+    auth.login.mockRejectedValue(httpError(429));
+    await signIn();
+    expect(await screen.findByText(/Too many attempts/)).toBeInTheDocument();
+  });
+
+  it("surfaces throttling on the code step too", async () => {
+    auth.login.mockResolvedValue({
+      status: "mfa",
+      challenge: "SOFTWARE_TOKEN_MFA",
+      session: "s1",
+    });
+    auth.verifyMfa.mockRejectedValue(httpError(429));
+    const user = await signIn();
+    await user.type(await screen.findByLabelText("6-digit code"), "000000");
+    await user.click(screen.getByRole("button", { name: "Verify" }));
+    expect(await screen.findByText(/Too many attempts/)).toBeInTheDocument();
+  });
+
   it("hands a SOFTWARE_TOKEN_MFA challenge to the code step", async () => {
     auth.login.mockResolvedValue({
       status: "mfa",

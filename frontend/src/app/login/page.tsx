@@ -51,14 +51,17 @@ const GLOW = {
 };
 
 function errorText(err: unknown): string {
-  if (
-    axios.isAxiosError(err) &&
-    (err.response?.status === 401 || err.response?.status === 400)
-  ) {
+  const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+  if (status === 401 || status === 400) {
     return "That code didn't match, or it expired. Try again.";
   }
+  if (status === 429) return THROTTLED_TEXT;
   return "Something went wrong. Please try again.";
 }
+
+// One wording for every step behind the login throttle; a generic failure
+// would send a locked-out user straight back into retrying.
+const THROTTLED_TEXT = "Too many attempts. Please wait a while and try again.";
 
 export default function LoginPage() {
   const { login, verifyMfa, startMfaSetup, completeMfaSetup, setNewPassword } =
@@ -235,8 +238,11 @@ function PasswordStep({
       }
       // On "ok" the auth context has already redirected (role-aware).
     } catch (err) {
-      if (axios.isAxiosError(err) && err.response?.status === 401) {
+      const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+      if (status === 401) {
         setFormError("That email or password doesn't match our records.");
+      } else if (status === 429) {
+        setFormError(THROTTLED_TEXT);
       } else {
         setFormError("Something went wrong. Please try again.");
       }
@@ -405,7 +411,7 @@ function ForgotStep({
       onSent(values.email);
     } catch (err) {
       if (axios.isAxiosError(err) && err.response?.status === 429) {
-        setFormError("Too many attempts. Please wait a while and try again.");
+        setFormError(THROTTLED_TEXT);
       } else {
         setFormError("Something went wrong. Please try again.");
       }
