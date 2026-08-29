@@ -97,6 +97,14 @@ def _latest(rows, key="created_at"):
     return max(rows, key=lambda r: getattr(r, key)) if rows else None
 
 
+def _write_review_list(names: set, stamp: datetime) -> str:
+    """Candidate-name review list → a short-lived S3 key (never stdout). Returns
+    the key. tmp-uploads/ is the one prefix with a 1-day expiry (security.tf)."""
+    key = f"tmp-uploads/corpus-review/{stamp:%Y%m%d-%H%M%S}.txt"
+    s3.put_text(key, "\n".join(sorted(names)) + "\n")
+    return key
+
+
 def _reidentification_risk(records: list[dict]) -> dict:
     """k-anonymity-style re-identification signal over the quasi-identifiers a
     statistician would weigh for an Expert Determination (§164.514(b)(1)). Reports
@@ -331,9 +339,9 @@ async def main() -> None:
     if len(names) > max_names:
         raise SystemExit(
             f"ABORTED: {len(names)} name-shaped strings survived redaction (limit "
-            f"{max_names}). Review them via a local dry run (DRY_RUN=1 prints them "
-            "to the terminal, never to S3); raise MAX_CANDIDATE_NAMES only "
-            "after that review."
+            f"{max_names}). Review them via DRY_RUN=1, which writes the list to a "
+            "tmp-uploads/ key that expires in a day and prints only the key; "
+            "raise MAX_CANDIDATE_NAMES only after that review."
         )
 
     labeled = sum(1 for r in records if r["label"] is not None)
@@ -348,7 +356,8 @@ async def main() -> None:
         "ner": use_ner,
         # The report lands in exports/ (no lifecycle), so it must not itself be
         # a list of the names that leaked: counts and irreversible tokens only.
-        # The plaintext review list is printed by DRY_RUN=1 and never stored.
+        # The plaintext review list is written by DRY_RUN=1 to a key that
+        # expires in a day, never here and never to the task's log.
         "residual": {
             "formatted_leaks": dict(leaks),  # expected empty — anything here is a bug
             "review_flags": dict(review),  # broad detectors: billing vocabulary mostly
@@ -369,9 +378,17 @@ async def main() -> None:
     }
 
     if os.environ.get("DRY_RUN") == "1":
-        print(f"DRY RUN — {len(records)} records, nothing written. Candidate names:")
-        for n in sorted(names):
-            print(f"  {n}")
+        # The list exists because it may hold a patient name every detector
+        # missed. This script only runs in-VPC as an ECS task, where stdout IS
+        # CloudWatch (retained for the log group's lifetime) — so the names
+        # never go to stdout (hard rule 2). They go to a tmp-uploads/ key,
+        # which the bucket lifecycle expires after one day.
+        review_key = await asyncio.to_thread(_write_review_list, names, stamp)
+        print(
+            f"DRY RUN — {len(records)} records, nothing exported. "
+            f"{len(names)} candidate names written to "
+            f"s3://{settings.s3_bucket_name}/{review_key} (expires in 1 day)."
+        )
         return
     jsonl = "\n".join(json.dumps(r, ensure_ascii=False) for r in records)
     await asyncio.to_thread(s3.put_text, key, jsonl)
