@@ -1,7 +1,9 @@
 """Fixtures for tests that need a real PostgreSQL.
 
 Skipped entirely unless TEST_DATABASE_URL is set, so `pytest` on a laptop with no
-database behaves exactly as before. CI sets it against a service container.
+database behaves exactly as before. CI sets it against a service container — and
+in CI (the CI env var is set) a missing URL FAILS instead of skipping, so a broken
+service container cannot turn the whole integration suite into a green no-op.
 
 The schema is built with `alembic upgrade head`, never `Base.metadata.create_all`:
 the `set_updated_at` trigger and the Postgres enums live in the migrations, and
@@ -33,6 +35,8 @@ _NO_TLS = {"ssl": False}
 def db_url() -> str:
     url = os.getenv("TEST_DATABASE_URL")
     if not url:
+        if os.environ.get("CI"):
+            pytest.fail("TEST_DATABASE_URL is not set in CI — the integration suite must run there")
         pytest.skip("TEST_DATABASE_URL not set — integration tests need a real Postgres")
     return url
 

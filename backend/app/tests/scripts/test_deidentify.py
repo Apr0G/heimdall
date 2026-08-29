@@ -1,3 +1,4 @@
+import os
 from datetime import date
 
 import pytest
@@ -156,9 +157,23 @@ def test_hash_ref_changes_with_the_pepper(monkeypatch, pepper):
     assert hash_ref("CLM-TEST-0001") != first
 
 
-def test_ner_catches_free_floating_names_and_keeps_codes():
-    # Skips in CI (Presidio not installed there); runs where it is.
+def _require_presidio() -> None:
+    """NER redaction is the production default (USE_NER=1). On a laptop without
+    the deid extras these tests skip. The CI job that installs deid.lock sets
+    REQUIRE_DEID_TESTS=1, and there a missing Presidio must FAIL — otherwise
+    the production redaction path silently goes untested (the main backend job
+    installs requirements.lock only, so it keeps skipping, honestly)."""
+    if os.environ.get("REQUIRE_DEID_TESTS"):
+        try:
+            import presidio_analyzer  # noqa: F401
+        except ImportError:
+            pytest.fail("presidio_analyzer is not installed — REQUIRE_DEID_TESTS=1 expects it")
+        return
     pytest.importorskip("presidio_analyzer")
+
+
+def test_ner_catches_free_floating_names_and_keeps_codes():
+    _require_presidio()
     out = redact_text("The report for Jane Doe was reviewed in Boston.", [], use_ner=True)
     assert "Jane Doe" not in out and "Boston" not in out
     codes = redact_text("CPT 99213 denied under CO-197, ICD J45.909", [], use_ner=True)
@@ -167,7 +182,7 @@ def test_ner_catches_free_floating_names_and_keeps_codes():
 
 def test_ner_keeps_alphanumeric_diagnosis_codes():
     # NER mis-tags codes like I48.91 as a PERSON; they must survive regardless.
-    pytest.importorskip("presidio_analyzer")
+    _require_presidio()
     out = redact_text("Dx I48.91 and M23.205 support CPT 93306 for Mary Chen.", [], use_ner=True)
     assert "I48.91" in out and "M23.205" in out and "93306" in out
     assert "Mary Chen" not in out
@@ -175,7 +190,7 @@ def test_ner_keeps_alphanumeric_diagnosis_codes():
 
 def test_ner_keeps_rarc_codes():
     # RARC remark codes (N115, M76, MA13) get NER-tagged as a PERSON; must survive.
-    pytest.importorskip("presidio_analyzer")
+    _require_presidio()
     out = redact_text("CARC CO-50 with RARC N115, M76, and MA13 denied John Roe.", [], use_ner=True)
     assert "N115" in out and "M76" in out and "MA13" in out and "CO-50" in out
     assert "John Roe" not in out
