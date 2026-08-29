@@ -73,6 +73,22 @@ class TestPrecheckExtraction:
         assert result.claim_lines == [] and result.icd10_codes == []
         assert result.plan_type == "unknown"
 
+    def test_blank_claim_lines_are_dropped_not_fatal(self):
+        # An empty Box 24 row echoed as {"cpt": ""} (or null) used to fail the
+        # whole extraction on ClaimLine's required code.
+        result = PrecheckExtractionResult.model_validate(
+            {
+                "claim_lines": [
+                    {"cpt": "99213", "units": 1},
+                    {"cpt": "", "units": 1},
+                    {"cpt": None},
+                    {"cpt": "  "},
+                    {"cpt": "20610", "units": 2},
+                ]
+            }
+        )
+        assert [(ln.cpt, ln.units) for ln in result.claim_lines] == [("99213", 1), ("20610", 2)]
+
     @pytest.mark.parametrize("value", [450.0, "$450"])
     def test_total_money_rejects_float_and_dollar_strings(self, value):
         with pytest.raises(ValidationError):

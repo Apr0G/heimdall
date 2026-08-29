@@ -139,6 +139,17 @@ class PrecheckExtractionResult(BaseModel):
             if key in _LIST_FIELDS and value is None:
                 value = []
             cleaned[key] = value
+        # A CMS-1500 has six Box 24 rows; a model echoing an empty row as
+        # {"cpt": ""} is routine. ClaimLine requires a code, so one blank row
+        # would reject the whole extraction — drop the blank rows instead
+        # (the NCCI bridge already skips lines without a code).
+        lines = cleaned.get("claim_lines")
+        if isinstance(lines, list):
+            cleaned["claim_lines"] = [
+                line
+                for line in lines
+                if not isinstance(line, dict) or str(line.get("cpt") or "").strip()
+            ]
         return cleaned
 
     @field_validator("plan_type", mode="before")
