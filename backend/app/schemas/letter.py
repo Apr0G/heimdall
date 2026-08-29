@@ -55,7 +55,8 @@ class LetterDraft(BaseModel):
     @field_validator("appeal_type", mode="before")
     @classmethod
     def _normalize_appeal_type(cls, value: object) -> str:
-        return value if value in APPEAL_LEVELS else "level_1_internal"
+        # An unhashable value (list/dict) must degrade, not raise TypeError.
+        return value if isinstance(value, str) and value in APPEAL_LEVELS else "level_1_internal"
 
     @field_validator("attachments_referenced", mode="before")
     @classmethod

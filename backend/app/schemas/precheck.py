@@ -131,7 +131,8 @@ class PrecheckExtractionResult(BaseModel):
     @field_validator("plan_type", mode="before")
     @classmethod
     def _normalize_plan_type(cls, value: object) -> str:
-        return value if value in PLAN_TYPES else "unknown"
+        # See ExtractionResult: an unhashable value must degrade, not raise.
+        return value if isinstance(value, str) and value in PLAN_TYPES else "unknown"
 
 
 # Proposed-edit vocabulary. remove_line / add_modifier / change_units /

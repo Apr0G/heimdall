@@ -145,3 +145,8 @@ def test_appeal_level_reaches_the_prompt(level, expected):
 def test_unknown_appeal_level_falls_back_to_first_level():
     prompt = letter_prompt.build_user_prompt({}, {}, {}, "notes", appeal_level="nonsense")
     assert "first-level internal appeal" in prompt
+
+
+@pytest.mark.parametrize("value", [["peer_to_peer"], {"level": 1}, 2])
+def test_unhashable_appeal_type_degrades_instead_of_raising(value):
+    assert LetterDraft.model_validate(_draft(appeal_type=value)).appeal_type == "level_1_internal"

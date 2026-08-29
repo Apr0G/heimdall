@@ -9,7 +9,7 @@ input_truncated reaching the row, and no retry on a max_tokens stop.
 import uuid
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.prompts.text import TRUNCATION_MARKER
 from app.services import claude_client as cc
@@ -121,3 +121,35 @@ async def test_truncated_prompt_is_recorded_on_the_row(monkeypatch):
     out = await _run(monkeypatch, _call('{"ok": true}'), user_prompt="note" + TRUNCATION_MARKER)
     assert out.data.ok
     assert _Session.rows[0].input_truncated is True
+
+
+class _Picky(BaseModel):
+    """A schema with the codebase's lenient-membership validator shape: `in`
+    on a set raises TypeError (not ValidationError) for an unhashable value."""
+
+    kind: str = "a"
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _member(cls, value: object) -> str:
+        return value if value in {"a", "b"} else "a"
+
+
+async def test_a_validator_crash_is_bad_output_not_a_lost_row(monkeypatch):
+    # The model answered with a list where a string was due. The Bedrock call
+    # happened, so the row must be written (rule 7) and the one retry must
+    # fire (rule 6) — whatever exception class the validator raised.
+    monkeypatch.setattr(
+        cc, "_invoke", _invoke_returning(_call('{"kind": ["a"]}'), _call('{"kind": "b"}'))
+    )
+    out = await cc.complete_json(
+        case_id=uuid.uuid4(),
+        purpose="analysis",
+        prompt_version="analyze_v5",
+        system="sys",
+        user_prompt="hello",
+        schema=_Picky,
+    )
+    assert out.data.kind == "b"
+    assert [r.status for r in _Session.rows] == ["error", "success"]
+    assert _Session.rows[0].error_message == "JSON parse/validation failed: TypeError"

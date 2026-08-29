@@ -152,3 +152,18 @@ def test_prompt_document_requests_match_whitelist():
     )
     candidates = {"prior_auth", "prior_treatment", "imaging"}
     assert (offered & candidates) <= DOC_NEEDS
+
+
+@pytest.mark.parametrize("value", [["medical_necessity"], {"a": 1}, 3])
+def test_unhashable_category_and_level_degrade_instead_of_raising(value):
+    result = AnalysisResult.model_validate(
+        {
+            "is_appealable": True,
+            "denial_category": value,
+            "recommended_appeal_level": value,
+            "additional_documents_needed": [value, "prior_auth"],
+        }
+    )
+    assert result.denial_category == "other"
+    assert result.recommended_appeal_level == "level_1_internal"
+    assert result.additional_documents_needed == ["prior_auth"]

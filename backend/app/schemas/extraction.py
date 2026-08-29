@@ -118,4 +118,6 @@ class ExtractionResult(BaseModel):
     @field_validator("plan_type", mode="before")
     @classmethod
     def _normalize_plan_type(cls, value: object) -> str:
-        return value if value in PLAN_TYPES else "unknown"
+        # `in` on a set raises TypeError for an unhashable value (a list or
+        # dict from the model), which Pydantic does not wrap — guard the type.
+        return value if isinstance(value, str) and value in PLAN_TYPES else "unknown"

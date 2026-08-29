@@ -7,7 +7,7 @@ from typing import TypeVar
 
 import boto3
 from botocore.config import Config
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
@@ -271,7 +271,13 @@ async def complete_json(
         error_message: str | None = None
         try:
             validated = schema.model_validate(_extract_json(call.text))
-        except (ValueError, json.JSONDecodeError, ValidationError) as exc:
+        except Exception as exc:  # noqa: BLE001 — see below
+            # Anything the parse or a validator raises is "bad output": a
+            # ValidationError, but also a TypeError from a lenient validator
+            # handed a list where a string was due. The Bedrock call already
+            # happened, so the row (rule 7) and the single retry (rule 6) must
+            # not depend on which exception class a validator happened to use.
+            # Type name only — the message can echo document text.
             error_message = f"JSON parse/validation failed: {type(exc).__name__}"
 
         await _record_model_run(

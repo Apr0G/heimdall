@@ -138,3 +138,10 @@ def test_confidence_out_of_range_is_rejected(value):
 def test_overlong_patient_initials_rejected():
     with pytest.raises(ValidationError):
         ExtractionResult.model_validate({"patient_initials": "X" * 64})
+
+
+@pytest.mark.parametrize("value", [["medicare"], {"type": "medicare"}, 7, None])
+def test_unhashable_or_odd_plan_type_degrades_to_unknown(value):
+    # A list/dict from the model used to raise TypeError out of `in`, which
+    # Pydantic does not wrap — the whole parse escaped as a crash.
+    assert ExtractionResult.model_validate({"plan_type": value}).plan_type == "unknown"

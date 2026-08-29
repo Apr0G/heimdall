@@ -71,16 +71,18 @@ class AnalysisResult(BaseModel):
     @field_validator("denial_category", mode="before")
     @classmethod
     def _normalize_category(cls, value: object) -> str:
-        return value if value in DENIAL_CATEGORIES else "other"
+        # `in` on a set raises TypeError for an unhashable value (a list or
+        # dict from the model), which Pydantic does not wrap — guard the type.
+        return value if isinstance(value, str) and value in DENIAL_CATEGORIES else "other"
 
     @field_validator("recommended_appeal_level", mode="before")
     @classmethod
     def _normalize_level(cls, value: object) -> str:
-        return value if value in APPEAL_LEVELS else "level_1_internal"
+        return value if isinstance(value, str) and value in APPEAL_LEVELS else "level_1_internal"
 
     @field_validator("additional_documents_needed", mode="before")
     @classmethod
     def _filter_docs(cls, value: object) -> list[str]:
         if not isinstance(value, list):
             return []
-        return [item for item in value if item in DOC_NEEDS]
+        return [item for item in value if isinstance(item, str) and item in DOC_NEEDS]

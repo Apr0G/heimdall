@@ -166,3 +166,8 @@ class TestProposedEditsFilter:
             RiskReviewResult.model_validate({"findings": [], "proposed_edits": "no"}).proposed_edits
             == []
         )
+
+
+@pytest.mark.parametrize("value", [["medicare"], {"type": "medicare"}, 7])
+def test_unhashable_plan_type_degrades_to_unknown(value):
+    assert PrecheckExtractionResult.model_validate({"plan_type": value}).plan_type == "unknown"
