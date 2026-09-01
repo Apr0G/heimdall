@@ -18,7 +18,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Heimdall",
+  title: "Heimdall Claims",
   description:
     "AI-assisted claim pre-checks and insurance appeal automation for small practices",
 };

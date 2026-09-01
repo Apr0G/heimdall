@@ -4,15 +4,14 @@ import { LegalPage } from "@/components/legal-page";
 import { CONTACT_EMAIL } from "@/lib/site";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy — Heimdall",
-  description: "How Heimdall handles data.",
+  description: "How Heimdall Claims handles data.",
 };
 
 export default function PrivacyPage() {
   return (
     <LegalPage title="Privacy Policy" lastUpdated="July 2026">
       <p>
-        This Privacy Policy explains how Heimdall (&ldquo;Heimdall,&rdquo;
+        This Privacy Policy explains how Heimdall Claims (&ldquo;Heimdall,&rdquo;
         &ldquo;we,&rdquo; &ldquo;us&rdquo;) handles information when a practice
         uses the service.
       </p>

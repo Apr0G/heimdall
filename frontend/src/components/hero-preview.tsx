@@ -62,7 +62,7 @@ export function HeroPreview() {
         {tab === "pre-check" ? <PreCheckPanel /> : <AppealPanel />}
       </div>
       <p className="mt-3 text-center text-xs text-muted-foreground">
-        Catch it before you submit — or fight it after the denial. Same three
+        Catch it before you submit, or fight it after the denial. Same three
         documents, same workspace.
       </p>
     </div>
@@ -135,7 +135,7 @@ function PreCheckPanel() {
           <span className="ml-0.5 inline-block h-3.5 w-px translate-y-[3px] animate-pulse bg-amber-600" />
         </p>
         <div className="mt-3 border-t border-border pt-2.5 text-[11px] text-muted-foreground">
-          Fixed in 2 minutes — instead of denied in 30 days.
+          Fixed in 2 minutes, not denied in 30 days.
         </div>
       </div>
     </div>

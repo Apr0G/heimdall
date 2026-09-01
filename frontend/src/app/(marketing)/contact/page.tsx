@@ -4,7 +4,6 @@ import { CtaLink } from "@/components/cta-link";
 import { CONTACT_EMAIL, CONTACT_MAILTO } from "@/lib/site";
 
 export const metadata: Metadata = {
-  title: "Contact — Heimdall",
   description:
     "Talk to the Heimdall team about pre-checking claims, appealing denials, or getting your practice set up.",
 };

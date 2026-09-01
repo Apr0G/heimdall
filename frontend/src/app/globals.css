@@ -191,6 +191,33 @@
   }
 }
 
+/* Gentle bob for the hero's decorative chips; the -late variant starts
+   mid-cycle so the two never move in sync. Disabled under reduced-motion. */
+@keyframes hero-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-9px);
+  }
+}
+
+.animate-hero-float {
+  animation: hero-float 7s ease-in-out infinite;
+}
+
+.animate-hero-float-late {
+  animation: hero-float 7s ease-in-out -3.5s infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-hero-float,
+  .animate-hero-float-late {
+    animation: none;
+  }
+}
+
 /* Quick settle for the hero preview's tab panels. Disabled under reduced-motion. */
 @keyframes panel-in {
   from {

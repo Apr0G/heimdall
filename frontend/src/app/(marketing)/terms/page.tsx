@@ -4,8 +4,7 @@ import { LegalPage } from "@/components/legal-page";
 import { CONTACT_EMAIL } from "@/lib/site";
 
 export const metadata: Metadata = {
-  title: "Terms of Service — Heimdall",
-  description: "The terms that govern use of Heimdall.",
+  description: "The terms that govern use of Heimdall Claims.",
 };
 
 export default function TermsPage() {
@@ -13,7 +12,7 @@ export default function TermsPage() {
     <LegalPage title="Terms of Service" lastUpdated="July 2026">
       <p>
         These Terms of Service (&ldquo;Terms&rdquo;) govern your access to and
-        use of Heimdall (&ldquo;Heimdall,&rdquo; &ldquo;we,&rdquo;
+        use of Heimdall Claims (&ldquo;Heimdall,&rdquo; &ldquo;we,&rdquo;
         &ldquo;us&rdquo;). By using the service, your practice agrees to these
         Terms.
       </p>

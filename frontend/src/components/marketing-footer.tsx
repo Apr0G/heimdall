@@ -28,7 +28,7 @@ export function MarketingFooter() {
         </div>
         <Disclaimer />
         <p className="text-xs text-muted-foreground">
-          © {new Date().getFullYear()} Heimdall. All rights reserved.
+          © {new Date().getFullYear()} Heimdall Claims. All rights reserved.
         </p>
       </div>
     </footer>
