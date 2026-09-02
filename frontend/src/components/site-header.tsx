@@ -4,6 +4,7 @@ import { SettingsIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { BrandMark } from "@/components/brand-mark";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Wordmark } from "@/components/wordmark";
@@ -44,8 +45,15 @@ export function SiteHeader() {
     <header className="border-b">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
         <div className="flex items-center gap-5">
-          <Link href={homePath(user?.role)} aria-label="Heimdall home">
-            <Wordmark />
+          {/* The full wordmark plus the segmented nav overflow a phone
+              width, so the mark stands in for it there. */}
+          <Link
+            href={homePath(user?.role)}
+            aria-label="Heimdall home"
+            className="flex text-base"
+          >
+            <Wordmark className="hidden sm:block" />
+            <BrandMark className="h-[1.25em] sm:hidden" />
           </Link>
           {user && user.role !== "admin" && (
             // Segmented control: the active product area reads as a raised pill;

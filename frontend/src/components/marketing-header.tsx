@@ -9,7 +9,7 @@ export function MarketingHeader({ showLogin = true }: { showLogin?: boolean }) {
   return (
     <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur">
       <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-4">
-        <Link href="/" aria-label="Heimdall home" className="text-base">
+        <Link href="/" aria-label="Heimdall home" className="flex text-base">
           <Wordmark />
         </Link>
         <nav className="flex items-center gap-3 text-sm sm:gap-4">

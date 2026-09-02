@@ -8,7 +8,7 @@ export function MarketingFooter() {
     <footer className="border-t">
       <div className="mx-auto max-w-5xl space-y-5 px-4 py-10">
         <div className="flex flex-wrap items-center justify-between gap-4">
-          <Link href="/" aria-label="Heimdall home">
+          <Link href="/" aria-label="Heimdall home" className="flex">
             <Wordmark />
           </Link>
           <nav className="flex flex-wrap gap-4 text-sm text-muted-foreground">

@@ -1,32 +1,49 @@
-import Image from "next/image";
+import { useId } from "react";
 
-import wordmarkOnDark from "@/assets/brand/wordmark-on-dark.png";
-import wordmarkOnLight from "@/assets/brand/wordmark-on-light.png";
+import { ArcGradient } from "@/components/brand-mark";
 import { cn } from "@/lib/utils";
 
+// HEIMDALL letterforms from the brand SVG (Gotham Bold outlines). Filled with
+// currentColor so the mark follows the surrounding text colour in both themes.
+const LETTERS = [
+  "M534.719 194.603V1.94161H577.104V78.1806H655.27V1.94161H697.655V194.603H655.27V117.263H577.104V194.603H534.719Z",
+  "M743.83 194.603V1.94161H889.152V39.6483H785.94V78.731H876.766V116.438H785.94V156.897H890.528V194.603H743.83Z",
+  "M930.14 194.603V1.94161H972.525V194.603H930.14Z",
+  "M1020.67 194.603V1.94161H1066.36L1117 83.41L1167.65 1.94161H1213.33V194.603H1171.22V68.8227L1117 151.117H1115.9L1062.23 69.6484V194.603H1020.67Z",
+  "M1259.62 194.603V1.94161H1334.76C1395.31 1.94161 1437.14 43.5015 1437.14 97.722V98.2724C1437.14 152.493 1395.31 194.603 1334.76 194.603H1259.62ZM1334.76 40.1987H1302V156.346H1334.76C1369.16 156.346 1392.83 132.952 1392.83 98.8229V98.2724C1392.83 64.1438 1369.16 40.1987 1334.76 40.1987Z",
+  "M1648.91 194.603H1604.6L1586.98 151.392H1505.52L1487.9 194.603H1444.69L1527.26 0.564941H1566.34L1648.91 194.603ZM1520.65 113.961H1571.85L1546.25 51.4831L1520.65 113.961Z",
+  "M1721.03 156.071H1817.09V194.603H1678.65V1.94133H1721.03V156.071Z",
+  "M1891.44 156.071H1987.49V194.603H1849.05V1.94133H1891.44V156.071Z",
+];
+
+const ARC =
+  "M396.719 195.168C371.179 195.168 345.639 195.168 320.099 195.168C318.719 189.568 318.979 183.388 318.429 177.588C317.769 170.588 316.209 163.448 314.459 156.648C306.049 123.968 287.779 94.0679 261.499 72.6479C194.249 17.8378 95.219 31.5578 44.159 101.168C29.859 120.658 19.729 143.758 15.759 167.628C14.239 176.748 14.359 185.988 13.099 195.108C8.76901 195.108 4.42901 195.108 0.0990082 195.108C-0.680992 177.158 3.24898 158.428 8.31898 141.358C36.279 47.1678 130.909 -12.5621 228.059 2.24786C324.009 16.8679 394.569 98.3678 396.719 195.168Z";
+
 /**
- * Brand wordmark (amber arc + HEIMDALL). Two exports with baked-in text colour,
- * swapped via the `.dark` class, and sized in em so a caller's `text-*` class
- * scales it the same way it scaled the old text-only mark. `sizes` keeps the
- * srcset around the rendered ~15rem instead of the 2000px source.
+ * Brand wordmark: amber arc + HEIMDALL. Sized in em so a caller's `text-*`
+ * class scales it; the letters take the caller's text colour.
  */
 export function Wordmark({ className }: { className?: string }) {
+  const id = useId();
   return (
-    <span className={cn("inline-flex items-center", className)}>
-      <Image
-        src={wordmarkOnLight}
-        alt="Heimdall"
-        priority
-        sizes="16rem"
-        className="h-[1.5em] w-auto dark:hidden"
+    <svg
+      viewBox="0 0 1988 196"
+      role="img"
+      aria-label="Heimdall"
+      className={cn("h-[1.25em] w-auto", className)}
+    >
+      <defs>
+        <ArcGradient id={id} />
+      </defs>
+      <path
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d={ARC}
+        fill={`url(#${id})`}
       />
-      <Image
-        src={wordmarkOnDark}
-        alt="Heimdall"
-        priority
-        sizes="16rem"
-        className="hidden h-[1.5em] w-auto dark:block"
-      />
-    </span>
+      {LETTERS.map((d, i) => (
+        <path key={i} d={d} fill="currentColor" />
+      ))}
+    </svg>
   );
 }
