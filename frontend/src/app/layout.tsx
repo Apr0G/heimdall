@@ -1,10 +1,17 @@
 import type { Metadata } from "next";
 import { JetBrains_Mono, Public_Sans } from "next/font/google";
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth-context";
+import { ThemeFavicon } from "@/components/theme-favicon";
 import { Providers } from "@/lib/query-provider";
 import { OG_IMAGE, SITE_URL } from "@/lib/site";
+import {
+  FAVICON_SIZES,
+  THEME_COOKIE,
+  THEME_KEY,
+  faviconHref,
+} from "@/lib/theme";
 
 const publicSans = Public_Sans({
   variable: "--font-sans",
@@ -18,32 +25,31 @@ const jetbrainsMono = JetBrains_Mono({
   weight: ["400", "500", "600"],
 });
 
-export const metadata: Metadata = {
-  // Absolute URLs for the share card; without this Next falls back to the
-  // *.vercel.app deployment host.
-  metadataBase: new URL(SITE_URL),
-  title: "Heimdall Claims",
-  description:
-    "AI-assisted claim pre-checks and insurance appeal automation for small practices",
-  // The favicon sits on the browser's tab strip, which follows the OS colour
-  // scheme rather than the in-app theme toggle, so the media query keys on
-  // prefers-color-scheme. Three sizes per theme let the browser pick the
-  // one matching its pixel density instead of resampling.
-  icons: {
-    icon: (["light", "dark"] as const).flatMap((theme) =>
-      [16, 32, 48].map((size) => ({
-        url: `/favicon-${theme}-${size}.png`,
+export async function generateMetadata(): Promise<Metadata> {
+  // The tab icon follows the site theme, not the OS one. Safari only honours
+  // the icon in the initial HTML, so the server picks the set from the theme
+  // cookie (dark is the site default); ThemeFavicon keeps it in step after.
+  const theme =
+    (await cookies()).get(THEME_COOKIE)?.value === "light" ? "light" : "dark";
+  return {
+    // Absolute URLs for the share card; without this Next falls back to the
+    // *.vercel.app deployment host.
+    metadataBase: new URL(SITE_URL),
+    title: "Heimdall Claims",
+    description:
+      "AI-assisted claim pre-checks and insurance appeal automation for small practices",
+    icons: {
+      icon: FAVICON_SIZES.map((size) => ({
+        url: faviconHref(theme, size),
         type: "image/png",
         sizes: `${size}x${size}`,
-        media: `(prefers-color-scheme: ${theme})`,
       })),
-    ),
-    // iOS ignores prefers-color-scheme for home-screen icons; the dark tile
-    // matches the app's default theme.
-    apple: "/apple-touch-icon.png",
-  },
-  openGraph: { images: [OG_IMAGE] },
-};
+      // The dark tile matches the app's default theme.
+      apple: "/apple-touch-icon.png",
+    },
+    openGraph: { images: [OG_IMAGE] },
+  };
+}
 
 export default async function RootLayout({
   children,
@@ -66,9 +72,10 @@ export default async function RootLayout({
         <script
           nonce={nonce}
           dangerouslySetInnerHTML={{
-            __html: `try{if(localStorage.getItem('heimdall_theme')!=='light'){document.documentElement.classList.add('dark')}}catch(e){document.documentElement.classList.add('dark')}`,
+            __html: `try{if(localStorage.getItem('${THEME_KEY}')!=='light'){document.documentElement.classList.add('dark')}}catch(e){document.documentElement.classList.add('dark')}`,
           }}
         />
+        <ThemeFavicon />
         <Providers>
           <AuthProvider>{children}</AuthProvider>
         </Providers>
