@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth-context";
 import { Providers } from "@/lib/query-provider";
+import { OG_IMAGE, SITE_URL } from "@/lib/site";
 
 const publicSans = Public_Sans({
   variable: "--font-sans",
@@ -18,18 +19,30 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
+  // Absolute URLs for the share card; without this Next falls back to the
+  // *.vercel.app deployment host.
+  metadataBase: new URL(SITE_URL),
   title: "Heimdall Claims",
   description:
     "AI-assisted claim pre-checks and insurance appeal automation for small practices",
   // The favicon sits on the browser's tab strip, which follows the OS colour
   // scheme rather than the in-app theme toggle, so the media query keys on
-  // prefers-color-scheme. Each .ico carries 16 and 32 px variants.
+  // prefers-color-scheme. Three sizes per theme let the browser pick the
+  // one matching its pixel density instead of resampling.
   icons: {
-    icon: [
-      { url: "/favicon-light.ico", media: "(prefers-color-scheme: light)" },
-      { url: "/favicon-dark.ico", media: "(prefers-color-scheme: dark)" },
-    ],
+    icon: (["light", "dark"] as const).flatMap((theme) =>
+      [16, 32, 48].map((size) => ({
+        url: `/favicon-${theme}-${size}.png`,
+        type: "image/png",
+        sizes: `${size}x${size}`,
+        media: `(prefers-color-scheme: ${theme})`,
+      })),
+    ),
+    // iOS ignores prefers-color-scheme for home-screen icons; the dark tile
+    // matches the app's default theme.
+    apple: "/apple-touch-icon.png",
   },
+  openGraph: { images: [OG_IMAGE] },
 };
 
 export default async function RootLayout({

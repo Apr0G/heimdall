@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { CtaLink } from "@/components/cta-link";
 import { HeroPreview } from "@/components/hero-preview";
 import { Reveal } from "@/components/reveal";
+import { OG_IMAGE } from "@/lib/site";
 
 export const metadata: Metadata = {
   description:
@@ -12,6 +13,9 @@ export const metadata: Metadata = {
     description:
       "Pre-check a draft claim for denial risk, or upload a denial and get a drafted appeal. Built for small US practices.",
     type: "website",
+    // Nested openGraph blocks replace the root one wholesale, so the card
+    // image has to be repeated here.
+    images: [OG_IMAGE],
   },
 };
 
