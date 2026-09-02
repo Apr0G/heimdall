@@ -21,6 +21,15 @@ export const metadata: Metadata = {
   title: "Heimdall Claims",
   description:
     "AI-assisted claim pre-checks and insurance appeal automation for small practices",
+  // The favicon sits on the browser's tab strip, which follows the OS colour
+  // scheme rather than the in-app theme toggle, so the media query keys on
+  // prefers-color-scheme. Each .ico carries 16 and 32 px variants.
+  icons: {
+    icon: [
+      { url: "/favicon-light.ico", media: "(prefers-color-scheme: light)" },
+      { url: "/favicon-dark.ico", media: "(prefers-color-scheme: dark)" },
+    ],
+  },
 };
 
 export default async function RootLayout({
