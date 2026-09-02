@@ -53,7 +53,7 @@ export function SiteHeader() {
             className="flex text-base"
           >
             <Wordmark className="hidden sm:block" />
-            <BrandMark className="h-[1.25em] sm:hidden" />
+            <BrandMark className="h-[1.1em] sm:hidden" />
           </Link>
           {user && user.role !== "admin" && (
             // Segmented control: the active product area reads as a raised pill;

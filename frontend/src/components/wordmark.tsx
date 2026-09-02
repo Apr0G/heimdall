@@ -30,7 +30,7 @@ export function Wordmark({ className }: { className?: string }) {
       viewBox="0 0 1988 196"
       role="img"
       aria-label="Heimdall"
-      className={cn("h-[1.25em] w-auto", className)}
+      className={cn("h-[1.1em] w-auto", className)}
     >
       <defs>
         <ArcGradient id={id} />
