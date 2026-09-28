@@ -1,19 +1,18 @@
-"""Keyed hashing for PHI-derived identifiers.
+"""Keyed hashing for PHI-derived identifiers stored in the database.
 
-A bare `sha256(member_id)` is not a de-identification control. Member IDs and
-claim numbers are short, structured and payer-prefixed, so the keyspace is
-exhaustible offline: anyone holding a database dump recovers the raw identifiers
-by enumeration, and anyone holding an EOB can compute the digest and confirm the
-case is in the corpus. §164.514(c) is explicit that a re-identification code must
-not be *derived from* information about the individual — an unkeyed digest is
-derived from exactly that.
-
-HMAC with a secret pepper fixes both: the digest is not computable without the
+A bare `sha256(member_id)` is not a de-identification control. Member IDs are
+short, structured and payer-prefixed, so the keyspace is exhaustible offline:
+anyone holding a database dump recovers the raw identifiers by enumeration.
+HMAC with a secret pepper fixes that: the digest is not computable without the
 key, and the key is not in the database, so a dump alone reveals nothing.
 
 The pepper lives in Secrets Manager and arrives as `PHI_HASH_PEPPER`. Rotating it
-breaks linkage between old and new values by design — see `docs/` before rotating,
-and re-export the corpus if `claim_ref` linkage matters.
+breaks linkage between old and new values by design.
+
+NOT used by the corpus export any more. Under Safe Harbor a code derived from
+the individual's information must be removed (guidance §3.5), so the corpus
+carries random record ids and the mapping lives in `corpus_records`
+(models/corpus.py) — no hash of any identifier leaves the database.
 """
 
 import hashlib
@@ -21,10 +20,9 @@ import hmac
 
 from app.core.config import settings
 
-# Domain separation: the same input under two different purposes must not produce
-# the same digest, or a member_id_hash could be correlated against a claim_ref.
+# Domain separation: the same input under two different purposes must never
+# produce the same digest. One purpose today; keep the parameter.
 MEMBER_ID = "member_id"
-CLAIM_REF = "claim_ref"
 
 
 class PepperMissingError(RuntimeError):

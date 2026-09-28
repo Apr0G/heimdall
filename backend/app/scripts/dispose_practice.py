@@ -43,6 +43,9 @@ _DELETE_ORDER = [
     "extractions",
     "documents",
     "model_runs",
+    # Severs the §164.514(c) link between this practice's cases and any released
+    # corpus record — the released data is not PHI and stays; the mapping goes.
+    "corpus_records",
 ]
 
 

@@ -3,7 +3,7 @@ import json
 from app.prompts.text import CLINICAL_MAX_CHARS, prepare, prepare_json_text
 
 # Bump VERSION on ANY change to the prompt text or schema. model_runs records it.
-VERSION = "analyze_v6"
+VERSION = "analyze_v7"
 
 SYSTEM = """You are a medical claims appeals analyst. Given structured extraction \
 data from a denied claim plus the clinical notes, you classify the denial, judge \
@@ -30,6 +30,11 @@ calibration disclaimer: "This is an AI-generated estimate based on case \
 characteristics, not a guarantee."
 - recommended_appeal_level: one of "level_1_internal","peer_to_peer",\
 "level_2_internal","external_review". Default to "level_1_internal".
+
+Write appealability_reason and reasoning_text about "the patient" and "the claim": \
+never include the patient's name or initials, any date, any age, any member, claim, \
+account or authorization number, or any provider, facility or place name. Cite \
+codes, code categories and amounts only.
 - additional_documents_needed: array; any of "prior_auth","prior_treatment", \
 or [] if none. (Imaging reports cannot be uploaded yet — if the argument depends on \
 one, say so in reasoning_text instead of requesting it.)

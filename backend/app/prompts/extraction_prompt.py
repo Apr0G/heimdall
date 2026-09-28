@@ -2,7 +2,7 @@ from app.prompts.text import CLINICAL_MAX_CHARS, prepare
 
 # Bump VERSION on ANY change to the prompt text or schema — model_runs records it,
 # and the future training corpus depends on knowing which prompt produced an output.
-VERSION = "extract_v4"
+VERSION = "extract_v5"
 
 SYSTEM = """You are a medical claims extraction specialist. You read three U.S. \
 healthcare documents — (1) the denial (EOB / ERA / denial letter), (2) the \
@@ -46,7 +46,10 @@ prefix, e.g. ["CO-50","PR-1"].
 - provider_name: string|null.
 - provider_npi: string|null.
 - prior_auth_number: string|null.
-- clinical_summary: string — 2-3 sentences on the clinical justification for the service.
+- clinical_summary: string — 2-3 sentences on the clinical justification for the \
+service. Refer to the person only as "the patient": no name, no initials, no age, \
+no dates, no locations, no member/claim/authorization numbers, no provider or \
+facility names. Those belong in the structured fields above, not in this prose.
 - confidence: number — your own confidence in this extraction, as a DECIMAL \
 FRACTION between 0 and 1 (0.95, never 95). Values outside 0-1 are rejected.
 

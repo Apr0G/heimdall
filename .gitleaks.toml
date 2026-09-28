@@ -1,0 +1,12 @@
+# gitleaks configuration. The default ruleset stays in force everywhere; this
+# file only records the one deliberate exemption below. Keep it that short.
+title = "heimdall"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "backend/deid-model.json holds the sha256 digests of the public, MIT-licensed clinical de-identifier model files (Hugging Face StanfordAIMI/stanford-deidentifier-base). They are integrity pins, not credentials — the generic-api-key rule fires on any 64-hex string of this entropy. Nothing else is allowlisted."
+paths = [
+  '''backend/deid-model\.json''',
+]

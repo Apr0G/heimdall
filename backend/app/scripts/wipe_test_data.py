@@ -49,6 +49,10 @@ CASE_TABLES = [
     "outcomes",
     "documents",
     "model_runs",
+    # The corpus record->case mapping (0018) references cases; the exports and
+    # their append-only release events reference nothing in the case family and
+    # hold no PHI, so they stay.
+    "corpus_records",
     "cases",
 ]
 

@@ -11,7 +11,7 @@ from app.services.extraction import _appeal_deadline, deadline_note
 
 def test_prompt_version_is_pinned():
     # Guards against silently changing the prompt without bumping the version.
-    assert extraction_prompt.VERSION == "extract_v4"
+    assert extraction_prompt.VERSION == "extract_v5"
 
 
 def test_extract_json_tolerates_fences_and_preamble():

@@ -46,9 +46,9 @@ def test_is_deterministic_and_case_insensitive(pepper):
 
 def test_purposes_are_domain_separated(pepper):
     """The same input under two purposes must not collide, or a member_id_hash
-    could be correlated against a corpus claim_ref."""
+    could be correlated against a digest made for any other purpose."""
     assert hashing.keyed_hash("X", purpose=hashing.MEMBER_ID) != hashing.keyed_hash(
-        "X", purpose=hashing.CLAIM_REF
+        "X", purpose="some_other_purpose"
     )
 
 

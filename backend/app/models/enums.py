@@ -104,3 +104,7 @@ outcome_source = _pg_enum("user_reported", "imported", name="outcome_source")
 deactivation_request_status = _pg_enum(
     "pending", "approved", "denied", name="deactivation_request_status"
 )
+
+# Release lifecycle of a training-corpus export (0018). Append-only events; a
+# corpus is de-identified only once a `released` event exists for it.
+corpus_export_event = _pg_enum("exported", "released", "rejected", name="corpus_export_event")

@@ -98,14 +98,28 @@ class Settings(BaseSettings):
     rate_limit_public: str = "15/minute"  # unauthenticated public endpoints, per IP
     rate_limit_ai: str = "15/minute;50/day"  # Bedrock/Textract endpoints, per user
 
-    # Secret pepper for keyed hashes of identifiers (member_id_hash, corpus
-    # claim_ref). A bare SHA-256 of a structured, payer-prefixed identifier is
-    # exhaustible offline, so it is not a de-identification control under
-    # §164.514 — and §164.514(c) additionally requires a re-identification code
-    # NOT derived from information about the individual. Empty is allowed so the
-    # process still boots; the hashing helpers fail loudly rather than silently
-    # falling back to an unkeyed digest.
+    # Secret pepper for the keyed member_id_hash. A bare SHA-256 of a
+    # structured, payer-prefixed identifier is exhaustible offline, so it is not
+    # a de-identification control under §164.514. Empty is allowed so the
+    # process still boots; the hashing helper fails loudly rather than silently
+    # falling back to an unkeyed digest. (The corpus export no longer hashes
+    # anything — its record ids are random, see models/corpus.py.)
     phi_hash_pepper: str = ""
+
+    # ---- de-identified corpus export (scripts/export_corpus.py) ----
+    # Which customer BAA versions permit Heimdall to create de-identified data
+    # (§164.502(d)(1); guidance §1.2). Comma-separated. EMPTY exports nothing:
+    # a practice whose contract does not say so is never in the corpus.
+    deid_permitted_baa_versions: str = ""
+    # Detector B engine. "transformers" (the clinical model baked into the deid
+    # image) is the only value accepted in production; "spacy" is for laptops
+    # and CI, where the model is not installed.
+    deid_nlp_engine: Literal["transformers", "spacy"] = "transformers"
+    deid_transformer_model: str = "StanfordAIMI/stanford-deidentifier-base"
+    deid_spacy_model: str = "en_core_web_lg"
+    # Path to the sha256 manifest of the transformer snapshot (deid-model.json in
+    # the image). The detector refuses to start unless every file matches.
+    deid_model_manifest: str = "/app/deid-model.json"
 
     # Hard ceiling on pages sent to pypdf/Textract. A highly compressed 25 MB PDF
     # can hold tens of thousands of pages; extract_text() over all of them pins a

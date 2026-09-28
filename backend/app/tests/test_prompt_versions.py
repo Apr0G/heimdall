@@ -24,8 +24,8 @@ def _digest(system: str, user: str) -> str:
 
 PINNED = {
     # (VERSION, digest of SYSTEM + build_user_prompt on fixed inputs)
-    "extraction": ("extract_v4", "5b9d27a30ec27847"),
-    "analysis": ("analyze_v6", "9496bdb547376b9a"),
+    "extraction": ("extract_v5", "9d0c03f528578fc9"),
+    "analysis": ("analyze_v7", "eefcbee0f3e67262"),
     "letter": ("letter_v7", "c6f025389056b8f1"),
     "precheck_extraction": ("pc_extract_v2", "62e4b26c7bbf5f63"),
     "precheck_review": ("pc_review_v3", "bf291579c4f33722"),

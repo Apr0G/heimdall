@@ -1,0 +1,14 @@
+{
+  "_comment": "Detector B's model, pinned. The deid image stage downloads exactly this revision and verify_model_manifest() refuses to start unless every file matches these sha256 digests: the model IS the detector, so a substituted weight file is a substituted detector. Regenerate by hashing the files of a new revision and bumping the revision here in the same commit.",
+  "model": "StanfordAIMI/stanford-deidentifier-base",
+  "revision": "661b9c1c717d3165512d440abc3700c386aefab6",
+  "license": "MIT",
+  "source": "https://huggingface.co/StanfordAIMI/stanford-deidentifier-base",
+  "files": {
+    "config.json": "e28091d60d4e75673b4f4b2bbe3363cdcccbace87da48f04b6c5b669957764cc",
+    "pytorch_model.bin": "fa49ef069171e479f546ce2ee5ed599aa585d1d33bc7a8f54400ac57d9cd2716",
+    "special_tokens_map.json": "303df45a03609e4ead04bc3dc1536d0ab19b5358db685b6f3da123d05ec200e3",
+    "tokenizer_config.json": "12817a952f710775db825f74da131bcdf45acb6970efbb59bc78727d6f676eac",
+    "vocab.txt": "79489a52be45e6fa033521e8ce8e4f62aedc0a742ee2aa6fc04667e5b0b1454d"
+  }
+}
