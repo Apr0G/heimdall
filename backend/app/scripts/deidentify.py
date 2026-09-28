@@ -435,21 +435,49 @@ def redact_text(
     return out
 
 
-def carve_codes(spans: list[tuple[int, int]], text: str) -> list[tuple[int, int]]:
+_LETTER_CODE_TOKEN = re.compile(
+    r"\b(?:[A-Z]\d[0-9A-Z](?:\.[A-Z0-9]{1,4})?|[A-Z]\d{4}|[A-Z]{1,3}-\d{1,3}|(?:MA|[MN])\d{1,3})\b"
+)
+
+
+def code_ranges(text: str, known_codes: frozenset[str] | None = None) -> list[tuple[int, int]]:
+    """Character ranges of billing / diagnosis codes in `text` that detector
+    spans must not swallow. Letter-bearing shapes (ICD-10, HCPCS, CARC, RARC)
+    always count. A bare five-digit run counts only when it is vouched for as a
+    CPT code — in the NCCI set, or preceded by a code cue — because the same
+    shape is a ZIP code; with no code set at all (unit tests) every five-digit
+    run is protected, matching the rule layer's behaviour."""
+    ranges = [(m.start(), m.end()) for m in _LETTER_CODE_TOKEN.finditer(text)]
+    for m in _FIVE_DIGIT.finditer(text):
+        if (
+            known_codes is None
+            or m.group(0) in known_codes
+            or _CODE_CUE.search(text[max(0, m.start() - 40) : m.start()])
+        ):
+            ranges.append((m.start(), m.end()))
+    return sorted(ranges)
+
+
+def carve_codes(
+    spans: list[tuple[int, int]], text: str, known_codes: frozenset[str] | None = None
+) -> list[tuple[int, int]]:
     """Cut billing/diagnosis codes OUT of detector spans instead of dropping or
-    keeping a span whole. A NER model tags "Dx I48.91" as one PERSON; a whole-span
-    test kept the code only when the span WAS the code, so the code was replaced
-    by [NAME]. Dropping such spans would be wrong the other way — "Mary Chen
-    I48.91" must still lose the name — so each span becomes the sub-spans
-    between its code tokens. Remnants that are only punctuation/space are
-    dropped."""
+    keeping a span whole. A NER model tags "Dx I48.91" as one PERSON, or just
+    the "91" of "I48.91" as an ID; a whole-span test kept the code only when the
+    span WAS the code. Dropping such spans would be wrong the other way — "Mary
+    Chen I48.91" must still lose the name — so every code range that overlaps a
+    span (wholly or partly) is subtracted from it. Remnants that are only
+    punctuation/space are dropped."""
+    codes = code_ranges(text, known_codes)
     kept: list[tuple[int, int]] = []
     for start, end in spans:
         cursor = start
-        for m in CODE_TOKEN.finditer(text, start, end):
-            if m.start() > cursor:
-                kept.append((cursor, m.start()))
-            cursor = m.end()
+        for cs, ce in codes:
+            if ce <= cursor or cs >= end:
+                continue
+            if cs > cursor:
+                kept.append((cursor, cs))
+            cursor = max(cursor, ce)
         if cursor < end:
             kept.append((cursor, end))
     return [(s, e) for s, e in kept if any(ch.isalnum() for ch in text[s:e])]

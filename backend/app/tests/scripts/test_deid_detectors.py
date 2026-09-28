@@ -290,8 +290,8 @@ def test_unknown_engine_is_refused():
 
 def test_transformers_engine_is_unavailable_without_torch(monkeypatch):
     _require_presidio()
-    if dd._installed("torch") and dd._installed("spacy-huggingface-pipelines"):
-        pytest.skip("transformer stack installed here; covered by the image test")
+    if dd._installed("torch") and dd._installed("transformers"):
+        pytest.skip("transformer stack installed here; covered by the transformer tests")
     with pytest.raises(DetectorUnavailable):
         dd.PresidioDetector(engine="transformers")
 

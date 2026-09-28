@@ -316,7 +316,14 @@ def run(monkeypatch):
 
 
 async def test_successful_export_writes_rows_then_three_objects(run):
-    report = await run["go"]()
+    class _AllowAware(_NoopDetector):
+        allow_list: list = []
+
+    aware = _AllowAware()
+    aware.known_codes = None
+    report = await run["go"]([aware, _Comprehend()])
+    assert aware.allow_list == ["Aetna"]  # payer names stay readable in prose
+    assert aware.known_codes == CODES  # CPT-vs-ZIP decision inside detector spans
     added = run["added"]
     exports = [a for a in added if isinstance(a, CorpusExport)]
     records = [a for a in added if isinstance(a, CorpusRecord)]

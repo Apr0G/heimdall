@@ -550,6 +550,15 @@ async def export(
             f"DEID_PERMITTED_BAA_VERSIONS ({sorted(permitted)}). Nothing to export."
         )
 
+    # Payer names are training signal, not identifiers (guidance §3.8), and are
+    # exported structurally anyway; tell the NER layer to leave them in prose.
+    payers = sorted({b.case.payer_name for b in bundles if b.case.payer_name})
+    for det in detectors:
+        if hasattr(det, "allow_list"):
+            det.allow_list = payers
+        if hasattr(det, "known_codes"):
+            det.known_codes = codes
+
     records: list[dict] = []
     mapping: list[tuple[uuid.UUID, CaseBundle]] = []
     detector_stats: Counter = Counter()

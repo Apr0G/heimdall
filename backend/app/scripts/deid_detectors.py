@@ -181,7 +181,11 @@ def _keep(label: str, snippet: str) -> bool:
 
 
 def normalise(
-    raw: Iterable[tuple[int, int, str, float]], text: str, source: str, mapping: dict[str, str]
+    raw: Iterable[tuple[int, int, str, float]],
+    text: str,
+    source: str,
+    mapping: dict[str, str],
+    known_codes: frozenset[str] | None = None,
 ) -> list[Span]:
     """Map detector-native results to Spans: relabel, carve codes, apply the
     permitted exceptions. Unknown entity types are DROPPED — a new Comprehend
@@ -191,7 +195,7 @@ def normalise(
         label = mapping.get(entity)
         if label is None or end <= start:
             continue
-        for s, e in carve_codes([(start, end)], text):
+        for s, e in carve_codes([(start, end)], text, known_codes):
             # Trim the span to its non-blank core so a token never swallows the
             # space before a code ("Mary Chen I48.91" -> "[NAME] I48.91").
             while s < e and text[s].isspace():
@@ -255,6 +259,41 @@ def _installed(name: str) -> str | None:
         return None
 
 
+# spaCy label -> Presidio entity for the general-domain NER (both engines).
+# spaCy's default mapping drops ORG and DATE; we want both.
+_SPACY_NER_CONFIGURATION = {
+    # spaCy's default mapping drops ORG and DATE; we want both.
+    "model_to_presidio_entity_mapping": {
+        "PER": "PERSON",
+        "PERSON": "PERSON",
+        "NORP": "NRP",
+        "FAC": "LOCATION",
+        "LOC": "LOCATION",
+        "GPE": "LOCATION",
+        "LOCATION": "LOCATION",
+        "ORG": "ORGANIZATION",
+        "ORGANIZATION": "ORGANIZATION",
+        "DATE": "DATE_TIME",
+        "TIME": "DATE_TIME",
+    },
+    "labels_to_ignore": [
+        "O",
+        "CARDINAL",
+        "EVENT",
+        "LANGUAGE",
+        "LAW",
+        "MONEY",
+        "ORDINAL",
+        "PERCENT",
+        "PRODUCT",
+        "QUANTITY",
+        "WORK_OF_ART",
+    ],
+    "low_confidence_score_multiplier": 0.4,
+    "low_score_entity_names": [],
+}
+
+
 # --- Detector B: Presidio ----------------------------------------------------------
 
 
@@ -282,6 +321,9 @@ class PresidioDetector:
         self.transformer_model = transformer_model
         self.score_threshold = score_threshold
         self.allow_list = [a for a in allow_list if a and len(a.strip()) >= 2]
+        # NCCI CPT/HCPCS set, set by the export: decides which five-digit runs
+        # inside a detector span are codes to keep rather than ZIPs to remove.
+        self.known_codes: frozenset[str] | None = None
         self._analyzer = self._build()
 
     # -- construction --
@@ -298,66 +340,59 @@ class PresidioDetector:
                 "Presidio / spaCy are not installed (deid image stage or deid.lock)"
             ) from exc
 
+        hf_recognizer = None
         if self.engine == "transformers":
             try:
-                import spacy_huggingface_pipelines  # noqa: F401
                 import torch  # noqa: F401
                 import transformers  # noqa: F401
+                from presidio_analyzer.predefined_recognizers.ner import HuggingFaceNerRecognizer
             except ImportError as exc:
                 raise DetectorUnavailable(
-                    "engine=transformers needs torch, transformers and "
-                    "spacy-huggingface-pipelines (deid image stage)"
+                    "engine=transformers needs torch and transformers (deid image stage)"
                 ) from exc
             if not spacy.util.is_package("en_core_web_sm"):
                 raise DetectorUnavailable(
-                    "en_core_web_sm (tokenizer for the transformer) is missing"
+                    "en_core_web_sm (tokenizer for the pattern recognizers) is missing"
                 )
-            configuration = {
-                "nlp_engine_name": "transformers",
-                "models": [
-                    {
-                        "lang_code": "en",
-                        "model_name": {
-                            "spacy": "en_core_web_sm",
-                            "transformers": self.transformer_model,
-                        },
-                    }
-                ],
-                "ner_model_configuration": {
-                    "labels_to_ignore": ["O"],
-                    "aggregation_strategy": "max",
-                    "stride": 16,
-                    "alignment_mode": "expand",
-                    # Stanford / i2b2 label set -> Presidio entities. PATORG is the
-                    # patient's employer (an enumerated identifier); HOSP / VENDOR
-                    # are facilities, removed as ORG (permitted, not required).
-                    "model_to_presidio_entity_mapping": {
-                        "PATIENT": "PERSON",
-                        "STAFF": "PERSON",
-                        "HCW": "PERSON",
-                        "PER": "PERSON",
-                        "PERSON": "PERSON",
-                        "LOC": "LOCATION",
-                        "GPE": "LOCATION",
-                        "LOCATION": "LOCATION",
-                        "HOSPITAL": "LOCATION",
-                        "FACILITY": "LOCATION",
-                        "HOSP": "ORGANIZATION",
-                        "PATORG": "ORGANIZATION",
-                        "ORG": "ORGANIZATION",
-                        "ORGANIZATION": "ORGANIZATION",
-                        "VENDOR": "ORGANIZATION",
-                        "DATE": "DATE_TIME",
-                        "TIME": "DATE_TIME",
-                        "PHONE": "PHONE_NUMBER",
-                        "AGE": "AGE",
-                        "ID": "ID",
-                        "EMAIL": "EMAIL",
-                        "OTHERPHI": "ID",
-                    },
-                    "low_confidence_score_multiplier": 0.4,
-                    "low_score_entity_names": ["ID"],
+            # The clinical model is driven through transformers' own pipeline
+            # (Presidio's native recognizer), not through the spaCy bridge — the
+            # bridge pins transformers <5, a line with open advisories, and its
+            # token alignment is not needed: the pipeline returns char offsets.
+            # Label set of the Stanford checkpoint -> Presidio entities.
+            hf_recognizer = HuggingFaceNerRecognizer(
+                model_name=self.transformer_model,
+                supported_language="en",
+                label_mapping={
+                    "PATIENT": "PERSON",
+                    "HCW": "PERSON",
+                    "STAFF": "PERSON",
+                    "HOSPITAL": "LOCATION",
+                    "HOSP": "LOCATION",
+                    "LOC": "LOCATION",
+                    "VENDOR": "ORGANIZATION",
+                    "PATORG": "ORGANIZATION",
+                    "DATE": "DATE_TIME",
+                    "ID": "ID",
+                    "PHONE": "PHONE_NUMBER",
+                    "AGE": "AGE",
+                    "EMAIL": "EMAIL_ADDRESS",
+                    "OTHERPHI": "ID",
                 },
+                threshold=self.score_threshold,
+                aggregation_strategy="max",
+                chunk_size=1200,
+                chunk_overlap=120,
+                device="cpu",
+            )
+            hf_recognizer.load()
+            # A small spaCy pipeline for tokenisation / lemmas (the pattern
+            # recognizers' context enhancer needs them). Its general-domain NER
+            # stays on as a weak extra signal; the clinical model is the one
+            # that carries the recall.
+            configuration = {
+                "nlp_engine_name": "spacy",
+                "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}],
+                "ner_model_configuration": _SPACY_NER_CONFIGURATION,
             }
         else:
             if not spacy.util.is_package(self.spacy_model):
@@ -365,42 +400,14 @@ class PresidioDetector:
             configuration = {
                 "nlp_engine_name": "spacy",
                 "models": [{"lang_code": "en", "model_name": self.spacy_model}],
-                "ner_model_configuration": {
-                    # spaCy's default mapping drops ORG and DATE; we want both.
-                    "model_to_presidio_entity_mapping": {
-                        "PER": "PERSON",
-                        "PERSON": "PERSON",
-                        "NORP": "NRP",
-                        "FAC": "LOCATION",
-                        "LOC": "LOCATION",
-                        "GPE": "LOCATION",
-                        "LOCATION": "LOCATION",
-                        "ORG": "ORGANIZATION",
-                        "ORGANIZATION": "ORGANIZATION",
-                        "DATE": "DATE_TIME",
-                        "TIME": "DATE_TIME",
-                    },
-                    "labels_to_ignore": [
-                        "O",
-                        "CARDINAL",
-                        "EVENT",
-                        "LANGUAGE",
-                        "LAW",
-                        "MONEY",
-                        "ORDINAL",
-                        "PERCENT",
-                        "PRODUCT",
-                        "QUANTITY",
-                        "WORK_OF_ART",
-                    ],
-                    "low_confidence_score_multiplier": 0.4,
-                    "low_score_entity_names": [],
-                },
+                "ner_model_configuration": _SPACY_NER_CONFIGURATION,
             }
         nlp_engine = NlpEngineProvider(nlp_configuration=configuration).create_engine()
 
         registry = RecognizerRegistry(supported_languages=["en"])
         registry.load_predefined_recognizers(languages=["en"], nlp_engine=nlp_engine)
+        if hf_recognizer is not None:
+            registry.add_recognizer(hf_recognizer)
         # Shipped disabled by default; exactly the identifiers our documents carry.
         registry.add_recognizer(UsMbiRecognizer())
         registry.add_recognizer(UsNpiRecognizer())
@@ -474,6 +481,7 @@ class PresidioDetector:
             text,
             self.source,
             PRESIDIO_LABELS,
+            self.known_codes,
         )
 
 
@@ -509,6 +517,7 @@ class ComprehendDetector:
                 raise DetectorUnavailable("comprehendmedical client unavailable") from exc
         self._client = client
         self.score_threshold = score_threshold
+        self.known_codes: frozenset[str] | None = None
         self.model_versions: set[str] = set()
         self.units = 0
         self.calls = 0
@@ -577,7 +586,7 @@ class ComprehendDetector:
                         float(ent.get("Score", 0)),
                     )
                 )
-        return normalise(raw, text, self.source, COMPREHEND_LABELS)
+        return normalise(raw, text, self.source, COMPREHEND_LABELS, self.known_codes)
 
 
 # --- orchestration --------------------------------------------------------------------

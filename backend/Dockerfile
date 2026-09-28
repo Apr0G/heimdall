@@ -62,8 +62,8 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--no-ser
 FROM api AS deid
 USER root
 
-# Presidio + spaCy models + torch (CPU) + transformers, the whole transitive
-# closure hash-pinned in deid.lock (see its header for how it is regenerated).
+# Presidio + both spaCy models + torch (CPU) + transformers 5, the whole
+# transitive closure hash-pinned in deid.lock (see its header for how it is regenerated).
 # Shared pins are asserted equal to requirements.lock by
 # tests/test_dependency_locks.py so nothing here downgrades the audited image.
 COPY deid.lock deid-model.json ./

@@ -430,6 +430,23 @@ def test_carve_codes_keeps_codes_and_drops_punctuation_remnants():
     assert carve_codes([(10, 16)], text) == []
 
 
+def test_carve_codes_subtracts_a_partially_overlapping_code():
+    # The clinical model tags just the "91" of "I48.91" as an ID.
+    text = "Dx I48.91 today"
+    assert carve_codes([(7, 9)], text) == []
+    assert carve_codes([(3, 15)], text) == [(9, 15)]  # normalise() trims the space
+
+
+def test_five_digit_runs_inside_spans_are_kept_only_when_vouched_for():
+    text = "ZIP 90210 and CPT 99213 and 93306"
+    codes = frozenset({"93306"})
+    # No code set: every five-digit run is protected (rule-layer parity).
+    assert carve_codes([(0, len(text))], text) == [(0, 4), (9, 18), (23, 28)]
+    # With the set: 90210 is not a code and not cued -> removable; 99213 is
+    # cued by "CPT"; 93306 is in the set.
+    assert carve_codes([(0, len(text))], text, codes) == [(0, 18), (23, 28)]
+
+
 def test_none_and_empty_pass_through():
     assert redact_text(None, []) is None
     assert redact_text("", []) == ""
