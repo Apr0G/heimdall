@@ -71,19 +71,21 @@ async def test_corpus_records_link_random_ids_to_cases_and_events_are_append_onl
     async with sessions() as s:
         rec = await s.get(CorpusRecord, record_id)
         assert rec.case_id == case.id and rec.record_id != case.id
-        event = (
+        # A plain value: rollback() expires ORM objects, and touching an expired
+        # attribute afterwards would trigger lazy IO outside the async context.
+        event_id = (
             await s.scalars(
-                select(CorpusExportEvent).where(CorpusExportEvent.export_id == export_id)
+                select(CorpusExportEvent.id).where(CorpusExportEvent.export_id == export_id)
             )
         ).one()
         with pytest.raises(Exception, match="append-only"):
             await s.execute(
-                text("UPDATE corpus_export_events SET actor = 'x' WHERE id = :id"), {"id": event.id}
+                text("UPDATE corpus_export_events SET actor = 'x' WHERE id = :id"), {"id": event_id}
             )
         await s.rollback()
         with pytest.raises(Exception, match="append-only"):
             await s.execute(
-                text("DELETE FROM corpus_export_events WHERE id = :id"), {"id": event.id}
+                text("DELETE FROM corpus_export_events WHERE id = :id"), {"id": event_id}
             )
         await s.rollback()
         # The mapping IS deletable: practice disposal severs the link.
