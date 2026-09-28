@@ -1,0 +1,135 @@
+name: promote-corpus
+
+# Releases a quarantined corpus export: the human prong of HIPAA Safe Harbor,
+# 45 CFR 164.514(b)(2)(ii), recorded. You (the workflow actor) attest that you
+# read the quarantined corpus and its review list and found no actual knowledge
+# that the remainder could identify anyone. The task verifies the sha256 you
+# reviewed against the object in S3, appends a `released` event naming you, the
+# hash and this checklist, and copies the corpus to exports/released/. A hash
+# mismatch or an unticked box appends a `rejected` event and fails.
+#
+# Before running: download s3://<bucket>/exports/quarantine/<export_id>/
+# {corpus.jsonl,report.json,review.txt} with your own credentials, read them,
+# and compute `shasum -a 256 corpus.jsonl`.
+on:
+  workflow_dispatch:
+    inputs:
+      export_id:
+        description: "Export UUID (from the export-corpus task log)"
+        required: true
+      corpus_sha256:
+        description: "sha256 of the corpus.jsonl you reviewed (64 hex chars)"
+        required: true
+      names_reviewed:
+        description: "I read review.txt; every surviving name-shaped string is a payer, drug, anatomy or provider term — not a patient, relative, employer or household member"
+        type: boolean
+        default: false
+      no_occupation:
+        description: "No record states an occupation, title or role of the patient"
+        type: boolean
+        default: false
+      no_public_event:
+        description: "No record describes a clinical event I know to have been publicised"
+        type: boolean
+        default: false
+      no_small_population:
+        description: "No record combines a rare condition with a practice small enough that I could name the patient"
+        type: boolean
+        default: false
+      no_key_disclosed:
+        description: "No recipient of this corpus has been given corpus_records, database access, or any other means of re-identification"
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check inputs
+        # Inputs via env:, never interpolated straight into the script.
+        env:
+          EXPORT_ID: ${{ inputs.export_id }}
+          SHA: ${{ inputs.corpus_sha256 }}
+          C1: ${{ inputs.names_reviewed }}
+          C2: ${{ inputs.no_occupation }}
+          C3: ${{ inputs.no_public_event }}
+          C4: ${{ inputs.no_small_population }}
+          C5: ${{ inputs.no_key_disclosed }}
+        run: |
+          if ! printf '%s' "$EXPORT_ID" | grep -qiE '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'; then
+            echo "export_id must be a UUID."; exit 1
+          fi
+          if ! printf '%s' "$SHA" | grep -qiE '^[0-9a-f]{64}$'; then
+            echo "corpus_sha256 must be 64 hex characters."; exit 1
+          fi
+          for v in "$C1" "$C2" "$C3" "$C4" "$C5"; do
+            if [ "$v" != "true" ]; then
+              echo "Every checklist item must be ticked. A release without the full attestation is refused."
+              exit 1
+            fi
+          done
+          echo "Release requested by ${{ github.actor }} at $(date -u +%FT%TZ) for export $EXPORT_ID"
+
+      - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: arn:aws:iam::000000000000:role/heimdall-gha-deploy
+          aws-region: us-east-1
+
+      - name: Release the corpus as a one-off ECS task
+        env:
+          EXPORT_ID: ${{ inputs.export_id }}
+          SHA: ${{ inputs.corpus_sha256 }}
+          REVIEWER: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          CLUSTER=default
+          TASKDEF=heimdall-deid
+
+          BUCKET=$(aws ecs describe-task-definition --task-definition "$TASKDEF" \
+            --query "taskDefinition.containerDefinitions[0].environment[?name=='S3_BUCKET_NAME'].value | [0]" \
+            --output text)
+          VPC=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true \
+            --query 'Vpcs[0].VpcId' --output text)
+          SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC" \
+            --query 'Subnets[].SubnetId' --output text | tr '\t' ',')
+          SG=$(aws ec2 describe-security-groups \
+            --filters "Name=group-name,Values=default-heimdall-api-$VPC" "Name=vpc-id,Values=$VPC" \
+            --query 'SecurityGroups[0].GroupId' --output text)
+
+          # The checklist was verified all-true above; it is recorded verbatim.
+          CHECKLIST='{"names_reviewed":true,"no_occupation":true,"no_public_event":true,"no_small_population":true,"no_key_disclosed":true}'
+          OVERRIDES=$(jq -nc --arg e "$EXPORT_ID" --arg s "$SHA" --arg r "$REVIEWER" --arg c "$CHECKLIST" '{
+            containerOverrides: [{
+              name: "deid",
+              command: ["python", "-m", "app.scripts.promote_corpus"],
+              environment: [
+                {name: "EXPORT_ID", value: $e},
+                {name: "CORPUS_SHA256", value: $s},
+                {name: "REVIEWER", value: $r},
+                {name: "CHECKLIST", value: $c}
+              ]
+            }]
+          }')
+
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "$CLUSTER" --task-definition "$TASKDEF" --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=ENABLED}" \
+            --overrides "$OVERRIDES" \
+            --query 'tasks[0].taskArn' --output text)
+          echo "Started promote task: $TASK_ARN"
+
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN"
+          EXIT=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+          REASON=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].stoppedReason' --output text)
+          echo "promote container exit code: $EXIT ($REASON)"
+          test "$EXIT" = "0"
+
+          echo ""
+          echo "Released: s3://$BUCKET/exports/released/$EXPORT_ID/corpus.jsonl"
+          echo "The release event (reviewer, sha256, checklist) is in corpus_export_events and audit_logs."

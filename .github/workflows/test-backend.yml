@@ -66,10 +66,12 @@ jobs:
           black --check .
           pytest -q
 
-  # The de-identification NER path (Presidio + spaCy, backend/deid.lock) is the
-  # export task's production default, and the main job above never installs
-  # it — those tests skip there. This job installs the hash-pinned closure and
-  # sets REQUIRE_DEID_TESTS so a missing Presidio FAILS instead of skipping.
+  # The de-identification detectors (Presidio + the clinical transformer +
+  # torch, backend/deid.lock) are the export task's production path, and the
+  # main job above never installs them — those tests skip there. This job
+  # installs the hash-pinned closure, fetches the transformer at its pinned
+  # revision, verifies it against deid-model.json, and sets REQUIRE_DEID_TESTS
+  # so a missing detector FAILS instead of skipping.
   deid:
     runs-on: ubuntu-latest
     steps:
@@ -84,8 +86,24 @@ jobs:
           pip install --require-hashes --no-deps --only-binary=:all: --disable-pip-version-check -r deid.lock
           pip install --no-deps -e '.[dev]'
           pip install pytest pytest-asyncio
-      - name: De-identification tests with NER
+      - name: Fetch the pinned transformer and verify the manifest
+        working-directory: backend
+        env:
+          HF_HOME: ${{ runner.temp }}/hf
+        run: |
+          python - <<'PY'
+          import json
+          from huggingface_hub import snapshot_download
+          m = json.load(open("deid-model.json"))
+          snapshot_download(m["model"], revision=m["revision"], allow_patterns=list(m["files"]))
+          PY
+          python -c "from pathlib import Path; from app.scripts.deid_detectors import verify_model_manifest as v; print(v(Path('deid-model.json')))"
+      - name: De-identification tests with both engines
         working-directory: backend
         env:
           REQUIRE_DEID_TESTS: "1"
-        run: pytest -q app/tests/scripts/test_deidentify.py
+          DEID_TRANSFORMER_AVAILABLE: "1"
+          HF_HOME: ${{ runner.temp }}/hf
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+        run: pytest -q app/tests/scripts/test_deidentify.py app/tests/scripts/test_deid_detectors.py

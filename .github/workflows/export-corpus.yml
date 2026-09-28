@@ -1,23 +1,26 @@
 name: export-corpus
 
-# Exports a DE-IDENTIFIED training corpus (case -> extraction -> analysis -> letter
-# -> outcome) as JSONL to s3://<bucket>/exports/, as a one-off in-VPC ECS task.
-# Keyless via GitHub OIDC. The redacted file is NOT surfaced in this log — download
-# it with your own admin creds. With ner=true, Presidio (installed at runtime, not
-# baked into the app image) adds NER name/location detection over the regex passes.
+# Exports the training corpus to QUARANTINE, de-identified under HIPAA Safe
+# Harbor (45 CFR 164.514(b)(2)), as a one-off in-VPC ECS task on the `deid`
+# image (Presidio + clinical transformer + torch baked in, Hugging Face hub
+# offline; Amazon Comprehend Medical as the second detector). Keyless via OIDC.
+#
+# The output under s3://<bucket>/exports/quarantine/<export_id>/ is STILL PHI:
+# it expires in 30 days unless a reviewer releases it with promote-corpus.yml,
+# which is where the human "no actual knowledge" determination is recorded.
+# Nothing about this task can be weakened from here — there are no inputs that
+# reach the redaction, and the script has no override variables.
 on:
   workflow_dispatch:
     inputs:
-      ner:
-        description: "Use Presidio NER for name detection (slower, higher assurance)?"
-        type: choice
-        options: ["true", "false"]
-        default: "true"
-      include_doc_text:
-        description: "Embed the (redacted) raw extracted document text?"
-        type: choice
-        options: ["false", "true"]
-        default: "false"
+      confirm:
+        description: 'Type "export" to confirm reading every permitted practice into a quarantined corpus'
+        required: true
+        default: ""
+      reason:
+        description: "Why (recorded in the run log)"
+        required: true
+        default: ""
 
 permissions:
   id-token: write
@@ -27,22 +30,27 @@ jobs:
   export:
     runs-on: ubuntu-latest
     steps:
+      - name: Check confirmation
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          REASON: ${{ inputs.reason }}
+        run: |
+          if [ "$CONFIRM" != "export" ]; then echo 'Type "export" to confirm.'; exit 1; fi
+          if [ -z "$REASON" ]; then echo "A reason is required."; exit 1; fi
+          echo "Reason: $REASON"
+          echo "Requested by ${{ github.actor }} at $(date -u +%FT%TZ)"
+
       - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: arn:aws:iam::000000000000:role/heimdall-gha-deploy
           aws-region: us-east-1
 
-      - name: Export the corpus as a one-off ECS task
-        env:
-          INCLUDE: ${{ inputs.include_doc_text }}
-          NER: ${{ inputs.ner }}
+      - name: Export the corpus to quarantine as a one-off ECS task
         run: |
           set -euo pipefail
           CLUSTER=default
-          TASKDEF=default-heimdall-api
+          TASKDEF=heimdall-deid
 
-          CONTAINER=$(aws ecs describe-task-definition --task-definition "$TASKDEF" \
-            --query 'taskDefinition.containerDefinitions[0].name' --output text)
           BUCKET=$(aws ecs describe-task-definition --task-definition "$TASKDEF" \
             --query "taskDefinition.containerDefinitions[0].environment[?name=='S3_BUCKET_NAME'].value | [0]" \
             --output text)
@@ -54,41 +62,21 @@ jobs:
             --filters "Name=group-name,Values=default-heimdall-api-$VPC" "Name=vpc-id,Values=$VPC" \
             --query 'SecurityGroups[0].GroupId' --output text)
 
-          INC=$([ "$INCLUDE" = "true" ] && echo 1 || echo 0)
-          if [ "$NER" = "true" ]; then
-            USE_NER=1
-            # Hash-verified install (backend/deid.lock). Every artifact
-            # in the transitive closure, plus the spaCy model, must match a recorded
-            # sha256 or the install FAILS — so a compromised or typosquatted release
-            # cannot execute code inside a task that holds DATABASE_URL and the app
-            # task role. --no-deps because the file already pins the full closure;
-            # --only-binary and --disable-pip-version-check keep pip from doing
-            # anything else on the network.
-            CMD='["sh","-c","pip install --require-hashes --no-deps --only-binary=:all: --disable-pip-version-check -r deid.lock && python -m app.scripts.export_corpus"]'
-          else
-            USE_NER=0
-            CMD='["python","-m","app.scripts.export_corpus"]'
-          fi
-
-          OVERRIDES=$(cat <<JSON
-          {"containerOverrides":[{"name":"$CONTAINER",
-            "command":$CMD,
-            "environment":[
-              {"name":"INCLUDE_DOC_TEXT","value":"$INC"},
-              {"name":"USE_NER","value":"$USE_NER"},
-              {"name":"PIP_USER","value":"1"}
-            ]}]}
-          JSON
-          )
+          # The image digest the task actually ran, recorded into the report.
+          DIGEST=$(aws ecr batch-get-image --repository-name heimdall-backend \
+            --image-ids imageTag=deid --query 'images[0].imageId.imageDigest' --output text)
+          OVERRIDES=$(jq -nc --arg d "$DIGEST" \
+            '{containerOverrides:[{name:"deid",environment:[{name:"IMAGE_DIGEST",value:$d}]}]}')
 
           TASK_ARN=$(aws ecs run-task \
             --cluster "$CLUSTER" --task-definition "$TASKDEF" --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=ENABLED}" \
             --overrides "$OVERRIDES" \
             --query 'tasks[0].taskArn' --output text)
-          echo "Started export task: $TASK_ARN"
+          echo "Started export task: $TASK_ARN (image $DIGEST)"
 
-          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN"
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN" ||
+            aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN"
           EXIT=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" \
             --query 'tasks[0].containers[0].exitCode' --output text)
           REASON=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" \
@@ -97,6 +85,7 @@ jobs:
           test "$EXIT" = "0"
 
           echo ""
-          echo "Corpus written to s3://$BUCKET/exports/ . Download with your OWN admin creds:"
-          echo "  aws s3 ls s3://$BUCKET/exports/"
-          echo "  aws s3 cp s3://$BUCKET/exports/<file>.jsonl ."
+          echo "Quarantined under s3://$BUCKET/exports/quarantine/<export_id>/ — the task log"
+          echo "(/aws/ecs/heimdall-deid) prints the export id and the corpus sha256."
+          echo "Download with your OWN admin creds, read corpus.jsonl + review.txt, then run"
+          echo "promote-corpus with the export id, the sha256 you reviewed, and the checklist."

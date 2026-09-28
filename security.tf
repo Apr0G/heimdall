@@ -54,11 +54,24 @@ resource "aws_s3_bucket_lifecycle_configuration" "documents" {
     abort_incomplete_multipart_upload { days_after_initiation = 7 }
   }
 
+  # The corpus export writes to exports/quarantine/<export_id>/ — STILL PHI until
+  # a reviewer promotes it (scripts/promote_corpus.py -> exports/released/, no
+  # lifecycle). A corpus nobody reviews must not sit there forever: 30 days, then
+  # gone, noncurrent versions with it. exports/released/ holds only data that
+  # meets 45 CFR 164.514(b)(2) and is the permanent training store.
+  rule {
+    id     = "expire-corpus-quarantine"
+    status = "Enabled"
+    filter { prefix = "exports/quarantine/" }
+    expiration { days = 30 }
+    noncurrent_version_expiration { noncurrent_days = 1 }
+  }
+
   # Raw Bedrock request/response archives (model_runs/) contain full document text
   # (PHI) + raw member IDs. Strategy: keep them only long enough to debug/reprocess,
-  # then delete. The DE-IDENTIFIED corpus (scripts/export_corpus.py -> exports/) is
-  # the permanent training store and is reproducible from the DB, so raw PHI is NOT
-  # kept forever. Set model_runs_retention_days = 0 to keep indefinitely (not advised).
+  # then delete. The DE-IDENTIFIED corpus (exports/released/) is the permanent
+  # training store and is reproducible from the DB, so raw PHI is NOT kept forever.
+  # Set model_runs_retention_days = 0 to keep indefinitely (not advised).
   dynamic "rule" {
     for_each = var.model_runs_retention_days > 0 ? [1] : []
     content {
@@ -73,7 +86,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "documents" {
 }
 
 variable "model_runs_retention_days" {
-  description = "Days to keep raw model_runs/ PHI archives before deletion. The de-identified corpus (exports/) is the permanent training store. 0 = keep indefinitely (not advised)."
+  description = "Days to keep raw model_runs/ PHI archives before deletion. The de-identified corpus (exports/released/) is the permanent training store. 0 = keep indefinitely (not advised)."
   type        = number
   default     = 30
 }

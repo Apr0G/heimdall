@@ -103,7 +103,7 @@ resource "aws_iam_role" "gha_deploy" {
         }
         # Two accepted subjects, no wider than before:
         #
-        #   ref:refs/heads/main            — deploy, migrate, export, integrity.
+        #   ref:refs/heads/main            — deploy, migrate, export, promote, integrity.
         #   environment:<destructive env>  — wipe-test-data and dispose-practice.
         #
         # A GitHub `environment:` REPLACES the ref in the sub claim, so the second
@@ -169,6 +169,7 @@ resource "aws_iam_role_policy" "gha_deploy" {
           "arn:aws:ecs:us-east-1:${data.aws_caller_identity.current.account_id}:task-definition/heimdall-migrate:*",
           "arn:aws:ecs:us-east-1:${data.aws_caller_identity.current.account_id}:task-definition/heimdall-dispose:*",
           "arn:aws:ecs:us-east-1:${data.aws_caller_identity.current.account_id}:task-definition/heimdall-provision:*",
+          "arn:aws:ecs:us-east-1:${data.aws_caller_identity.current.account_id}:task-definition/heimdall-deid:*",
         ]
       },
       {
@@ -194,6 +195,8 @@ resource "aws_iam_role_policy" "gha_deploy" {
           aws_iam_role.dispose_task.arn,
           aws_iam_role.provision_exec.arn,
           aws_iam_role.provision_task.arn,
+          aws_iam_role.deid_exec.arn,
+          aws_iam_role.deid_task.arn,
         ]
       },
     ]

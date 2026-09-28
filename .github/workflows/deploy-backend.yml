@@ -108,9 +108,16 @@ jobs:
           REPO: heimdall-backend
           SHA: ${{ github.sha }}
         run: |
-          docker build -t "$REGISTRY/$REPO:latest" -t "$REGISTRY/$REPO:$SHA" backend
+          # Two stages, two tags (backend/Dockerfile). `api` is the service;
+          # `deid` is built FROM it and carries the de-identification stack for
+          # the corpus export/promote task (deid.tf). Without --target the last
+          # stage would be built as :latest and the service would ship torch.
+          docker build --target api -t "$REGISTRY/$REPO:latest" -t "$REGISTRY/$REPO:$SHA" backend
+          docker build --target deid -t "$REGISTRY/$REPO:deid" -t "$REGISTRY/$REPO:deid-$SHA" backend
           docker push "$REGISTRY/$REPO:latest"
           docker push "$REGISTRY/$REPO:$SHA"
+          docker push "$REGISTRY/$REPO:deid"
+          docker push "$REGISTRY/$REPO:deid-$SHA"
 
       # deploy-only ships whatever is already tagged :latest. Record which image
       # that actually is, so the run log is not silently ambiguous about what went
