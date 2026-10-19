@@ -1,6 +1,6 @@
-// Public-site constants. The email is a placeholder test address until the real
-// inbox exists; the CTAs open the visitor's mail client (no backend for now).
-export const CONTACT_EMAIL = "hello@heimdallclaims.com";
+// Public-site constants. The contact inbox is the one named in the legal
+// documents; the CTAs open the visitor's mail client (no backend for now).
+export const CONTACT_EMAIL = "info@heimdallclaims.com";
 export const SITE_URL = "https://heimdallclaims.com";
 /** Legal entity named in the footer and the legal documents. */
 export const COMPANY_LEGAL_NAME = "Heimdall Claims, Inc.";

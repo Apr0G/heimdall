@@ -16,7 +16,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const CONTACT = "hello@heimdallclaims.com";
+const CONTACT = "info@heimdallclaims.com";
 
 const PAGES = [
   {

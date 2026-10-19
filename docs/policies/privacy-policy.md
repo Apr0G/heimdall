@@ -143,7 +143,7 @@ We built the Service for health information from the start. Current safeguards i
 
 No system can be guaranteed to be perfectly secure. If we discover a breach of unsecured PHI we will notify the affected practice without unreasonable delay and in any case within 60 days of discovery, as HIPAA and our BAA require, with the information the practice needs to meet its own notification duties. If a security incident affects personal information for which we are responsible directly (for example, contact details of a prospective customer), we will notify affected individuals and regulators as applicable law requires.
 
-If you believe you have found a security vulnerability in the Service, please email us at [hello@heimdallclaims.com](mailto:hello@heimdallclaims.com) with enough detail for us to reproduce it. We ask that you do not access or modify data that is not yours and that you give us a reasonable time to fix the issue before disclosing it publicly.
+If you believe you have found a security vulnerability in the Service, please email us at [info@heimdallclaims.com](mailto:info@heimdallclaims.com) with enough detail for us to reproduce it. We ask that you do not access or modify data that is not yours and that you give us a reasonable time to fix the issue before disclosing it publicly.
 
 ## 10. Your choices and rights
 
@@ -153,7 +153,7 @@ Your account belongs to your practice. You can change your password at any time 
 
 ### 10.2 Prospective customers and website visitors
 
-If you have contacted us and would like us to delete your contact details or stop contacting you, email us at [hello@heimdallclaims.com](mailto:hello@heimdallclaims.com) and we will do so unless we need the information for a legitimate business or legal reason, which we will explain.
+If you have contacted us and would like us to delete your contact details or stop contacting you, email us at [info@heimdallclaims.com](mailto:info@heimdallclaims.com) and we will do so unless we need the information for a legitimate business or legal reason, which we will explain.
 
 ### 10.3 Patients
 
@@ -163,7 +163,7 @@ Please contact your healthcare provider. Requests to access, correct, restrict o
 
 Depending on where you live, state privacy laws (for example in California, Colorado, Connecticut, Virginia, Texas, Oregon and others) may give you rights to know what personal information we hold about you, to access it in a portable format, to correct it, to delete it, to opt out of its sale, sharing for targeted advertising, or use in profiling that produces legal or similarly significant effects, and not to be discriminated against for exercising those rights. Many of those laws do not apply to PHI governed by HIPAA, to information about employees and business contacts, or to businesses of our size; but we will honor these requests from any United States resident regardless of whether the law technically requires it.
 
-To exercise a right, email [hello@heimdallclaims.com](mailto:hello@heimdallclaims.com). We will need to verify that you are the person the information is about (usually by confirming control of the email address on record). You may use an authorized agent; we will ask for proof of the agent's authority. We will respond within 45 days, or tell you if we need more time. If we decline a request we will tell you why, and you may appeal by replying to our response.
+To exercise a right, email [info@heimdallclaims.com](mailto:info@heimdallclaims.com). We will need to verify that you are the person the information is about (usually by confirming control of the email address on record). You may use an authorized agent; we will ask for proof of the agent's authority. We will respond within 45 days, or tell you if we need more time. If we decline a request we will tell you why, and you may appeal by replying to our response.
 
 For the avoidance of doubt: we do not sell personal information; we do not share it for cross-context behavioral advertising; we do not use it for automated decisions that produce legal or similarly significant effects about individuals; and we do not collect personal information from consumers for those purposes. The categories of personal information we collect, the sources, the purposes and the categories of recipients are described in Sections 2, 3 and 6 of this policy, which also serves as our notice at collection.
 
@@ -191,6 +191,6 @@ We will update this policy when our practices change. The "Last updated" date at
 
 Heimdall Claims, Inc., a Delaware corporation.
 
-Email: [hello@heimdallclaims.com](mailto:hello@heimdallclaims.com). Our postal address is available on request by email.
+Email: [info@heimdallclaims.com](mailto:info@heimdallclaims.com). Our postal address is available on request by email.
 
 Privacy inquiries, requests under Section 10, security reports and HIPAA-related questions should all be sent to that address with a subject line that says what the message is about. If you are a practice with a BAA and need to report a suspected incident, please mark the subject "Security incident" so that it is handled first.

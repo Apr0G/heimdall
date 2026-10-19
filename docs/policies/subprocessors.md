@@ -41,4 +41,4 @@ The Service downloads public reference tables published by the Centers for Medic
 
 ## Changes to this list
 
-We update this page before we start using a new subprocessor that will handle customer data, or when we replace one. Customers with a BAA may ask to be notified of such changes by email by writing to [hello@heimdallclaims.com](mailto:hello@heimdallclaims.com). If a Customer reasonably objects to a new subprocessor on data-protection grounds and we cannot offer an alternative, the Customer may terminate the affected service and receive a refund of prepaid, unused fees.
+We update this page before we start using a new subprocessor that will handle customer data, or when we replace one. Customers with a BAA may ask to be notified of such changes by email by writing to [info@heimdallclaims.com](mailto:info@heimdallclaims.com). If a Customer reasonably objects to a new subprocessor on data-protection grounds and we cannot offer an alternative, the Customer may terminate the affected service and receive a refund of prepaid, unused fees.
