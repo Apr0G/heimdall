@@ -15,7 +15,6 @@ from fastapi import (
     status,
 )
 from sqlalchemy import and_, func, or_, select, update
-from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -194,7 +193,7 @@ async def list_cases(
                 select(Extraction)
                 .where(Extraction.case_id.in_(case_ids))
                 .order_by(Extraction.case_id, Extraction.created_at.desc())
-                .ext(distinct_on(Extraction.case_id))
+                .distinct(Extraction.case_id)
             )
         ).all()
         extractions = {e.case_id: e for e in ex_rows}
@@ -204,7 +203,7 @@ async def list_cases(
                 select(Analysis)
                 .where(Analysis.case_id.in_(case_ids))
                 .order_by(Analysis.case_id, Analysis.created_at.desc())
-                .ext(distinct_on(Analysis.case_id))
+                .distinct(Analysis.case_id)
             )
         ).all()
         analyses = {a.case_id: a for a in an_rows}
@@ -221,7 +220,7 @@ async def list_cases(
                 select(RiskReport)
                 .where(RiskReport.case_id.in_(case_ids))
                 .order_by(RiskReport.case_id, RiskReport.created_at.desc())
-                .ext(distinct_on(RiskReport.case_id))
+                .distinct(RiskReport.case_id)
             )
         ).all()
         risk_bands = {r.case_id: r.overall_risk_band for r in rr_rows}
