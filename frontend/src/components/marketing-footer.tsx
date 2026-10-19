@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { Disclaimer } from "@/components/disclaimer";
 import { Wordmark } from "@/components/wordmark";
+import { COMPANY_LEGAL_NAME } from "@/lib/site";
 
 export function MarketingFooter() {
   return (
@@ -21,6 +22,9 @@ export function MarketingFooter() {
             <Link href="/privacy" className="hover:text-foreground">
               Privacy
             </Link>
+            <Link href="/subprocessors" className="hover:text-foreground">
+              Subprocessors
+            </Link>
             <Link href="/login" className="hover:text-foreground">
               Log in
             </Link>
@@ -28,7 +32,7 @@ export function MarketingFooter() {
         </div>
         <Disclaimer />
         <p className="text-xs text-muted-foreground">
-          © {new Date().getFullYear()} Heimdall Claims. All rights reserved.
+          © {new Date().getFullYear()} {COMPANY_LEGAL_NAME} All rights reserved.
         </p>
       </div>
     </footer>

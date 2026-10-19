@@ -9,6 +9,7 @@ const PUBLIC_PATHS = [
   "/contact",
   "/terms",
   "/privacy",
+  "/subprocessors",
   "/login",
   "/get-started",
 ];
