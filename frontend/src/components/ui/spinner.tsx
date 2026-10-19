@@ -13,12 +13,3 @@ export function Spinner({ className }: { className?: string }) {
     />
   );
 }
-
-export function LoadingRow({ label = "Loading…" }: { label?: string }) {
-  return (
-    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-      <Spinner />
-      {label}
-    </div>
-  );
-}

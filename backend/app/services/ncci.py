@@ -92,30 +92,18 @@ def normalize_code(raw: str) -> str:
     return code
 
 
-def is_active(effective: date, deletion: date | None, dos: date) -> bool:
-    """[effective, deletion) — a retroactively withdrawn edit (deletion ==
-    effective) is active on no date."""
-    if dos < effective:
+def ptp_bypassed(modifier_indicator: int, column2_lines: list[tuple[str, ...]]) -> bool:
+    """Pure disposition for one active edit pair: is it bypassed on this claim?
+
+    Indicator 0 is never bypassable. Indicator 1 is bypassed only when EVERY
+    line of the column-2 code carries an NCCI-associated modifier; one
+    unmodified line will still deny, so pooling modifiers across lines would
+    under-warn (the failure direction a screening tool must avoid).
+    """
+    if modifier_indicator != 1 or not column2_lines:
         return False
-    return deletion is None or dos < deletion
-
-
-def evaluate_ptp_pair(
-    modifier_indicator: int, column2_modifiers: tuple[str, ...]
-) -> PtpFinding | None:
-    """Pure disposition for one active edit pair; caller fills the code fields.
-    Returns None when the row is a no-op (indicator 9)."""
-    if modifier_indicator == 9:
-        return None
-    bypassed = modifier_indicator == 1 and any(
-        m in NCCI_ASSOCIATED_MODIFIERS for m in column2_modifiers
-    )
-    return PtpFinding(
-        column1="",
-        column2="",
-        modifier_indicator=modifier_indicator,
-        rationale=None,
-        bypassed=bypassed,
+    return all(
+        any(m in NCCI_ASSOCIATED_MODIFIERS for m in line_mods) for line_mods in column2_lines
     )
 
 
@@ -192,19 +180,13 @@ async def ptp_conflicts(
             continue
         if row.modifier_indicator == 9:  # dead edit (also excluded in the query)
             continue
-        col2_lines = lines_by_code.get(row.column2, [()])
-        # Bypassed only when EVERY column-2 line carries an associated modifier
-        # (indicator 1). Any unmodified line will still deny.
-        disposition_bypassed = row.modifier_indicator == 1 and all(
-            any(m in NCCI_ASSOCIATED_MODIFIERS for m in line_mods) for line_mods in col2_lines
-        )
         findings.append(
             PtpFinding(
                 column1=row.column1,
                 column2=row.column2,
                 modifier_indicator=row.modifier_indicator,
                 rationale=row.rationale,
-                bypassed=disposition_bypassed,
+                bypassed=ptp_bypassed(row.modifier_indicator, lines_by_code.get(row.column2, [()])),
             )
         )
     return findings

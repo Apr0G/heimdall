@@ -16,6 +16,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.cases import _TERMINAL_RESULTS, _WIN_RESULTS, win_rate
@@ -123,7 +124,7 @@ async def admin_overview(
     latest_reports = (
         select(RiskReport.case_id, RiskReport.overall_risk_band)
         .order_by(RiskReport.case_id, RiskReport.created_at.desc())
-        .distinct(RiskReport.case_id)
+        .ext(distinct_on(RiskReport.case_id))
         .subquery()
     )
     band_rows = (

@@ -1,9 +1,9 @@
 """Unit tests for the NCCI evaluation rules (pure functions — no DB, no AWS).
 
 Codes are synthetic (hard rule 1); the semantics under test are the NCCI Policy
-Manual Ch. 1 rules: modifier indicator 0/1/9 dispositions, the associated-
-modifier list, the [effective, deletion) active window, and MAI 1 vs 2/3 unit
-arithmetic.
+Manual Ch. 1 rules: modifier indicator 0/1 dispositions (indicator 9 and the
+[effective, deletion) active window are filtered in SQL by ptp_conflicts), the
+associated-modifier list, and MAI 1 vs 2/3 unit arithmetic.
 """
 
 from datetime import date
@@ -15,9 +15,8 @@ from app.services.ncci import (
     ClaimLine,
     PtpFinding,
     evaluate_mue,
-    evaluate_ptp_pair,
-    is_active,
     normalize_code,
+    ptp_bypassed,
     ptp_indicator_for_pair,
 )
 
@@ -35,47 +34,28 @@ class TestNormalizeCode:
         assert normalize_code("") == ""
 
 
-class TestActiveWindow:
-    def test_active_when_no_deletion(self):
-        assert is_active(date(2020, 1, 1), None, date(2026, 6, 1))
-
-    def test_before_effective(self):
-        assert not is_active(date(2026, 7, 1), None, date(2026, 6, 30))
-
-    def test_exclusive_deletion_boundary(self):
-        # Active through the day before deletion, not on it.
-        assert is_active(date(2020, 1, 1), date(2026, 6, 1), date(2026, 5, 31))
-        assert not is_active(date(2020, 1, 1), date(2026, 6, 1), date(2026, 6, 1))
-
-    def test_retroactive_withdrawal_matches_no_date(self):
-        # CMS "as if it never existed": deletion_date == effective_date.
-        d = date(2023, 7, 1)
-        assert not is_active(d, d, d)
-        assert not is_active(d, d, date(2023, 8, 1))
-
-
-class TestEvaluatePtpPair:
-    def test_indicator_9_is_noop(self):
-        assert evaluate_ptp_pair(9, ("59",)) is None
-
+class TestPtpBypassed:
     def test_indicator_0_never_bypassed(self):
-        finding = evaluate_ptp_pair(0, ("59", "XE", "LT"))
-        assert finding is not None and not finding.bypassed
+        assert not ptp_bypassed(0, [("59", "XE", "LT")])
 
     def test_indicator_1_bypassed_with_associated_modifier(self):
         for modifier in ("59", "XE", "XS", "XP", "XU", "25", "LT", "F5", "91"):
-            finding = evaluate_ptp_pair(1, (modifier,))
-            assert finding is not None and finding.bypassed, modifier
+            assert ptp_bypassed(1, [(modifier,)]), modifier
 
     def test_indicator_1_not_bypassed_without_modifier(self):
-        finding = evaluate_ptp_pair(1, ())
-        assert finding is not None and not finding.bypassed
+        assert not ptp_bypassed(1, [()])
+        assert not ptp_bypassed(1, [])
 
     def test_non_associated_modifiers_do_not_bypass(self):
-        # Ch. 1 §E explicitly excludes 22, 76, 77.
+        # Ch. 1 Sec. E explicitly excludes 22, 76, 77.
         for modifier in ("22", "76", "77", "GA"):
-            finding = evaluate_ptp_pair(1, (modifier,))
-            assert finding is not None and not finding.bypassed, modifier
+            assert not ptp_bypassed(1, [(modifier,)]), modifier
+
+    def test_every_column2_line_must_carry_a_modifier(self):
+        # One modified line must not mark an unmodified same-code line as
+        # bypassed: that line will still deny.
+        assert ptp_bypassed(1, [("59",), ("XS",)])
+        assert not ptp_bypassed(1, [("59",), ()])
 
     def test_associated_list_shape(self):
         assert {"59", "XE", "XS", "XP", "XU", "25", "57", "91", "RT", "LT"} <= (

@@ -11,7 +11,6 @@ export type CaseListItem = {
   date_of_service: string | null;
   denial_date: string | null;
   appeal_deadline: string | null;
-  deadline_note?: string | null;
   billed_amount_cents: number | null;
   denied_amount_cents: number | null;
   currency: string;

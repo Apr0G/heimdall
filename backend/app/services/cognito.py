@@ -342,17 +342,6 @@ def admin_find_sub(email: str) -> str | None:
     return attrs.get("sub")
 
 
-def admin_get_status(email: str) -> str:
-    """Cognito UserStatus, e.g. FORCE_CHANGE_PASSWORD (invite unused) or CONFIRMED."""
-    try:
-        resp = _get_client().admin_get_user(
-            UserPoolId=settings.cognito_user_pool_id, Username=email
-        )
-    except (ClientError, BotoCoreError) as exc:
-        raise _client_error(exc) from exc
-    return resp.get("UserStatus", "")
-
-
 def admin_set_enabled(email: str, enabled: bool) -> None:
     """Disable (or re-enable) the Cognito account. Disabled users can't sign in or
     refresh; disabling also signs them out of Cognito everywhere."""
