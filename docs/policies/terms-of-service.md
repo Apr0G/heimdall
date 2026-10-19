@@ -114,7 +114,7 @@ Each party will protect the other party's Confidential Information with at least
 - **Security.** We maintain administrative, technical and physical safeguards appropriate to PHI, summarized in the Privacy Policy, and we will not materially decrease the overall security of the Service during a subscription term. Customer acknowledges that security is a shared responsibility and that Customer is responsible for its credentials, devices and users.
 - **Subprocessors.** We use the third-party service providers listed at [/subprocessors](/subprocessors). We will update that page when we add or replace a subprocessor that handles Customer Content; Customers may ask to be notified of changes by email. Any subprocessor that handles PHI is bound by a business associate agreement with us.
 - **Incidents.** We will notify Customer of a breach of unsecured PHI without unreasonable delay and no later than 60 days after discovery, as the BAA requires, and will cooperate in Customer's investigation and notifications.
-- **Return and deletion.** At termination, we will return or destroy Customer's PHI as the BAA provides, including every stored version of its uploaded files, and will confirm the destruction to Customer in writing. We retain audit logs (which contain no patient data) and other records that law requires us to keep.
+- **Return and deletion.** At termination, we will return or destroy Customer's PHI as the BAA provides, including every stored version of its uploaded files, will record the destruction in our append-only audit log, and will confirm it to Customer in writing. We retain audit logs (which contain no patient data) and other records that law requires us to keep.
 
 ## 11. Third-party services
 

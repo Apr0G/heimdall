@@ -336,10 +336,10 @@ export default function PrivacyPage() {
           deleted after one day. Model request and response archives are deleted
           after 30 days. Database backups are kept for 30 days. When a practice
           ends its relationship with us, we return or destroy its PHI as the BAA
-          requires, including all stored versions of its files, and we confirm
-          the destruction to the practice in writing and keep that confirmation
-          as a compliance record. Audit logs, which contain no patient data, are
-          retained (Section 8).
+          requires, including all stored versions of its files; the destruction
+          is recorded in our append-only audit log and confirmed to the practice
+          in writing. Audit logs, which contain no patient data, are retained
+          (Section 8).
         </li>
       </ul>
       <h2 id="5-de-identified-data-and-improving-the-service">

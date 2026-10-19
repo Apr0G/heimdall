@@ -6,6 +6,8 @@ The DB is a fake that answers the script's fixed statements; S3 is the FakeS3
 from test_s3_purge. All ids synthetic.
 """
 
+import json
+
 import pytest
 
 from app.scripts import dispose_practice, s3_purge
@@ -43,6 +45,9 @@ class _FakeConn:
     async def execute(self, stmt, params=None):
         sql = str(stmt)
         if sql.startswith("SELECT id FROM model_runs"):
+            return _Result([])
+        if sql.startswith("INSERT INTO audit_logs"):
+            self.state["events"].append(("audit", params))
             return _Result([])
         assert sql.startswith("DELETE"), sql
         self.state["events"].append("delete")
@@ -115,6 +120,36 @@ async def test_prefixes_are_rechecked_after_the_rows_are_gone(monkeypatch):
     last_delete = max(i for i, e in enumerate(events) if e == "delete")
     assert ("list", _PREFIX) in events[last_delete:]
     assert ("list", f"tmp-uploads/{_PID}/") in events[last_delete:]
+
+
+async def test_disposal_is_recorded_in_the_audit_log_after_the_rows_are_gone(monkeypatch):
+    """The destruction must leave a durable record, written in the same
+    transaction as the deletes (after them), carrying counts and the actor
+    only — never a key, filename or id list."""
+    state, s3 = _wire(monkeypatch, active_users=0)
+    monkeypatch.setenv("DISPOSE_ACTOR", "octocat")
+    await dispose_practice.main()
+    events = state["events"]
+    audits = [e for e in events if isinstance(e, tuple) and e[0] == "audit"]
+    assert len(audits) == 1
+    last_delete = max(i for i, e in enumerate(events) if e == "delete")
+    assert events.index(audits[0]) > last_delete
+    params = audits[0][1]
+    assert params["pid"] == _PID
+    assert json.loads(params["metadata"]) == {
+        "cases": 1,
+        "model_runs": 0,
+        "s3_object_versions": 2,
+        "actor": "octocat",
+    }
+
+
+def test_audit_metadata_carries_counts_and_actor_only():
+    meta = dispose_practice.disposal_audit_metadata(
+        case_count=3, run_count=7, s3_deleted=11, actor="dispose-task"
+    )
+    assert set(meta) == {"cases", "model_runs", "s3_object_versions", "actor"}
+    assert all(isinstance(v, (int, str)) for v in meta.values())
 
 
 async def test_an_object_appearing_after_the_delete_fails_the_attestation(monkeypatch):

@@ -9,7 +9,10 @@ Deletes, scoped to a single ``practice_id``:
 
 **Keeps** ``audit_logs`` (HIPAA activity record, no patient content) and the
 practices/users rows (pinned by audit_logs; they hold workforce/business data, not
-patient PHI).
+patient PHI). **Appends** one ``practice_disposed`` row to ``audit_logs`` in the same
+transaction as the row deletes: counts plus the dispatching GitHub actor
+(``DISPOSE_ACTOR``). That row is the durable record of the destruction — the task's
+CloudWatch log group expires after 90 days and the practice's own rows are gone.
 
 Guarded: refuses to run unless ``DISPOSE_CONFIRM`` equals ``PRACTICE_ID`` (type the id
 twice), ``DISPOSE_EXPECT_CASES`` matches the live case count, and every user of the
@@ -20,6 +23,7 @@ private)::
 """
 
 import asyncio
+import json
 import os
 import uuid
 
@@ -47,6 +51,27 @@ _DELETE_ORDER = [
     # corpus record — the released data is not PHI and stays; the mapping goes.
     "corpus_records",
 ]
+
+# Inside the same transaction as the deletes, so the record cannot exist without
+# the destruction or the destruction without the record. The app role may only
+# INSERT into audit_logs (0007), which is exactly what this needs.
+_AUDIT_SQL = text(
+    "INSERT INTO audit_logs (practice_id, action, resource_type, resource_id, metadata) "
+    "VALUES (:pid, 'practice_disposed', 'practice', :pid, CAST(:metadata AS jsonb))"
+)
+
+
+def disposal_audit_metadata(
+    *, case_count: int, run_count: int, s3_deleted: int, actor: str
+) -> dict[str, object]:
+    """What the audit row records: counts and who dispatched it. Never an S3 key,
+    a filename or a list of ids — the row outlives the data it describes."""
+    return {
+        "cases": case_count,
+        "model_runs": run_count,
+        "s3_object_versions": s3_deleted,
+        "actor": actor,
+    }
 
 
 def refuse_if_active_users(active: int) -> None:
@@ -85,6 +110,9 @@ async def main() -> None:
         uuid.UUID(pid)
     except ValueError as exc:
         raise SystemExit(f"PRACTICE_ID is not a valid UUID: {pid!r}") from exc
+
+    # The workflow passes github.actor; a hand-run task records its own name.
+    actor = os.environ.get("DISPOSE_ACTOR", "").strip() or "dispose-task"
 
     engine = create_async_engine(settings.database_url)
     s3 = boto3.client("s3", region_name=settings.aws_region)
@@ -170,12 +198,27 @@ async def main() -> None:
                 {"pid": pid},
             )
         await conn.execute(text("DELETE FROM cases WHERE practice_id = :pid"), {"pid": pid})
+        await conn.execute(
+            _AUDIT_SQL,
+            {
+                "pid": pid,
+                "metadata": json.dumps(
+                    disposal_audit_metadata(
+                        case_count=case_count,
+                        run_count=len(run_ids),
+                        s3_deleted=s3_deleted,
+                        actor=actor,
+                    )
+                ),
+            },
+        )
 
     await engine.dispose()
     assert_nothing_appeared(s3, bucket, [f"practices/{pid}/", f"tmp-uploads/{pid}/"])
     print(
         f"Disposed practice {pid}: {case_count} cases, {len(run_ids)} model runs, "
-        f"{s3_deleted} S3 object versions. Kept audit_logs + practice/user rows."
+        f"{s3_deleted} S3 object versions. Kept audit_logs (+1 practice_disposed row) "
+        "+ practice/user rows."
     )
 
 

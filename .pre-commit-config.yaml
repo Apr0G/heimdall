@@ -53,7 +53,10 @@ repos:
         name: pytest (backend, unit)
         # Same gate the frontend already has: a tenant-filter change can't be
         # committed with the suite red. Integration tests skip without a DB.
-        entry: bash -c 'cd backend && .venv/bin/python -m pytest app/tests -q -p no:cacheprovider'
+        # The venv interpreter is .venv/bin/python on macOS/Linux and
+        # .venv/Scripts/python.exe on Windows (Git Bash); pick whichever exists so
+        # the gate runs on both instead of silently needing SKIP=pytest on one.
+        entry: bash -c 'cd backend && if [ -x .venv/bin/python ]; then PY=.venv/bin/python; else PY=.venv/Scripts/python.exe; fi && "$PY" -m pytest app/tests -q -p no:cacheprovider'
         language: system
         files: ^backend/.*\.py$
         pass_filenames: false

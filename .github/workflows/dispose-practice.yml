@@ -62,6 +62,8 @@ jobs:
         env:
           PID: ${{ inputs.practice_id }}
           EXPECTED_CASES: ${{ inputs.expected_cases }}
+          # Recorded in the practice_disposed audit row the script appends.
+          ACTOR: ${{ github.actor }}
         run: |
           set -euo pipefail
           CLUSTER=default
@@ -76,11 +78,12 @@ jobs:
             --query 'SecurityGroups[0].GroupId' --output text)
 
           # jq builds the JSON so the inputs can't break out of the quoting.
-          OVERRIDES=$(jq -nc --arg pid "$PID" --arg cases "$EXPECTED_CASES" \
+          OVERRIDES=$(jq -nc --arg pid "$PID" --arg cases "$EXPECTED_CASES" --arg actor "$ACTOR" \
             '{containerOverrides:[{name:"dispose",environment:[
               {name:"PRACTICE_ID",value:$pid},
               {name:"DISPOSE_CONFIRM",value:$pid},
-              {name:"DISPOSE_EXPECT_CASES",value:$cases}
+              {name:"DISPOSE_EXPECT_CASES",value:$cases},
+              {name:"DISPOSE_ACTOR",value:$actor}
             ]}]}')
 
           TASK_ARN=$(aws ecs run-task --cluster "$CLUSTER" --task-definition "$TASKDEF" \

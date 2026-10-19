@@ -567,9 +567,10 @@ export default function TermsPage() {
         <li>
           <strong>Return and deletion.</strong> At termination, we will return
           or destroy Customer&apos;s PHI as the BAA provides, including every
-          stored version of its uploaded files, and will confirm the destruction
-          to Customer in writing. We retain audit logs (which contain no patient
-          data) and other records that law requires us to keep.
+          stored version of its uploaded files, will record the destruction in
+          our append-only audit log, and will confirm it to Customer in writing.
+          We retain audit logs (which contain no patient data) and other records
+          that law requires us to keep.
         </li>
       </ul>
       <h2 id="11-third-party-services">11. Third-party services</h2>
