@@ -2,7 +2,7 @@
 # RDS network lockdown — give the database its own security group that trusts
 # ONLY the backend's ECS tasks, and take it off the public internet.
 #
-# Two-phase apply (see DEPLOY.md), so the risky part is easily reversible:
+# Two-phase apply, so the risky part is easily reversible:
 #   Phase A (rds_private = false): swap the DB's firewall to trust only
 #     the backend. Public + laptop can no longer connect (firewall blocks them),
 #     but the public endpoint still exists — so rollback is trivial. This is the

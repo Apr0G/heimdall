@@ -69,7 +69,7 @@ resource "aws_elasticache_replication_group" "redis" {
   # force destroy-before-create, which means a window with no rate-limit store at
   # all — and `login_allowed` fails CLOSED, so that window blocks every new login.
   # A distinct name lets the new group exist alongside the old one, so the cutover
-  # can be done without denying logins (see the two-step note in DEPLOY.md).
+  # can be done without denying logins.
   replication_group_id = "heimdall-redis-tls"
   description          = "Heimdall rate-limit store (encrypted in transit + at rest)"
   engine               = "redis"

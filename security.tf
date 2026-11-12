@@ -6,7 +6,6 @@
 # need a coordinated apply): making RDS private + force_ssl + SG lockdown,
 # requiring Cognito MFA + shorter token TTLs, migrating the app to read the DB
 # secret at runtime, and moving Terraform state to an encrypted S3 backend.
-# Those are documented as exact diffs in SECURITY.md.
 # =============================================================================
 
 data "aws_caller_identity" "current" {}
@@ -191,7 +190,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "trail" {
     apply_server_side_encryption_by_default {
       # SSE-S3 (not the CMK) so CloudTrail can write without a KMS key-policy
       # grant. Still encrypted at rest. To upgrade to the customer key later,
-      # add a CloudTrail grant to the key policy first (see SECURITY.md).
+      # add a CloudTrail grant to the key policy first.
       sse_algorithm = "AES256"
     }
   }
@@ -203,7 +202,7 @@ resource "aws_s3_bucket_object_lock_configuration" "trail" {
   rule {
     default_retention {
       mode = "GOVERNANCE"
-      days = 2555 # ~7 years for HIPAA — confirm exact retention (see SECURITY.md)
+      days = 2555 # ~7 years for HIPAA — confirm exact retention
     }
   }
 }

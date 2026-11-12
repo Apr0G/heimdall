@@ -3,7 +3,7 @@
 # contains the DB password and other secrets) lives in AWS, not as a file on your
 # laptop. Uses S3-native locking (Terraform >= 1.11), so no DynamoDB needed.
 #
-# Two steps for you (documented in HIPAA-READINESS.md):
+# Two steps for you:
 #   1. terraform apply                       # creates the bucket (state still local)
 #   2. uncomment the backend block below, then:  terraform init -migrate-state
 # =============================================================================

@@ -7,7 +7,7 @@
 # see `terraform output ses_dkim_records`. No mailbox exists for no-reply@: SES
 # signs and sends directly; nothing touches Google Workspace. Replies go to info@.
 #
-# Two-step rollout (see DEPLOY.md, "Email sender"): the identity is created
+# Two-step rollout: the identity is created
 # first; Cognito is switched to it ONLY once (a) the domain shows verified and
 # (b) the SES account is out of the sandbox — in the sandbox SES refuses mail to
 # unverified recipients, which would silently break invites and resets.

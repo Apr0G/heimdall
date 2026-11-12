@@ -49,15 +49,13 @@ clean-claim guarantee.
 - **Background work** — FastAPI `BackgroundTasks` running the pipeline in
   `backend/app/services/pipeline.py`.
 
-Runbook: `DEPLOY.md`. Security posture: `SECURITY.md`, `HIPAA-READINESS.md`, `HIPAA-SERVICE-INVENTORY.md`.
-
 ---
 
 ## Prerequisites
 
 - **Python 3.11** and **Node 20**
   (3.11 is what the Dockerfile builds and what CI runs.)
-- An **AWS account** with these already provisioned (all created by the Terraform at the repo root — see `DEPLOY.md`):
+- An **AWS account** with these already provisioned (all created by the Terraform at the repo root):
   RDS PostgreSQL, an S3 bucket, a Cognito user pool + app client, Bedrock model
   access (an inference profile), Textract, and a KMS key.
 - AWS credentials available to the default boto3 chain (e.g. `aws configure`).
@@ -183,6 +181,6 @@ heimdall/
       scripts/    # one-off ECS tasks (provision_user, load_ncci, dispose_practice, ...)
       tests/
     alembic/      # migrations
-  docs/         # policies, prior audit reports, pitch deck, research
+  docs/         # policies/ — Markdown source of the /terms, /privacy and /subprocessors pages
   scripts/      # seed_dev.py, seed_case.py, make_fixtures.py
 ```

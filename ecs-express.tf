@@ -10,7 +10,7 @@
 # CloudFormation (AWS's native path for it) wrapped in an aws_cloudformation_stack.
 #
 # LEAN: reaches RDS over its existing (TLS) endpoint — no DB-network change here.
-# Bootstrap order (see DEPLOY.md): ECR + roles first, push the image via the
+# Bootstrap order: ECR + roles first, push the image via the
 # deploy-backend workflow, then the Express service. The service is LIVE, so
 # deploy_backend_service defaults to true — an apply that omits the variable
 # must never drive count to 0 and destroy the serving API (same reasoning as
@@ -264,7 +264,7 @@ resource "aws_iam_role_policy_attachment" "ecs_infra_managed" {
 # below carries no logConfiguration, so AWS auto-created this group at the default
 # "Never Expire" — and this is the group carrying request paths, case UUIDs and
 # exception text, i.e. the most PHI-adjacent log stream we have.
-# HIPAA-SERVICE-INVENTORY.md asserted "90-day retention" for it, unhedged, which
+# The service inventory asserted "90-day retention" for it, unhedged, which
 # was not true of anything in the repo.
 #
 # CORRECTION to the audit's premise: the auto-created group is
